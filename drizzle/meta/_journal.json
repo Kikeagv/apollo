@@ -29,6 +29,20 @@
       "when": 1785703794456,
       "tag": "0003_crazy_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785704400000,
+      "tag": "0004_activacion_invitacion_medico_propietario",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785704500000,
+      "tag": "0005_auditoria_actor_anonimo_activacion",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { acceptClinicOwnerInvitation } from "~/server/application/accept-clinic-owner-invitation";
 import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
 import { sendSimulatedClinicOwnerInvitation } from "~/server/email/simulated-identity-email";
@@ -10,6 +11,15 @@ export const panaceaRouter = {
     service: "panacea",
     status: "ready" as const,
   })),
+
+  acceptClinicOwnerInvitation: publicProcedure
+    .input(
+      z.object({
+        password: z.string(),
+        token: z.string(),
+      }),
+    )
+    .mutation(({ input }) => acceptClinicOwnerInvitation(input)),
 
   createSyntheticClinic: protectedProcedure
     .input(
