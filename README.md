@@ -1,0 +1,34 @@
+# Apolo
+
+Monolito TypeScript de Praxia. Incluye Panacea, el panel interno para operar
+Clínicas, y su base de identidad, autorización y datos aislados por Clínica.
+
+## Stack
+
+- Next.js App Router y Tailwind CSS
+- tRPC para los adaptadores HTTP tipados
+- Drizzle ORM y PostgreSQL
+- Better Auth para Identidades y sesiones
+
+Praxia mantiene fuera de Better Auth las membresías, roles y el contexto de
+Clínica. Toda operación clínica abre una transacción mediante
+`inClinicTransaction`, fija ese contexto y queda restringida por RLS.
+
+## Desarrollo
+
+1. Copia `.env.example` a `.env` y configura `BETTER_AUTH_SECRET`,
+   `BETTER_AUTH_URL` y `DATABASE_URL`.
+2. Inicia PostgreSQL con `./start-database.sh` o usa una instancia local.
+3. Ejecuta `npm install` y después `npm run db:migrate`.
+4. Inicia la aplicación con `npm run dev`.
+
+## Calidad
+
+```sh
+npm test
+npm run check
+npm run build
+```
+
+Las pruebas de casos de uso usan un adaptador de correo simulado y datos
+sintéticos. Las políticas SQL de RLS viven en las migraciones bajo `drizzle/`.
