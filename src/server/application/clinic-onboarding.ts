@@ -57,8 +57,12 @@ type Patient = {
 
 type Session = {
   clinicId: string;
+  expiresAt: number;
   identityId: string;
 };
+
+const TRUSTED_DEVICE_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+const CLINIC_SESSION_IDLE_DURATION_MS = 30 * 60 * 1000;
 
 /**
  * Adaptador simulado para el seam de casos de uso. La implementación de
@@ -73,15 +77,16 @@ export function createClinicOnboarding() {
   const loginChallenges = new Map<string, LoginChallenge>();
   const patients: Patient[] = [];
   const sessions = new Map<string, Session>();
-  const trustedDevices = new Set<string>();
+  const trustedDevices = new Map<string, number>();
   const auditEvents: AuditEvent[] = [];
   const sentEmails: SentEmail[] = [];
   let nextId = 1;
+  let now = 0;
 
   const createId = (kind: string) => `${kind}-${nextId++}`;
 
   function audit(event: Omit<AuditEvent, "occurredAt">) {
-    auditEvents.push({ ...event, occurredAt: new Date(0).toISOString() });
+    auditEvents.push({ ...event, occurredAt: new Date(now).toISOString() });
   }
 
   function createSession(identityId: string, deviceId: string) {
@@ -92,9 +97,16 @@ export function createClinicOnboarding() {
       throw new Error("La Identidad no tiene una membresía activa");
     }
 
-    trustedDevices.add(`${identityId}:${deviceId}`);
+    trustedDevices.set(
+      `${identityId}:${deviceId}`,
+      now + TRUSTED_DEVICE_DURATION_MS,
+    );
     const sessionId = createId("session");
-    sessions.set(sessionId, { clinicId: membership.clinicId, identityId });
+    sessions.set(sessionId, {
+      clinicId: membership.clinicId,
+      expiresAt: now + CLINIC_SESSION_IDLE_DURATION_MS,
+      identityId,
+    });
     audit({
       action: "identity-login-succeeded",
       identityId,
@@ -114,6 +126,10 @@ export function createClinicOnboarding() {
   return {
     auditEvents,
     sentEmails,
+
+    advanceTime(durationMs: number) {
+      now += durationMs;
+    },
 
     createClinic(input: {
       superadminId: string;
@@ -184,12 +200,15 @@ export function createClinicOnboarding() {
         throw new Error("Credenciales inválidas");
       }
 
-      if (trustedDevices.has(`${identity.id}:${input.deviceId}`)) {
+      const trustedDeviceKey = `${identity.id}:${input.deviceId}`;
+      const trustedUntil = trustedDevices.get(trustedDeviceKey);
+      if (trustedUntil !== undefined && trustedUntil > now) {
         return {
           status: "authenticated" as const,
           ...createSession(identity.id, input.deviceId),
         };
       }
+      trustedDevices.delete(trustedDeviceKey);
 
       const challengeId = createId("login-challenge");
       const otp = createOtp(challengeId);
@@ -215,7 +234,10 @@ export function createClinicOnboarding() {
 
     openPanacea(sessionId: string) {
       const session = sessions.get(sessionId);
-      if (session === undefined) throw new Error("La sesión no es válida");
+      if (session === undefined || session.expiresAt <= now) {
+        sessions.delete(sessionId);
+        throw new Error("La sesión no es válida");
+      }
       const clinic = clinics.get(session.clinicId);
       if (clinic === undefined) throw new Error("La Clínica no existe");
 

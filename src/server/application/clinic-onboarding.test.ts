@@ -113,6 +113,76 @@ describe("casos de uso de alta de Clínica", () => {
     expect(audit).not.toContain("incorrecta");
     expect(audit).not.toContain("Contraseña-segura-1");
   });
+
+  it("conserva el dispositivo confiable durante 30 días y después vuelve a exigir OTP", () => {
+    const onboarding = createClinicOnboarding();
+    createAndAcceptInvitation(onboarding, "Clínica Aurora", "ana@aurora.test");
+
+    const firstLogin = onboarding.startLogin({
+      email: "ana@aurora.test",
+      password: "Contraseña-segura-1",
+      deviceId: "navegador-ana",
+    });
+    if (firstLogin.status !== "otp-required") {
+      throw new Error("Se esperaba OTP para el primer acceso");
+    }
+    const emailWithOtp = onboarding.sentEmails.at(-1);
+    if (emailWithOtp?.kind !== "login-otp") {
+      throw new Error("Se esperaba OTP por correo");
+    }
+    onboarding.completeLogin({
+      challengeId: firstLogin.challengeId,
+      otp: emailWithOtp.otp,
+    });
+
+    expect(
+      onboarding.startLogin({
+        email: "ana@aurora.test",
+        password: "Contraseña-segura-1",
+        deviceId: "navegador-ana",
+      }),
+    ).toMatchObject({ status: "authenticated" });
+
+    onboarding.advanceTime(30 * 24 * 60 * 60 * 1000 + 1);
+
+    expect(
+      onboarding.startLogin({
+        email: "ana@aurora.test",
+        password: "Contraseña-segura-1",
+        deviceId: "navegador-ana",
+      }),
+    ).toMatchObject({ status: "otp-required" });
+  });
+
+  it("cierra la Sesión de Clínica tras 30 minutos sin actividad", () => {
+    const onboarding = createClinicOnboarding();
+    const invitation = createAndAcceptInvitation(
+      onboarding,
+      "Clínica Aurora",
+      "ana@aurora.test",
+    );
+    const login = onboarding.startLogin({
+      email: "ana@aurora.test",
+      password: "Contraseña-segura-1",
+      deviceId: "navegador-ana",
+    });
+    if (login.status !== "otp-required") throw new Error("Se esperaba OTP");
+    const emailWithOtp = onboarding.sentEmails.at(-1);
+    if (emailWithOtp?.kind !== "login-otp") {
+      throw new Error("Se esperaba OTP por correo");
+    }
+    const session = onboarding.completeLogin({
+      challengeId: login.challengeId,
+      otp: emailWithOtp.otp,
+    });
+
+    onboarding.advanceTime(30 * 60 * 1000 + 1);
+
+    expect(() => onboarding.openPanacea(session.sessionId)).toThrow(
+      "La sesión no es válida",
+    );
+    expect(invitation.clinic.name).toBe("Clínica Aurora");
+  });
 });
 
 function createAndAcceptInvitation(

@@ -111,6 +111,40 @@ export const clinicInvitations = createTable("clinic_invitation", {
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
 });
 
+/** Un secreto opaco por navegador; nunca se almacena el valor enviado al cliente. */
+export const trustedClinicDevices = createTable(
+  "trusted_clinic_device",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    identityId: text("identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("trusted_clinic_device_identity_idx").on(table.identityId)],
+);
+
+/** Sesión clínica efímera, emitida únicamente tras validar el dispositivo. */
+export const clinicSessions = createTable(
+  "clinic_session",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    identityId: text("identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("clinic_session_identity_idx").on(table.identityId)],
+);
+
 export const patients = createTable("patient", {
   id: uuid("id").defaultRandom().primaryKey(),
   clinicId: uuid("clinic_id")
