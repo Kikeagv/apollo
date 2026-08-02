@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { createSyntheticClinic } from "./create-synthetic-clinic";
+import {
+  createSyntheticClinic,
+  type SyntheticClinicRegistration,
+} from "./create-synthetic-clinic";
 import { db } from "../db";
 import { inSuperadminTransaction } from "../db/clinic-context";
 import {
@@ -28,18 +31,32 @@ describe("alta controlada persistente de Clínica sintética", () => {
     const email = `${identityId}@example.test`;
     let clinicId: string | undefined;
     const initialInvitationCount = getSentClinicOwnerInvitations().length;
-
-    await db.insert(identities).values({
-      id: identityId,
-      name: "Superadmin de prueba APO-27",
-      email,
-      emailVerified: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    await db.insert(apoloSuperadmins).values({ identityId });
+    const registry: SyntheticClinicRegistration = {
+      async register(input) {
+        const registration = await drizzleSyntheticClinicRegistration.register(
+          input,
+        );
+        clinicId = registration.clinic.id;
+        return registration;
+      },
+      recordInvitationDelivery(input) {
+        return drizzleSyntheticClinicRegistration.recordInvitationDelivery(
+          input,
+        );
+      },
+    };
 
     try {
+      await db.insert(identities).values({
+        id: identityId,
+        name: "Superadmin de prueba APO-27",
+        email,
+        emailVerified: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      await db.insert(apoloSuperadmins).values({ identityId });
+
       const clinic = await createSyntheticClinic(
         {
           actorIdentityId: identityId,
@@ -50,11 +67,10 @@ describe("alta controlada persistente de Clínica sintética", () => {
           },
         },
         {
-          registry: drizzleSyntheticClinicRegistration,
+          registry,
           sendOwnerInvitation: sendSimulatedClinicOwnerInvitation,
         },
       );
-      clinicId = clinic.id;
 
       const persisted = await inSuperadminTransaction(
         identityId,
