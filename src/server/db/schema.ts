@@ -105,6 +105,7 @@ export const clinicInvitations = createTable("clinic_invitation", {
     .notNull()
     .references(() => clinics.id, { onDelete: "cascade" }),
   email: text("email").notNull(),
+  ownerName: text("owner_name").notNull(),
   tokenHash: text("token_hash").notNull().unique(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),

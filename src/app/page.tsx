@@ -1,5 +1,7 @@
 import { getSession } from "~/server/better-auth/server";
 
+import { SyntheticClinicRegistrationForm } from "./synthetic-clinic-registration-form";
+
 export default async function Home() {
   const session = await getSession();
 
@@ -11,10 +13,13 @@ export default async function Home() {
         </p>
         <h1 className="text-4xl font-semibold">Panacea</h1>
         {session ? (
-          <p>
-            La Identidad está autenticada. Panacea validará su membresía activa
-            antes de abrir el contexto de Clínica.
-          </p>
+          <>
+            <p>
+              La Identidad está autenticada. Panacea valida la autorización de
+              superadmin antes de crear una Clínica sintética.
+            </p>
+            <SyntheticClinicRegistrationForm />
+          </>
         ) : (
           <p>
             Acceso solo por invitación. Inicie sesión con su correo y
