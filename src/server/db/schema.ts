@@ -131,6 +131,7 @@ export const identityAuditEvents = createTable("identity_audit_event", {
     onDelete: "set null",
   }),
   action: text("action").notNull(),
+  result: text("result").$type<"failed" | "succeeded">().notNull(),
   occurredAt: timestamp("occurred_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

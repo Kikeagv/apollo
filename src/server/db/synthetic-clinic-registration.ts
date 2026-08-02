@@ -33,23 +33,34 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
           ownerName: input.invitation.ownerName,
           tokenHash: hashInvitationToken(input.invitation.token),
         });
-        await transaction.insert(identityAuditEvents).values([
-          {
-            action: "synthetic-clinic-created",
-            actorIdentityId: input.actorIdentityId,
-            clinicId: createdClinic.id,
-          },
-          {
-            action: "clinic-owner-invited",
-            actorIdentityId: input.actorIdentityId,
-            clinicId: createdClinic.id,
-          },
-        ]);
+        await transaction.insert(identityAuditEvents).values({
+          action: "synthetic-clinic-created",
+          actorIdentityId: input.actorIdentityId,
+          clinicId: createdClinic.id,
+          result: "succeeded",
+        });
 
         return {
           clinic: { ...createdClinic, isSynthetic: true as const },
           invitation: input.invitation,
         };
+      },
+    );
+  },
+
+  async recordInvitationDelivery(input) {
+    await inSuperadminTransaction(
+      input.actorIdentityId,
+      async (transaction) => {
+        await transaction.execute(
+          sql`select set_config('app.clinic_id', ${input.clinicId}, true)`,
+        );
+        await transaction.insert(identityAuditEvents).values({
+          action: "clinic-owner-invited",
+          actorIdentityId: input.actorIdentityId,
+          clinicId: input.clinicId,
+          result: input.result,
+        });
       },
     );
   },

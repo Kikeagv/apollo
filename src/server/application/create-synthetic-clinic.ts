@@ -19,6 +19,11 @@ export type SyntheticClinicRegistration = {
     clinicName: string;
     invitation: OwnerInvitation;
   }): Promise<{ clinic: SyntheticClinic; invitation: OwnerInvitation }>;
+  recordInvitationDelivery(input: {
+    actorIdentityId: string;
+    clinicId: string;
+    result: "failed" | "succeeded";
+  }): Promise<void>;
 };
 
 type CreateSyntheticClinicDependencies = {
@@ -48,9 +53,24 @@ export async function createSyntheticClinic(
     invitation,
   });
 
-  await dependencies.sendOwnerInvitation({
-    ...registration.invitation,
-    clinicName: registration.clinic.name,
+  try {
+    await dependencies.sendOwnerInvitation({
+      ...registration.invitation,
+      clinicName: registration.clinic.name,
+    });
+  } catch (error) {
+    await dependencies.registry.recordInvitationDelivery({
+      actorIdentityId: input.actorIdentityId,
+      clinicId: registration.clinic.id,
+      result: "failed",
+    });
+    throw error;
+  }
+
+  await dependencies.registry.recordInvitationDelivery({
+    actorIdentityId: input.actorIdentityId,
+    clinicId: registration.clinic.id,
+    result: "succeeded",
   });
 
   return registration.clinic;

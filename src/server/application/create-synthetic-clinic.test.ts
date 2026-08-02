@@ -48,11 +48,13 @@ describe("alta controlada de Clínica sintética", () => {
         action: "synthetic-clinic-created",
         actorIdentityId: "superadmin-1",
         clinicId: "clinic-1",
+        result: "succeeded",
       },
       {
         action: "clinic-owner-invited",
         actorIdentityId: "superadmin-1",
         clinicId: "clinic-1",
+        result: "succeeded",
       },
     ]);
     expect(JSON.stringify(registry.auditEvents)).not.toContain(
@@ -74,6 +76,33 @@ describe("alta controlada de Clínica sintética", () => {
       ),
     ).rejects.toThrow("La Identidad no es superadmin de Apolo");
   });
+
+  it("audita una invitación fallida sin conservar su secreto", async () => {
+    const registry = createRegistry(["superadmin-1"]);
+
+    await expect(
+      createSyntheticClinic(
+        {
+          actorIdentityId: "superadmin-1",
+          clinicName: "Clínica Aurora",
+          owner: { email: "ana@aurora.test", name: "Dra. Ana Reyes" },
+        },
+        {
+          registry,
+          sendOwnerInvitation: async () => {
+            throw new Error("El correo simulado no está disponible");
+          },
+        },
+      ),
+    ).rejects.toThrow("El correo simulado no está disponible");
+
+    expect(registry.auditEvents.at(-1)).toEqual({
+      action: "clinic-owner-invited",
+      actorIdentityId: "superadmin-1",
+      clinicId: "clinic-1",
+      result: "failed",
+    });
+  });
 });
 
 function createRegistry(superadminIdentityIds: string[]) {
@@ -82,6 +111,7 @@ function createRegistry(superadminIdentityIds: string[]) {
     action: "clinic-owner-invited" | "synthetic-clinic-created";
     actorIdentityId: string;
     clinicId: string;
+    result: "failed" | "succeeded";
   }> = [];
 
   return {
@@ -100,20 +130,26 @@ function createRegistry(superadminIdentityIds: string[]) {
         name: input.clinicName,
       };
       clinics.push(clinic);
-      auditEvents.push(
-        {
-          action: "synthetic-clinic-created",
-          actorIdentityId: input.actorIdentityId,
-          clinicId: clinic.id,
-        },
-        {
-          action: "clinic-owner-invited",
-          actorIdentityId: input.actorIdentityId,
-          clinicId: clinic.id,
-        },
-      );
+      auditEvents.push({
+        action: "synthetic-clinic-created",
+        actorIdentityId: input.actorIdentityId,
+        clinicId: clinic.id,
+        result: "succeeded",
+      });
 
       return { clinic, invitation: input.invitation };
+    },
+    async recordInvitationDelivery(
+      input: Parameters<
+        SyntheticClinicRegistration["recordInvitationDelivery"]
+      >[0],
+    ) {
+      auditEvents.push({
+        action: "clinic-owner-invited",
+        actorIdentityId: input.actorIdentityId,
+        clinicId: input.clinicId,
+        result: input.result,
+      });
     },
   };
 }
