@@ -12,6 +12,11 @@ import superjson from "superjson";
 import { ZodError } from "zod";
 
 import { auth } from "~/server/better-auth";
+import {
+  CLINIC_SESSION_COOKIE,
+  CLINIC_TRUSTED_DEVICE_COOKIE,
+  findTrustedClinicContext,
+} from "~/server/application/clinic-access";
 import { db } from "~/server/db";
 
 /**
@@ -132,3 +137,27 @@ export const protectedProcedure = t.procedure
       },
     });
   });
+
+/** Procedimiento de Panacea que exige una Sesión de Clínica vigente. */
+export const clinicProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  const clinic = await findTrustedClinicContext({
+    clinicSessionToken: readCookie(ctx.headers, CLINIC_SESSION_COOKIE),
+    identityId: ctx.session.user.id,
+    trustedDeviceToken: readCookie(ctx.headers, CLINIC_TRUSTED_DEVICE_COOKIE),
+  });
+  if (clinic === undefined) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Acceso clínico no disponible",
+    });
+  }
+  return next({ ctx: { clinic } });
+});
+
+function readCookie(headers: Headers, name: string) {
+  return headers
+    .get("cookie")
+    ?.split(";")
+    .map((part) => part.trim().split("=", 2))
+    .find(([key]) => key === name)?.[1];
+}

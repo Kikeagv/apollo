@@ -14,6 +14,7 @@ export async function inClinicTransaction<T>(
   operation: (transaction: ClinicTransaction) => Promise<T>,
 ) {
   return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
     await transaction.execute(
       sql`select set_config('app.identity_id', ${input.identityId}, true)`,
     );

@@ -8,6 +8,7 @@ import { cookies } from "next/headers";
 
 import { ClinicSessionActivity } from "./clinic-session-activity";
 import { ClinicSignInForm } from "./clinic-sign-in-form";
+import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
 import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
 
 export default async function Home({
@@ -47,6 +48,7 @@ export default async function Home({
               Aún no hay información para mostrar en esta Clínica. Esta es su
               Panacea vacía.
             </p>
+            <SyntheticClinicalActionForm />
           </>
         ) : session && verificar === "otp" ? (
           <>

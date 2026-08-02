@@ -2,9 +2,14 @@ import { z } from "zod";
 
 import { acceptClinicOwnerInvitation } from "~/server/application/accept-clinic-owner-invitation";
 import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
+import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
 import { sendSimulatedClinicOwnerInvitation } from "~/server/email/simulated-identity-email";
-import { protectedProcedure, publicProcedure } from "~/server/api/trpc";
+import {
+  clinicProcedure,
+  protectedProcedure,
+  publicProcedure,
+} from "~/server/api/trpc";
 
 export const panaceaRouter = {
   status: publicProcedure.query(() => ({
@@ -42,4 +47,11 @@ export const panaceaRouter = {
         },
       ),
     ),
+
+  performSyntheticClinicalAction: clinicProcedure.mutation(({ ctx }) =>
+    performSyntheticClinicalAction({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    }),
+  ),
 };
