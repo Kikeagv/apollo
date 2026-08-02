@@ -15,10 +15,15 @@ export const auth = betterAuth({
     enabled: true,
     disableSignUp: true,
   },
+  session: {
+    expiresIn: 30 * 60,
+    updateAge: 0,
+  },
   plugins: [
     emailOTP({
       disableSignUp: true,
       sendVerificationOTP: sendSimulatedIdentityEmail,
+      expiresIn: 5 * 60,
       storeOTP: "hashed",
     }),
   ],

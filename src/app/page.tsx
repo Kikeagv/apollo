@@ -1,9 +1,36 @@
 import { getSession } from "~/server/better-auth/server";
+import {
+  CLINIC_SESSION_COOKIE,
+  CLINIC_TRUSTED_DEVICE_COOKIE,
+  findTrustedClinicContext,
+} from "~/server/application/clinic-access";
+import { cookies } from "next/headers";
 
-import { SyntheticClinicRegistrationForm } from "./synthetic-clinic-registration-form";
+import { ClinicSessionActivity } from "./clinic-session-activity";
+import { ClinicSignInForm } from "./clinic-sign-in-form";
+import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ verificar?: string }>;
+}) {
   const session = await getSession();
+  const trustedDeviceToken = (await cookies()).get(
+    CLINIC_TRUSTED_DEVICE_COOKIE,
+  )?.value;
+  const clinicSessionToken = (await cookies()).get(
+    CLINIC_SESSION_COOKIE,
+  )?.value;
+  const context =
+    session === null
+      ? undefined
+      : await findTrustedClinicContext({
+          identityId: session.user.id,
+          clinicSessionToken,
+          trustedDeviceToken,
+        });
+  const { verificar } = await searchParams;
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
@@ -12,19 +39,24 @@ export default async function Home() {
           PRAXIA
         </p>
         <h1 className="text-4xl font-semibold">Panacea</h1>
-        {session ? (
+        {context ? (
+          <>
+            <ClinicSessionActivity />
+            <p className="text-lg">{context.clinicName}</p>
+            <p>
+              Aún no hay información para mostrar en esta Clínica. Esta es su
+              Panacea vacía.
+            </p>
+          </>
+        ) : session && verificar === "otp" ? (
           <>
             <p>
-              La Identidad está autenticada. Panacea valida la autorización de
-              superadmin antes de crear una Clínica sintética.
+              Confirme el inicio desde este navegador antes de abrir Panacea.
             </p>
-            <SyntheticClinicRegistrationForm />
+            <VerifyClinicOtpForm />
           </>
         ) : (
-          <p>
-            Acceso solo por invitación. Inicie sesión con su correo y
-            contraseña.
-          </p>
+          <ClinicSignInForm />
         )}
       </section>
     </main>
