@@ -1,9 +1,8 @@
-import { createHash } from "node:crypto";
-
 import { sql } from "drizzle-orm";
 
 import { type SyntheticClinicRegistration } from "~/server/application/create-synthetic-clinic";
 import { inSuperadminTransaction } from "~/server/db/clinic-context";
+import { hashClinicOwnerInvitationToken } from "~/server/db/clinic-owner-invitation-token";
 import {
   clinics,
   clinicInvitations,
@@ -31,11 +30,12 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
           email: input.invitation.ownerEmail,
           expiresAt: input.invitation.expiresAt,
           ownerName: input.invitation.ownerName,
-          tokenHash: hashInvitationToken(input.invitation.token),
+          tokenHash: hashClinicOwnerInvitationToken(input.invitation.token),
         });
         await transaction.insert(identityAuditEvents).values({
           action: "synthetic-clinic-created",
           actorIdentityId: input.actorIdentityId,
+          actorKind: "identity",
           clinicId: createdClinic.id,
           result: "succeeded",
         });
@@ -58,6 +58,7 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
         await transaction.insert(identityAuditEvents).values({
           action: "clinic-owner-invited",
           actorIdentityId: input.actorIdentityId,
+          actorKind: "identity",
           clinicId: input.clinicId,
           result: input.result,
         });
@@ -65,7 +66,3 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
     );
   },
 };
-
-function hashInvitationToken(token: string) {
-  return createHash("sha256").update(token).digest("hex");
-}

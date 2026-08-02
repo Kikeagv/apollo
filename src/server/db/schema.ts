@@ -130,6 +130,10 @@ export const identityAuditEvents = createTable("identity_audit_event", {
   actorIdentityId: text("actor_identity_id").references(() => user.id, {
     onDelete: "set null",
   }),
+  actorKind: text("actor_kind")
+    .$type<"anonymous" | "identity">()
+    .default("identity")
+    .notNull(),
   action: text("action").notNull(),
   result: text("result").$type<"failed" | "succeeded" | "unknown">().notNull(),
   occurredAt: timestamp("occurred_at", { withTimezone: true })

@@ -7,12 +7,18 @@ type IdentityOtp = {
 };
 
 type ClinicOwnerInvitation = {
+  activationUrl: string;
   clinicName: string;
   expiresAt: Date;
   ownerEmail: string;
   ownerName: string;
   token: string;
 };
+
+type ClinicOwnerInvitationDelivery = Omit<
+  ClinicOwnerInvitation,
+  "activationUrl"
+>;
 
 const sentIdentityOtps: IdentityOtp[] = [];
 const sentClinicOwnerInvitations: ClinicOwnerInvitation[] = [];
@@ -28,9 +34,12 @@ export function getSentIdentityOtps() {
 
 /** Adaptador simulado para iniciar invitaciones de médicos propietarios. */
 export async function sendSimulatedClinicOwnerInvitation(
-  invitation: ClinicOwnerInvitation,
+  invitation: ClinicOwnerInvitationDelivery,
 ) {
-  sentClinicOwnerInvitations.push(invitation);
+  sentClinicOwnerInvitations.push({
+    ...invitation,
+    activationUrl: `/activar-invitacion?token=${encodeURIComponent(invitation.token)}`,
+  });
 }
 
 export function getSentClinicOwnerInvitations() {
