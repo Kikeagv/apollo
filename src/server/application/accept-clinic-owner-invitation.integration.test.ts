@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { createCaller } from "~/server/api/root";
+import { type createTRPCContext } from "~/server/api/trpc";
+import { hashOpaqueAccessToken } from "~/server/application/clinic-access";
 import { acceptClinicOwnerInvitation } from "./accept-clinic-owner-invitation";
+import { inviteAdditionalDoctor } from "./doctor-invitations";
 import {
   DoctorProfileAccessError,
   completeOwnDoctorProfile,
@@ -21,13 +25,21 @@ import {
   clinics,
   clinicInvitations,
   clinicUsers,
+  clinicSessions,
   doctors,
   identityAuditEvents,
+  trustedClinicDevices,
   user as identities,
 } from "../db/schema";
 import { drizzleSyntheticClinicRegistration } from "../db/synthetic-clinic-registration";
 import {
+  drizzleDoctorInvitationStore,
+  listDoctorInvitationStatuses,
+} from "../db/doctor-invitation-store";
+import {
+  getSentClinicDoctorInvitations,
   getSentClinicOwnerInvitations,
+  sendSimulatedClinicDoctorInvitation,
   sendSimulatedClinicOwnerInvitation,
 } from "../email/simulated-identity-email";
 
@@ -35,6 +47,310 @@ const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("activación persistente por invitación del médico propietario", () => {
+  databaseTest(
+    "la mutación de Panacea adapta la invitación autorizada del propietario",
+    async () => {
+      const fixture = await createActivationFixture();
+
+      try {
+        const owner = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: fixture.invitationToken,
+        });
+        fixture.identityId = owner.identityId;
+        const trustedDeviceToken = `dispositivo-apo-32-${randomUUID()}`;
+        const clinicSessionToken = `sesion-apo-32-${randomUUID()}`;
+        await db.insert(trustedClinicDevices).values({
+          expiresAt: new Date(Date.now() + 60 * 60 * 1_000),
+          identityId: owner.identityId,
+          tokenHash: hashOpaqueAccessToken(trustedDeviceToken),
+        });
+        await db.insert(clinicSessions).values({
+          expiresAt: new Date(Date.now() + 60 * 60 * 1_000),
+          identityId: owner.identityId,
+          tokenHash: hashOpaqueAccessToken(clinicSessionToken),
+        });
+        const caller = createCaller({
+          db,
+          headers: new Headers({
+            cookie: `panacea-trusted-device=${trustedDeviceToken}; panacea-clinic-session=${clinicSessionToken}`,
+          }),
+          session: {
+            user: { id: owner.identityId },
+          } as NonNullable<
+            Awaited<ReturnType<typeof createTRPCContext>>["session"]
+          >,
+        });
+
+        await expect(
+          caller.panacea.inviteAdditionalDoctor({
+            email: `apo-32-trpc-${randomUUID()}@example.test`,
+            name: "Dra. Sofía Molina",
+          }),
+        ).resolves.toMatchObject({ status: "pending" });
+        await expect(caller.panacea.listDoctorInvitations()).resolves.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              recipientName: "Dra. Sofía Molina",
+              status: "pending",
+            }),
+          ]),
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "el propietario invita a un Médico, registra el estado y lo activa al aceptar",
+    async () => {
+      const fixture = await createActivationFixture();
+      let doctorIdentityId: string | undefined;
+
+      try {
+        const owner = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: fixture.invitationToken,
+        });
+        fixture.identityId = owner.identityId;
+        const doctorEmail = `apo-32-doctor-${randomUUID()}@example.test`;
+
+        await expect(
+          inviteAdditionalDoctor(
+            {
+              clinicId: fixture.clinicId,
+              identityId: owner.identityId,
+              recipient: { email: doctorEmail, name: "Dr. Luis Pérez" },
+            },
+            {
+              sendInvitation: (invitation) =>
+                sendSimulatedClinicDoctorInvitation({
+                  clinicName: invitation.clinicName,
+                  expiresAt: invitation.expiresAt,
+                  recipientEmail: invitation.email,
+                  recipientName: invitation.recipientName,
+                  token: invitation.token,
+                }),
+              store: drizzleDoctorInvitationStore,
+            },
+          ),
+        ).resolves.toMatchObject({
+          email: doctorEmail,
+          recipientName: "Dr. Luis Pérez",
+          status: "pending",
+        });
+
+        await expect(
+          listDoctorInvitationStatuses({
+            clinicId: fixture.clinicId,
+            identityId: owner.identityId,
+          }),
+        ).resolves.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ email: doctorEmail, status: "pending" }),
+          ]),
+        );
+
+        const invitation = getSentClinicDoctorInvitations()
+          .slice()
+          .reverse()
+          .find((candidate) => candidate.recipientEmail === doctorEmail);
+        if (invitation === undefined)
+          throw new Error("Falta la invitación al Médico");
+        const doctor = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: invitation.token,
+        });
+        doctorIdentityId = doctor.identityId;
+
+        expect(doctor).toMatchObject({
+          active: true,
+          clinicId: fixture.clinicId,
+          role: "doctor",
+        });
+        await expect(
+          findOwnDoctorProfile({
+            clinicId: fixture.clinicId,
+            identityId: doctor.identityId,
+          }),
+        ).resolves.toMatchObject({
+          primarySpecialty: null,
+          publicName: null,
+        });
+        await expect(
+          listDoctorInvitationStatuses({
+            clinicId: fixture.clinicId,
+            identityId: owner.identityId,
+          }),
+        ).resolves.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ email: doctorEmail, status: "accepted" }),
+          ]),
+        );
+
+        const events = await readClinicAuditEvents(
+          fixture.superadminId,
+          fixture.clinicId,
+        );
+        expect(events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ action: "clinic-doctor-invited" }),
+            expect.objectContaining({
+              action: "clinic-doctor-invitation-accepted",
+              actorIdentityId: doctor.identityId,
+            }),
+          ]),
+        );
+      } finally {
+        if (doctorIdentityId !== undefined) {
+          await db
+            .delete(identities)
+            .where(eq(identities.id, doctorIdentityId));
+        }
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "un Médico invitado solo puede consultar y mutar su propio perfil",
+    async () => {
+      const fixture = await createActivationFixture();
+      let doctorIdentityId: string | undefined;
+
+      try {
+        const owner = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: fixture.invitationToken,
+        });
+        fixture.identityId = owner.identityId;
+        const ownerProfile = await findOwnDoctorProfile({
+          clinicId: fixture.clinicId,
+          identityId: owner.identityId,
+        });
+        if (ownerProfile === undefined)
+          throw new Error("Falta el perfil del propietario");
+
+        const doctorEmail = `apo-32-rls-${randomUUID()}@example.test`;
+        await inviteAdditionalDoctor(
+          {
+            clinicId: fixture.clinicId,
+            identityId: owner.identityId,
+            recipient: { email: doctorEmail, name: "Dra. Elena García" },
+          },
+          {
+            sendInvitation: (invitation) =>
+              sendSimulatedClinicDoctorInvitation({
+                clinicName: invitation.clinicName,
+                expiresAt: invitation.expiresAt,
+                recipientEmail: invitation.email,
+                recipientName: invitation.recipientName,
+                token: invitation.token,
+              }),
+            store: drizzleDoctorInvitationStore,
+          },
+        );
+        const invitation = getSentClinicDoctorInvitations().at(-1);
+        if (invitation === undefined)
+          throw new Error("Falta la invitación al Médico");
+        const doctor = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: invitation.token,
+        });
+        doctorIdentityId = doctor.identityId;
+
+        await inClinicTransaction(
+          { clinicId: fixture.clinicId, identityId: doctor.identityId },
+          async (transaction) => {
+            await expect(
+              transaction.query.doctors.findFirst({
+                where: eq(doctors.id, ownerProfile.id),
+              }),
+            ).resolves.toBeUndefined();
+            await expect(
+              transaction
+                .update(doctors)
+                .set({ publicName: "No debe mutar" })
+                .where(eq(doctors.id, ownerProfile.id))
+                .returning({ id: doctors.id }),
+            ).resolves.toEqual([]);
+          },
+        );
+      } finally {
+        if (doctorIdentityId !== undefined) {
+          await db
+            .delete(identities)
+            .where(eq(identities.id, doctorIdentityId));
+        }
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "RLS impide consultar o mutar una invitación de Médico de otra Clínica",
+    async () => {
+      const first = await createActivationFixture();
+      const second = await createActivationFixture();
+
+      try {
+        const firstOwner = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: first.invitationToken,
+        });
+        first.identityId = firstOwner.identityId;
+        const secondOwner = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: second.invitationToken,
+        });
+        second.identityId = secondOwner.identityId;
+        const invitation = await inviteAdditionalDoctor(
+          {
+            clinicId: first.clinicId,
+            identityId: firstOwner.identityId,
+            recipient: {
+              email: `apo-32-ajeno-${randomUUID()}@example.test`,
+              name: "Dra. Marta López",
+            },
+          },
+          {
+            sendInvitation: (doctorInvitation) =>
+              sendSimulatedClinicDoctorInvitation({
+                clinicName: doctorInvitation.clinicName,
+                expiresAt: doctorInvitation.expiresAt,
+                recipientEmail: doctorInvitation.email,
+                recipientName: doctorInvitation.recipientName,
+                token: doctorInvitation.token,
+              }),
+            store: drizzleDoctorInvitationStore,
+          },
+        );
+
+        await inClinicTransaction(
+          { clinicId: second.clinicId, identityId: secondOwner.identityId },
+          async (transaction) => {
+            await expect(
+              transaction.query.clinicInvitations.findFirst({
+                where: eq(clinicInvitations.id, invitation.id),
+              }),
+            ).resolves.toBeUndefined();
+            await expect(
+              transaction
+                .update(clinicInvitations)
+                .set({ consumedAt: new Date() })
+                .where(eq(clinicInvitations.id, invitation.id))
+                .returning({ id: clinicInvitations.id }),
+            ).resolves.toEqual([]);
+          },
+        );
+      } finally {
+        await first.cleanup();
+        await second.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "crea una Identidad con Better Auth y una membresía activa al consumir una invitación vigente",
     async () => {

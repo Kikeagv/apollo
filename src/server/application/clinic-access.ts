@@ -7,6 +7,7 @@ import { db } from "~/server/db";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import { env } from "~/env";
 import {
+  type ClinicUserRole,
   clinics,
   clinicSessions,
   clinicUsers,
@@ -25,6 +26,7 @@ type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type ActiveMembership = {
   clinicId: string;
   identityId: string;
+  role: ClinicUserRole;
 };
 
 export type ClinicContext = ActiveMembership & {
@@ -316,7 +318,7 @@ async function findActiveMembershipInTransaction(
     ),
   });
   if (membership === undefined) return undefined;
-  return { clinicId: membership.clinicId, identityId };
+  return { clinicId: membership.clinicId, identityId, role: membership.role };
 }
 
 async function hasTrustedDevice(

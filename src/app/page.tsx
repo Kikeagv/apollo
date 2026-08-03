@@ -10,6 +10,7 @@ import { cookies } from "next/headers";
 import { ClinicSessionActivity } from "./clinic-session-activity";
 import { ClinicSignInForm } from "./clinic-sign-in-form";
 import { DoctorProfileSetup } from "./doctor-profile-setup";
+import { DoctorsSection } from "./doctors-section";
 import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
 import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
 
@@ -58,6 +59,7 @@ export default async function Home({
               Panacea vacía.
             </p>
             {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
+            {context.role === "owner" ? <DoctorsSection /> : null}
             <SyntheticClinicalActionForm />
           </>
         ) : session && verificar === "otp" ? (

@@ -6,15 +6,16 @@ import {
 import { ClinicOwnerInvitationError } from "./clinic-owner-invitation-errors";
 
 export { ClinicOwnerInvitationError } from "./clinic-owner-invitation-errors";
+export type { ClinicOwnerInvitationActivation } from "~/server/db/clinic-owner-invitation-activation";
 
 export type ClinicOwnerMembership = {
   active: true;
   clinicId: string;
   identityId: string;
-  role: "owner";
+  role: "doctor" | "owner";
 };
 
-export async function acceptClinicOwnerInvitation(
+export async function acceptClinicInvitation(
   input: { password: string; token: string },
   activation: ClinicOwnerInvitationActivation = drizzleClinicOwnerInvitationActivation,
 ): Promise<ClinicOwnerMembership> {
@@ -25,3 +26,6 @@ export async function acceptClinicOwnerInvitation(
 
   return activation.accept(input);
 }
+
+/** Alias de compatibilidad para la activación del Médico propietario inicial. */
+export const acceptClinicOwnerInvitation = acceptClinicInvitation;

@@ -20,6 +20,7 @@ export async function inClinicTransaction<T>(
     );
 
     const membership = await transaction.query.clinicUsers.findFirst({
+      columns: { id: true, role: true },
       where: and(
         eq(clinicUsers.clinicId, input.clinicId),
         eq(clinicUsers.identityId, input.identityId),
@@ -31,6 +32,12 @@ export async function inClinicTransaction<T>(
 
     await transaction.execute(
       sql`select set_config('app.clinic_id', ${input.clinicId}, true)`,
+    );
+    await transaction.execute(
+      sql`select set_config('app.clinic_user_id', ${membership.id}, true)`,
+    );
+    await transaction.execute(
+      sql`select set_config('app.clinic_role', ${membership.role}, true)`,
     );
     return operation(transaction);
   });

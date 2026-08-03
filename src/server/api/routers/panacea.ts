@@ -1,11 +1,19 @@
 import { z } from "zod";
 
-import { acceptClinicOwnerInvitation } from "~/server/application/accept-clinic-owner-invitation";
+import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
+import { inviteAdditionalDoctor } from "~/server/application/doctor-invitations";
 import { completeOwnDoctorProfile } from "~/server/application/doctor-profile";
 import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
-import { sendSimulatedClinicOwnerInvitation } from "~/server/email/simulated-identity-email";
+import {
+  listDoctorInvitationStatuses,
+  drizzleDoctorInvitationStore,
+} from "~/server/db/doctor-invitation-store";
+import {
+  sendSimulatedClinicDoctorInvitation,
+  sendSimulatedClinicOwnerInvitation,
+} from "~/server/email/simulated-identity-email";
 import {
   clinicProcedure,
   protectedProcedure,
@@ -18,14 +26,49 @@ export const panaceaRouter = {
     status: "ready" as const,
   })),
 
-  acceptClinicOwnerInvitation: publicProcedure
+  acceptClinicInvitation: publicProcedure
     .input(
       z.object({
         password: z.string(),
         token: z.string(),
       }),
     )
-    .mutation(({ input }) => acceptClinicOwnerInvitation(input)),
+    .mutation(({ input }) => acceptClinicInvitation(input)),
+
+  inviteAdditionalDoctor: clinicProcedure
+    .input(
+      z.object({
+        email: z.string().trim().email(),
+        name: z.string().trim().min(1).max(120),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      inviteAdditionalDoctor(
+        {
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+          recipient: input,
+        },
+        {
+          sendInvitation: (invitation) =>
+            sendSimulatedClinicDoctorInvitation({
+              clinicName: invitation.clinicName,
+              expiresAt: invitation.expiresAt,
+              recipientEmail: invitation.email,
+              recipientName: invitation.recipientName,
+              token: invitation.token,
+            }),
+          store: drizzleDoctorInvitationStore,
+        },
+      ),
+    ),
+
+  listDoctorInvitations: clinicProcedure.query(({ ctx }) =>
+    listDoctorInvitationStatuses({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    }),
+  ),
 
   completeOwnDoctorProfile: clinicProcedure
     .input(

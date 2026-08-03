@@ -16,6 +16,7 @@ import {
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
 export type ClinicUserRole = "owner" | "doctor" | "secretary";
+export type ClinicInvitationRole = "owner" | "doctor";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -140,7 +141,8 @@ export const clinicInvitations = createTable("clinic_invitation", {
     .notNull()
     .references(() => clinics.id, { onDelete: "cascade" }),
   email: text("email").notNull(),
-  ownerName: text("owner_name").notNull(),
+  recipientName: text("recipient_name").notNull(),
+  role: text("role").$type<ClinicInvitationRole>().default("owner").notNull(),
   tokenHash: text("token_hash").notNull().unique(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),

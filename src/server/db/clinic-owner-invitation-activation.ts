@@ -3,10 +3,9 @@ import { randomUUID } from "node:crypto";
 import { hashPassword } from "better-auth/crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 
-import { type ClinicOwnerMembership } from "~/server/application/accept-clinic-owner-invitation";
 import { ClinicOwnerInvitationError } from "~/server/application/clinic-owner-invitation-errors";
 import { db } from "~/server/db";
-import { hashClinicOwnerInvitationToken } from "~/server/db/clinic-owner-invitation-token";
+import { hashClinicInvitationToken } from "~/server/db/clinic-invitation-token";
 import {
   account,
   clinicInvitations,
@@ -19,18 +18,25 @@ import {
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
+export type ClinicInvitationMembership = {
+  active: true;
+  clinicId: string;
+  identityId: string;
+  role: "doctor" | "owner";
+};
+
 export type ClinicOwnerInvitationActivation = {
   accept(input: {
     password: string;
     token: string;
-  }): Promise<ClinicOwnerMembership>;
+  }): Promise<ClinicInvitationMembership>;
   recordFailedAttempt(token: string): Promise<void>;
 };
 
 export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActivation =
   {
     async accept(input) {
-      const tokenHash = hashClinicOwnerInvitationToken(input.token);
+      const tokenHash = hashClinicInvitationToken(input.token);
       const passwordHash = await hashPassword(input.password);
 
       try {
@@ -50,7 +56,8 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
             .returning({
               clinicId: clinicInvitations.clinicId,
               email: clinicInvitations.email,
-              ownerName: clinicInvitations.ownerName,
+              recipientName: clinicInvitations.recipientName,
+              role: clinicInvitations.role,
             });
 
           if (invitation === undefined) {
@@ -64,7 +71,7 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
 
           await transaction.insert(user).values({
             id: identityId,
-            name: invitation.ownerName,
+            name: invitation.recipientName,
             email: invitation.email.toLowerCase(),
             emailVerified: false,
             createdAt: now,
@@ -84,7 +91,7 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
             .values({
               clinicId: invitation.clinicId,
               identityId,
-              role: "owner",
+              role: invitation.role,
               active: true,
             })
             .returning({ id: clinicUsers.id });
@@ -110,7 +117,10 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
             entityId: doctor.id,
           });
           await transaction.insert(identityAuditEvents).values({
-            action: "identity-invitation-accepted",
+            action:
+              invitation.role === "owner"
+                ? "identity-invitation-accepted"
+                : "clinic-doctor-invitation-accepted",
             actorIdentityId: identityId,
             actorKind: "identity",
             clinicId: invitation.clinicId,
@@ -121,7 +131,7 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
             active: true as const,
             clinicId: invitation.clinicId,
             identityId,
-            role: "owner" as const,
+            role: invitation.role,
           };
         });
 
@@ -135,7 +145,7 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
     },
 
     async recordFailedAttempt(token) {
-      const tokenHash = hashClinicOwnerInvitationToken(token);
+      const tokenHash = hashClinicInvitationToken(token);
       await db.transaction(async (transaction) => {
         await auditFailedActivation(transaction, tokenHash);
       });

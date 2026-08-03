@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 
 import { type SyntheticClinicRegistration } from "~/server/application/create-synthetic-clinic";
 import { inSuperadminTransaction } from "~/server/db/clinic-context";
-import { hashClinicOwnerInvitationToken } from "~/server/db/clinic-owner-invitation-token";
+import { hashClinicInvitationToken } from "~/server/db/clinic-invitation-token";
 import {
   clinics,
   clinicInvitations,
@@ -29,8 +29,8 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
           clinicId: createdClinic.id,
           email: input.invitation.ownerEmail,
           expiresAt: input.invitation.expiresAt,
-          ownerName: input.invitation.ownerName,
-          tokenHash: hashClinicOwnerInvitationToken(input.invitation.token),
+          recipientName: input.invitation.ownerName,
+          tokenHash: hashClinicInvitationToken(input.invitation.token),
         });
         await transaction.insert(identityAuditEvents).values({
           action: "synthetic-clinic-created",

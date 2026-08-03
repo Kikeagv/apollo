@@ -6,7 +6,7 @@ import { api } from "~/trpc/react";
 
 export function ActivateInvitationForm({ token }: { token: string }) {
   const [result, setResult] = useState<string>();
-  const activation = api.panacea.acceptClinicOwnerInvitation.useMutation({
+  const activation = api.panacea.acceptClinicInvitation.useMutation({
     onSuccess: () => {
       setResult(
         "La cuenta se activó. Ya puede iniciar sesión con su correo y contraseña.",
@@ -34,8 +34,7 @@ export function ActivateInvitationForm({ token }: { token: string }) {
   return (
     <form className="space-y-4" onSubmit={submit}>
       <p className="text-sm text-slate-300">
-        Cree la contraseña de su Identidad para activar el acceso de médico
-        propietario a su Clínica.
+        Cree la contraseña de su Identidad para activar su acceso a la Clínica.
       </p>
       <label className="block text-sm">
         Contraseña
