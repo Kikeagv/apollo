@@ -21,7 +21,7 @@ El CRM y panel interno para operar agenda, pacientes y, en fases posteriores, ex
 _Avoid_: Praxia cuando se habla del panel
 
 **Clínica**:
-La unidad cliente y de aislamiento de datos de Praxia; puede incluir uno o más médicos y usa un solo número de WhatsApp.
+La unidad cliente y de aislamiento de datos de Praxia; puede incluir uno o más médicos y usa un solo número de WhatsApp. Es la fuente de zona horaria para sus Horarios, Bloqueos, Citas y Agenda; durante el piloto usa `America/El_Salvador`.
 _Avoid_: tenant, cuenta
 
 **Contacto**:
@@ -51,6 +51,50 @@ _Avoid_: usuario de clínica
 **Usuario de clínica**:
 La persona operadora autorizada dentro de una clínica, con un rol y una relación con un médico cuando aplica. Es el sujeto que fija el contexto de clínica para RLS.
 _Avoid_: identidad cuando se habla de permisos sobre datos de una clínica
+
+**Médico**:
+El perfil clínico de un Usuario de clínica que atiende Citas y al que se le asignan Servicios, Horarios vigentes y Bloqueos. Expone nombre y una especialidad principal en texto libre al público. El médico propietario inicial se crea con su Clínica y queda vinculado a su Usuario de clínica; las secretarias no tienen perfil de Médico.
+_Avoid_: usar usuario de clínica para referirse a la disponibilidad o capacidad de atención
+
+**Médico propietario**:
+El Médico que posee el rol `owner` en una Clínica. Durante el piloto administra los Usuarios de clínica y toda la configuración de Médicos, Servicios, Horarios vigentes y Bloqueos de su Clínica, incluidos los de otros Médicos.
+_Avoid_: limitarlo a la configuración de su propio perfil o agenda
+
+**Médico no propietario**:
+El Usuario de clínica con perfil de Médico y sin rol de propietario. Puede editar únicamente su propio perfil, Ofertas de servicio, Horarios vigentes y Bloqueos; no administra otros Usuarios de clínica ni la configuración de otros Médicos.
+_Avoid_: otorgarle los privilegios administrativos del Médico propietario
+
+**Secretaria**:
+El Usuario de clínica sin perfil de Médico. No configura Médicos, Servicios, Ofertas de servicio, Horarios vigentes ni Bloqueos; sus operaciones de agenda se definen en los flujos correspondientes.
+_Avoid_: modelarla como Médico o concederle administración clínica
+
+**Servicio**:
+La prestación administrativa que una Clínica pone en su catálogo, con nombre único normalizado dentro de la Clínica y descripción pública común a todos los Médicos que la ofrecen. En fase 1 esa descripción no admite variantes por Médico. Su alta requiere al menos una Oferta de servicio activa; no existe un Servicio público sin un Médico que pueda atenderlo. No determina por sí sola la disponibilidad, duración, buffer ni precio de una atención.
+_Avoid_: tratarlo como una Cita o asumir que todos los Médicos lo ofrecen en las mismas condiciones
+
+**Oferta de servicio**:
+La única configuración activa para una pareja Médico–Servicio. Habilita a ese Médico a atender el Servicio y define el precio en USD, duración y buffer posterior aplicables; la Agenda la usa junto con la agenda del Médico para calcular una opción de atención. La duración es positiva y tanto esta como el buffer se expresan en múltiplos de cinco minutos; el buffer puede ser cero. Los cambios aplican inmediatamente a opciones nuevas, no a Citas ya confirmadas. El precio se conserva como importe monetario exacto. El buffer extiende el período bloqueado del Médico después del término de la atención.
+_Avoid_: copiar Servicios por Médico o consultar disponibilidad solo por Servicio
+
+**Horario vigente**:
+La regla recurrente de atención de un Médico para días de la semana y una o más franjas horarias del mismo día local, acotada por una fecha de inicio y, cuando corresponde, una fecha de término. Una jornada que cruza medianoche se expresa con dos franjas. Un cambio permanente cierra la vigencia previa y crea una nueva; Horarios traslapados del mismo Médico se unen y nunca generan capacidad paralela. Las opciones de atención inician en una cuadrícula fija de cinco minutos.
+_Avoid_: modificar retrospectivamente la disponibilidad o usarlo para una ausencia puntual
+
+**Bloqueo**:
+La excepción puntual o acotada que resta disponibilidad a la agenda de un Médico, por ejemplo una capacitación, vacaciones o un feriado. Puede incluir una etiqueta privada visible solo en Panacea; no se expone a pacientes ni por WhatsApp. No reemplaza ni modifica su Horario vigente. Una acción masiva de Panacea puede crear el mismo Bloqueo individual para varios Médicos, sin convertirlo en un cierre global de Clínica. No puede cubrir una Cita confirmada ni una Reserva temporal activa: el operador debe resolver la Cita o esperar el vencimiento de la Reserva antes de crear el Bloqueo.
+_Avoid_: editar el Horario vigente para registrar una ausencia
+
+**Opción de atención**:
+El inicio elegible que la Agenda calcula para una Oferta de servicio de un Médico activo que ya aceptó su invitación. Solo existe si la duración de la atención y su buffer posterior completos caben dentro de los Horarios vigentes, y no se traslapan con Bloqueos, Citas ni Reservas temporales. Un Médico sin esa capacidad permanece visible en Panacea, pero no aparece disponible a pacientes ni a Asclepio.
+_Avoid_: slot materializado o espacio que solo alcanza para la atención sin su buffer
+
+**Desactivación de configuración clínica**:
+El cierre explícito de un Médico o una Oferta de servicio para impedir nuevas opciones de atención. Conserva el historial y exige reprogramar o cancelar las Citas futuras afectadas, y esperar el vencimiento de las Reservas temporales activas, antes de completarse; nunca las cambia o elimina silenciosamente.
+_Avoid_: borrar un Médico o Servicio con Citas existentes
+
+**Cambio que reduce capacidad**:
+La creación de un Bloqueo, el cierre o acortamiento de un Horario vigente, o la Desactivación de configuración clínica. Panacea no lo completa si afecta una Cita confirmada o una Reserva temporal activa y muestra los conflictos para resolverlos explícitamente.
+_Avoid_: aceptar cambios de configuración que invaliden una opción o Cita existente
 
 **Mensaje transaccional de cita**:
 El mensaje proactivo que Asclepio envía sobre una cita concreta: confirmación, recordatorio o aviso de cancelación. No incluye campañas ni seguimiento comercial.
@@ -132,10 +176,14 @@ _Avoid_: bloqueo permanente por error de contraseña
 El registro de inicios de sesión, invitaciones, suspensiones, cambios de rol, restablecimientos, revocaciones y recuperaciones manuales. Conserva actor, momento, Clínica y resultado durante al menos 12 meses, sin contraseñas, OTP ni contenido de Pacientes.
 _Avoid_: auditoría que almacena secretos o conversaciones
 
+**Auditoría de configuración clínica**:
+El registro de cambios a Médicos, Servicios, Ofertas de servicio, Horarios vigentes y Bloqueos. Conserva actor, Clínica, instante, entidad, tipo de cambio y los valores relevantes antes y después durante al menos 12 meses, sin datos de Pacientes.
+_Avoid_: limitar la auditoría a Identidad cuando se modifica la capacidad de atención
+
 **Recuperación de plataforma**:
 La restauración verificable de datos y operación de Apolo. En el piloto usa recuperación a un punto en el tiempo con RPO de minutos y se prueba mensualmente en un servidor limpio.
 _Avoid_: confiar en una copia nocturna sin prueba de restauración
 
 **Invitación de usuario de clínica**:
-El enlace de un solo uso con el que el médico propietario incorpora a un Usuario de clínica. Vence a las 72 horas; si vence, se emite una nueva invitación.
+El enlace de un solo uso con el que el médico propietario incorpora a un Usuario de clínica. Vence a las 72 horas; si vence, se emite una nueva invitación. Una invitación a Médico activa su perfil clínico al aceptarse; hasta entonces no es elegible en la Agenda.
 _Avoid_: enlace reutilizable o de duración indefinida
