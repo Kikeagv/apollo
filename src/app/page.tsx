@@ -1,0 +1,66 @@
+import { getSession } from "~/server/better-auth/server";
+import {
+  CLINIC_SESSION_COOKIE,
+  CLINIC_TRUSTED_DEVICE_COOKIE,
+  findTrustedClinicContext,
+} from "~/server/application/clinic-access";
+import { cookies } from "next/headers";
+
+import { ClinicSessionActivity } from "./clinic-session-activity";
+import { ClinicSignInForm } from "./clinic-sign-in-form";
+import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
+import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
+
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ verificar?: string }>;
+}) {
+  const session = await getSession();
+  const trustedDeviceToken = (await cookies()).get(
+    CLINIC_TRUSTED_DEVICE_COOKIE,
+  )?.value;
+  const clinicSessionToken = (await cookies()).get(
+    CLINIC_SESSION_COOKIE,
+  )?.value;
+  const context =
+    session === null
+      ? undefined
+      : await findTrustedClinicContext({
+          identityId: session.user.id,
+          clinicSessionToken,
+          trustedDeviceToken,
+        });
+  const { verificar } = await searchParams;
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
+      <section className="w-full max-w-xl space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl">
+        <p className="text-sm font-medium tracking-[0.2em] text-teal-300">
+          PRAXIA
+        </p>
+        <h1 className="text-4xl font-semibold">Panacea</h1>
+        {context ? (
+          <>
+            <ClinicSessionActivity />
+            <p className="text-lg">{context.clinicName}</p>
+            <p>
+              Aún no hay información para mostrar en esta Clínica. Esta es su
+              Panacea vacía.
+            </p>
+            <SyntheticClinicalActionForm />
+          </>
+        ) : session && verificar === "otp" ? (
+          <>
+            <p>
+              Confirme el inicio desde este navegador antes de abrir Panacea.
+            </p>
+            <VerifyClinicOtpForm />
+          </>
+        ) : (
+          <ClinicSignInForm />
+        )}
+      </section>
+    </main>
+  );
+}
