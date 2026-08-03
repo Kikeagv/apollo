@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 import { loadEnv } from "vite";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig(({ mode }) => ({
   resolve: {
@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => ({
     },
   },
   test: {
+    exclude: [...configDefaults.exclude, "e2e/**"],
     env: loadEnv(mode, process.cwd(), ""),
   },
 }));

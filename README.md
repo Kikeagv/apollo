@@ -32,3 +32,16 @@ npm run build
 
 Las pruebas de casos de uso usan un adaptador de correo simulado y datos
 sintéticos. Las políticas SQL de RLS viven en las migraciones bajo `drizzle/`.
+
+### Recorrido E2E de Panacea
+
+Con PostgreSQL local y las migraciones aplicadas, ejecuta:
+
+```sh
+npm run test:e2e
+```
+
+La prueba levanta un servidor aislado, crea y elimina una Clínica sintética, y
+recorre en Chromium la activación del médico propietario, inicio con OTP y la
+acción clínica sintética. El OTP fijo se habilita exclusivamente para ese
+proceso E2E; el desarrollo normal sigue usando códigos aleatorios.
