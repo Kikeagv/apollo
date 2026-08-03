@@ -1,15 +1,21 @@
 import { relations } from "drizzle-orm";
 import {
   boolean,
+  foreignKey,
   index,
+  jsonb,
   pgTable,
   pgTableCreator,
   text,
   timestamp,
+  unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
+
+export type ClinicUserRole = "owner" | "doctor" | "secretary";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -90,13 +96,42 @@ export const clinicUsers = createTable(
     identityId: text("identity_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    role: text("role").$type<"owner" | "secretary">().notNull(),
+    role: text("role").$type<ClinicUserRole>().notNull(),
     active: boolean("active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("clinic_user_identity_idx").on(table.identityId)],
+  (table) => [
+    index("clinic_user_identity_idx").on(table.identityId),
+    unique("clinic_user_clinic_id_unique").on(table.clinicId, table.id),
+  ],
+);
+
+/** Perfil clínico de un Usuario de clínica que puede atender Citas. */
+export const doctors = createTable(
+  "doctor",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    clinicUserId: uuid("clinic_user_id").notNull(),
+    publicName: text("public_name"),
+    primarySpecialty: text("primary_specialty"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("doctor_clinic_user_idx").on(table.clinicUserId),
+    index("doctor_clinic_idx").on(table.clinicId),
+    foreignKey({
+      columns: [table.clinicId, table.clinicUserId],
+      foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
+      name: "doctor_clinic_user_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
 );
 
 export const clinicInvitations = createTable("clinic_invitation", {
@@ -174,6 +209,28 @@ export const identityAuditEvents = createTable("identity_audit_event", {
     .defaultNow()
     .notNull(),
 });
+
+/** Auditoría de capacidad clínica; nunca almacena datos de Pacientes. */
+export const configurationAuditEvents = createTable(
+  "configuration_audit_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    /** Identificadores inmutables para conservar evidencia durante la retención. */
+    actorIdentityId: text("actor_identity_id").notNull(),
+    entity: text("entity").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    action: text("action").notNull(),
+    beforeValues: jsonb("before_values").$type<Record<string, string | null>>(),
+    afterValues: jsonb("after_values")
+      .$type<Record<string, string | null>>()
+      .notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("configuration_audit_clinic_idx").on(table.clinicId)],
+);
 
 /** Operadores de Apolo: identidad separada de cualquier rol clínico. */
 export const apoloSuperadmins = createTable("superadmin", {

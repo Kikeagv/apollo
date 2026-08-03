@@ -11,6 +11,8 @@ import {
   account,
   clinicInvitations,
   clinicUsers,
+  configurationAuditEvents,
+  doctors,
   identityAuditEvents,
   user,
 } from "~/server/db/schema";
@@ -77,11 +79,35 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
             createdAt: now,
             updatedAt: now,
           });
-          await transaction.insert(clinicUsers).values({
+          const [clinicUser] = await transaction
+            .insert(clinicUsers)
+            .values({
+              clinicId: invitation.clinicId,
+              identityId,
+              role: "owner",
+              active: true,
+            })
+            .returning({ id: clinicUsers.id });
+          if (clinicUser === undefined) {
+            throw new Error("No se pudo crear el Usuario de clínica");
+          }
+          const [doctor] = await transaction
+            .insert(doctors)
+            .values({
+              clinicId: invitation.clinicId,
+              clinicUserId: clinicUser.id,
+            })
+            .returning({ id: doctors.id });
+          if (doctor === undefined) {
+            throw new Error("No se pudo crear el perfil de Médico propietario");
+          }
+          await transaction.insert(configurationAuditEvents).values({
+            action: "doctor-profile-created",
+            actorIdentityId: identityId,
+            afterValues: { primarySpecialty: null, publicName: null },
             clinicId: invitation.clinicId,
-            identityId,
-            role: "owner",
-            active: true,
+            entity: "doctor-profile",
+            entityId: doctor.id,
           });
           await transaction.insert(identityAuditEvents).values({
             action: "identity-invitation-accepted",

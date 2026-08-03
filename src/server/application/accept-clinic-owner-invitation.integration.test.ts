@@ -4,14 +4,24 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { acceptClinicOwnerInvitation } from "./accept-clinic-owner-invitation";
+import {
+  DoctorProfileAccessError,
+  completeOwnDoctorProfile,
+  findOwnDoctorProfile,
+} from "./doctor-profile";
 import { createSyntheticClinic } from "./create-synthetic-clinic";
 import { auth } from "../better-auth";
-import { inSuperadminTransaction } from "../db/clinic-context";
+import {
+  inClinicTransaction,
+  inSuperadminTransaction,
+} from "../db/clinic-context";
 import { db } from "../db";
 import {
   apoloSuperadmins,
   clinics,
   clinicInvitations,
+  clinicUsers,
+  doctors,
   identityAuditEvents,
   user as identities,
 } from "../db/schema";
@@ -77,6 +87,249 @@ describe("activación persistente por invitación del médico propietario", () =
         expectAuditWithoutSensitiveContent(events, "Contraseña-segura-APO-28");
       } finally {
         await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "crea el perfil del Médico propietario, permite completarlo y deniega a una Secretaria",
+    async () => {
+      const fixture = await createActivationFixture();
+      const additionalDoctorId = `apo-31-doctor-${randomUUID()}`;
+      const secretaryId = `apo-31-secretary-${randomUUID()}`;
+
+      try {
+        const activation = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-31",
+          token: fixture.invitationToken,
+        });
+        fixture.identityId = activation.identityId;
+
+        await expect(
+          findOwnDoctorProfile({
+            clinicId: fixture.clinicId,
+            identityId: activation.identityId,
+          }),
+        ).resolves.toMatchObject({
+          primarySpecialty: null,
+          publicName: null,
+        });
+
+        await expect(
+          completeOwnDoctorProfile({
+            clinicId: fixture.clinicId,
+            identityId: activation.identityId,
+            primarySpecialty: "Medicina familiar",
+            publicName: "Dra. Ana Reyes",
+          }),
+        ).resolves.toMatchObject({
+          primarySpecialty: "Medicina familiar",
+          publicName: "Dra. Ana Reyes",
+        });
+
+        await db.insert(identities).values({
+          id: additionalDoctorId,
+          name: "Dr. Luis Pérez",
+          email: `${additionalDoctorId}@example.test`,
+          emailVerified: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        await inSuperadminTransaction(
+          fixture.superadminId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const [clinicUser] = await transaction
+              .insert(clinicUsers)
+              .values({
+                active: true,
+                clinicId: fixture.clinicId,
+                identityId: additionalDoctorId,
+                role: "doctor",
+              })
+              .returning({ id: clinicUsers.id });
+            if (clinicUser === undefined) throw new Error("Falta el Médico");
+            await transaction.insert(doctors).values({
+              clinicId: fixture.clinicId,
+              clinicUserId: clinicUser.id,
+            });
+          },
+        );
+        await expect(
+          completeOwnDoctorProfile({
+            clinicId: fixture.clinicId,
+            identityId: additionalDoctorId,
+            primarySpecialty: "Pediatría",
+            publicName: "Dr. Luis Pérez",
+          }),
+        ).resolves.toMatchObject({ primarySpecialty: "Pediatría" });
+
+        await db.insert(identities).values({
+          id: secretaryId,
+          name: "Secretaria APO-31",
+          email: `${secretaryId}@example.test`,
+          emailVerified: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        await inSuperadminTransaction(
+          fixture.superadminId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            await transaction.insert(clinicUsers).values({
+              active: true,
+              clinicId: fixture.clinicId,
+              identityId: secretaryId,
+              role: "secretary",
+            });
+          },
+        );
+
+        await expect(
+          completeOwnDoctorProfile({
+            clinicId: fixture.clinicId,
+            identityId: secretaryId,
+            primarySpecialty: "No aplica",
+            publicName: "Secretaria sin perfil",
+          }),
+        ).rejects.toBeInstanceOf(DoctorProfileAccessError);
+
+        const audit = await inSuperadminTransaction(
+          fixture.superadminId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            return transaction.query.configurationAuditEvents.findMany();
+          },
+        );
+        expect(audit).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              action: "doctor-profile-created",
+              actorIdentityId: activation.identityId,
+              afterValues: { primarySpecialty: null, publicName: null },
+              clinicId: fixture.clinicId,
+              entity: "doctor-profile",
+            }),
+            expect.objectContaining({
+              action: "doctor-profile-completed",
+              actorIdentityId: activation.identityId,
+              afterValues: {
+                primarySpecialty: "Medicina familiar",
+                publicName: "Dra. Ana Reyes",
+              },
+              beforeValues: { primarySpecialty: null, publicName: null },
+              clinicId: fixture.clinicId,
+              entity: "doctor-profile",
+            }),
+          ]),
+        );
+        expect(JSON.stringify(audit)).not.toContain("patient");
+      } finally {
+        await db
+          .delete(identities)
+          .where(eq(identities.id, additionalDoctorId));
+        await db.delete(identities).where(eq(identities.id, secretaryId));
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "RLS impide que una Clínica consulte o modifique el perfil de Médico de otra",
+    async () => {
+      const first = await createActivationFixture();
+      const second = await createActivationFixture();
+      const foreignIdentityId = `apo-31-foreign-doctor-${randomUUID()}`;
+
+      try {
+        const firstActivation = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-31",
+          token: first.invitationToken,
+        });
+        first.identityId = firstActivation.identityId;
+        const secondActivation = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-31",
+          token: second.invitationToken,
+        });
+        second.identityId = secondActivation.identityId;
+        const firstProfile = await findOwnDoctorProfile({
+          clinicId: first.clinicId,
+          identityId: firstActivation.identityId,
+        });
+        if (firstProfile === undefined)
+          throw new Error("Falta el perfil inicial");
+
+        await db.insert(identities).values({
+          id: foreignIdentityId,
+          name: "Médico ajeno APO-31",
+          email: `${foreignIdentityId}@example.test`,
+          emailVerified: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        const foreignClinicUserId = await inSuperadminTransaction(
+          second.superadminId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${second.clinicId}, true)`,
+            );
+            const [clinicUser] = await transaction
+              .insert(clinicUsers)
+              .values({
+                active: true,
+                clinicId: second.clinicId,
+                identityId: foreignIdentityId,
+                role: "doctor",
+              })
+              .returning({ id: clinicUsers.id });
+            if (clinicUser === undefined) throw new Error("Falta el Médico");
+            return clinicUser.id;
+          },
+        );
+
+        await inClinicTransaction(
+          {
+            clinicId: second.clinicId,
+            identityId: secondActivation.identityId,
+          },
+          async (transaction) => {
+            await expect(
+              transaction.query.doctors.findFirst({
+                where: eq(doctors.id, firstProfile.id),
+              }),
+            ).resolves.toBeUndefined();
+            await expect(
+              transaction
+                .update(doctors)
+                .set({ publicName: "No debe mutar" })
+                .where(eq(doctors.id, firstProfile.id))
+                .returning({ id: doctors.id }),
+            ).resolves.toEqual([]);
+          },
+        );
+        await expect(
+          inClinicTransaction(
+            {
+              clinicId: first.clinicId,
+              identityId: firstActivation.identityId,
+            },
+            (transaction) =>
+              transaction.insert(doctors).values({
+                clinicId: first.clinicId,
+                clinicUserId: foreignClinicUserId,
+              }),
+          ),
+        ).rejects.toThrow();
+      } finally {
+        await db.delete(identities).where(eq(identities.id, foreignIdentityId));
+        await first.cleanup();
+        await second.cleanup();
       }
     },
   );

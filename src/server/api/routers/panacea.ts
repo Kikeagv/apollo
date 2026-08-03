@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { acceptClinicOwnerInvitation } from "~/server/application/accept-clinic-owner-invitation";
+import { completeOwnDoctorProfile } from "~/server/application/doctor-profile";
 import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
@@ -25,6 +26,21 @@ export const panaceaRouter = {
       }),
     )
     .mutation(({ input }) => acceptClinicOwnerInvitation(input)),
+
+  completeOwnDoctorProfile: clinicProcedure
+    .input(
+      z.object({
+        primarySpecialty: z.string().max(160),
+        publicName: z.string().max(120),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      completeOwnDoctorProfile({
+        ...input,
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      }),
+    ),
 
   createSyntheticClinic: protectedProcedure
     .input(

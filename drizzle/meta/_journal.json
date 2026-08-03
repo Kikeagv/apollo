@@ -85,6 +85,20 @@
       "when": 1785705100000,
       "tag": "0011_suspension_usuario_clinico_con_rol_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785705200000,
+      "tag": "0012_perfil_medico_propietario",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785705300000,
+      "tag": "0013_retenencia_auditoria_y_perfil_consistente",
+      "breakpoints": true
     }
   ]
 }

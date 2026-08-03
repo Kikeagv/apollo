@@ -4,10 +4,12 @@ import {
   CLINIC_TRUSTED_DEVICE_COOKIE,
   findTrustedClinicContext,
 } from "~/server/application/clinic-access";
+import { findOwnDoctorProfile } from "~/server/application/doctor-profile";
 import { cookies } from "next/headers";
 
 import { ClinicSessionActivity } from "./clinic-session-activity";
 import { ClinicSignInForm } from "./clinic-sign-in-form";
+import { DoctorProfileSetup } from "./doctor-profile-setup";
 import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
 import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
 
@@ -32,6 +34,13 @@ export default async function Home({
           trustedDeviceToken,
         });
   const { verificar } = await searchParams;
+  const profile =
+    context === undefined
+      ? undefined
+      : await findOwnDoctorProfile({
+          clinicId: context.clinicId,
+          identityId: context.identityId,
+        });
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
@@ -48,6 +57,7 @@ export default async function Home({
               Aún no hay información para mostrar en esta Clínica. Esta es su
               Panacea vacía.
             </p>
+            {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
             <SyntheticClinicalActionForm />
           </>
         ) : session && verificar === "otp" ? (
