@@ -125,7 +125,7 @@ export function ServiceCatalogSection({
               className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
               inputMode="decimal"
               name="priceUsd"
-              pattern="[0-9]+\\.[0-9]{2}"
+              pattern="[0-9]+\.[0-9]{2}"
               placeholder="35.00"
               required
             />
@@ -211,7 +211,7 @@ export function ServiceCatalogSection({
                     className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
                     defaultValue="0.00"
                     name="priceUsd"
-                    pattern="[0-9]+\\.[0-9]{2}"
+                    pattern="[0-9]+\.[0-9]{2}"
                     required
                   />
                 </label>
@@ -263,7 +263,7 @@ export function ServiceCatalogSection({
                       defaultValue={offer.priceUsd}
                       disabled={!offer.active}
                       name="priceUsd"
-                      pattern="[0-9]+\\.[0-9]{2}"
+                      pattern="[0-9]+\.[0-9]{2}"
                       required
                     />
                   </label>
