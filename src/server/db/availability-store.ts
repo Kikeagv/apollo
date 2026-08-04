@@ -5,6 +5,7 @@ import {
   gt,
   gte,
   inArray,
+  isNotNull,
   isNull,
   lt,
   lte,
@@ -219,7 +220,14 @@ export const drizzleCareOptionsStore: CareOptionsStore = {
             eq(serviceOffers.serviceId, input.serviceId),
             eq(serviceOffers.active, true),
             eq(clinicUsers.active, true),
-            inArray(clinicUsers.role, ["owner", "doctor"]),
+            or(
+              eq(clinicUsers.role, "owner"),
+              and(
+                eq(clinicUsers.role, "doctor"),
+                isNotNull(doctors.publicName),
+                isNotNull(doctors.primarySpecialty),
+              ),
+            ),
           ),
         );
       if (offer === undefined) return undefined;

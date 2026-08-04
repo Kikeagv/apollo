@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 import { createCaller } from "~/server/api/root";
 import { type createTRPCContext } from "~/server/api/trpc";
 import { hashOpaqueAccessToken } from "~/server/application/clinic-access";
+import { configureEffectiveSchedule } from "./availability";
 import { acceptClinicOwnerInvitation } from "./accept-clinic-owner-invitation";
+import { calculateCareOptions } from "./care-options";
 import { inviteAdditionalDoctor } from "./doctor-invitations";
 import {
   DoctorProfileAccessError,
@@ -20,6 +22,10 @@ import {
   inSuperadminTransaction,
 } from "../db/clinic-context";
 import { db } from "../db";
+import {
+  drizzleAvailabilityStore,
+  drizzleCareOptionsStore,
+} from "../db/availability-store";
 import {
   apoloSuperadmins,
   clinics,
@@ -36,12 +42,14 @@ import {
   drizzleDoctorInvitationStore,
   listDoctorInvitationStatuses,
 } from "../db/doctor-invitation-store";
+import { drizzleServiceCatalogStore } from "../db/service-catalog-store";
 import {
   getSentClinicDoctorInvitations,
   getSentClinicOwnerInvitations,
   sendSimulatedClinicDoctorInvitation,
   sendSimulatedClinicOwnerInvitation,
 } from "../email/simulated-identity-email";
+import { createService } from "./service-catalog";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
@@ -202,6 +210,169 @@ describe("activación persistente por invitación del médico propietario", () =
             }),
           ]),
         );
+      } finally {
+        if (doctorIdentityId !== undefined) {
+          await db
+            .delete(identities)
+            .where(eq(identities.id, doctorIdentityId));
+        }
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "exige perfil público al Médico invitado sin afectar al propietario inicial",
+    async () => {
+      const fixture = await createActivationFixture();
+      let doctorIdentityId: string | undefined;
+
+      try {
+        const owner = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: fixture.invitationToken,
+        });
+        fixture.identityId = owner.identityId;
+        const ownerProfile = await findOwnDoctorProfile({
+          clinicId: fixture.clinicId,
+          identityId: owner.identityId,
+        });
+        if (ownerProfile === undefined)
+          throw new Error("Falta el perfil del propietario");
+        const doctorEmail = `apo-32-agenda-${randomUUID()}@example.test`;
+        await inviteAdditionalDoctor(
+          {
+            clinicId: fixture.clinicId,
+            identityId: owner.identityId,
+            recipient: { email: doctorEmail, name: "Dr. Rafael Soto" },
+          },
+          {
+            sendInvitation: (invitation) =>
+              sendSimulatedClinicDoctorInvitation({
+                clinicName: invitation.clinicName,
+                expiresAt: invitation.expiresAt,
+                recipientEmail: invitation.email,
+                recipientName: invitation.recipientName,
+                token: invitation.token,
+              }),
+            store: drizzleDoctorInvitationStore,
+          },
+        );
+        const invitation = getSentClinicDoctorInvitations()
+          .slice()
+          .reverse()
+          .find((candidate) => candidate.recipientEmail === doctorEmail);
+        if (invitation === undefined)
+          throw new Error("Falta la invitación al Médico");
+        const doctor = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-32",
+          token: invitation.token,
+        });
+        doctorIdentityId = doctor.identityId;
+        const doctorProfile = await findOwnDoctorProfile({
+          clinicId: fixture.clinicId,
+          identityId: doctor.identityId,
+        });
+        if (doctorProfile === undefined)
+          throw new Error("Falta el perfil del Médico");
+
+        expect(ownerProfile).toMatchObject({
+          primarySpecialty: null,
+          publicName: null,
+        });
+        expect(doctorProfile).toMatchObject({
+          primarySpecialty: null,
+          publicName: null,
+        });
+        const service = await createService(
+          {
+            clinicId: fixture.clinicId,
+            description: "Consulta inicial",
+            identityId: owner.identityId,
+            name: "Consulta de Agenda",
+            offers: [
+              {
+                bufferMinutes: 0,
+                doctorId: ownerProfile.id,
+                durationMinutes: 30,
+                priceUsd: "35.00",
+              },
+              {
+                bufferMinutes: 0,
+                doctorId: doctorProfile.id,
+                durationMinutes: 30,
+                priceUsd: "35.00",
+              },
+            ],
+          },
+          drizzleServiceCatalogStore,
+        );
+        await configureEffectiveSchedule(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: ownerProfile.id,
+            effectiveFrom: "2026-08-01",
+            identityId: owner.identityId,
+            periods: [{ dayOfWeek: 1, endTime: "09:00", startTime: "08:00" }],
+          },
+          drizzleAvailabilityStore,
+        );
+        await configureEffectiveSchedule(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: doctorProfile.id,
+            effectiveFrom: "2026-08-01",
+            identityId: owner.identityId,
+            periods: [{ dayOfWeek: 1, endTime: "09:00", startTime: "08:00" }],
+          },
+          drizzleAvailabilityStore,
+        );
+
+        await expect(
+          calculateCareOptions(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: ownerProfile.id,
+              from: "2026-08-03",
+              identityId: owner.identityId,
+              serviceId: service.id,
+              to: "2026-08-03",
+            },
+            drizzleCareOptionsStore,
+          ),
+        ).resolves.toHaveLength(7);
+        await expect(
+          calculateCareOptions(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: doctorProfile.id,
+              from: "2026-08-03",
+              identityId: owner.identityId,
+              serviceId: service.id,
+              to: "2026-08-03",
+            },
+            drizzleCareOptionsStore,
+          ),
+        ).resolves.toEqual([]);
+        await completeOwnDoctorProfile({
+          clinicId: fixture.clinicId,
+          identityId: doctor.identityId,
+          primarySpecialty: "Medicina familiar",
+          publicName: "Dr. Rafael Soto",
+        });
+        await expect(
+          calculateCareOptions(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: doctorProfile.id,
+              from: "2026-08-03",
+              identityId: owner.identityId,
+              serviceId: service.id,
+              to: "2026-08-03",
+            },
+            drizzleCareOptionsStore,
+          ),
+        ).resolves.toHaveLength(7);
       } finally {
         if (doctorIdentityId !== undefined) {
           await db
