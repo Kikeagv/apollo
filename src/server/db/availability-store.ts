@@ -219,6 +219,7 @@ export const drizzleCareOptionsStore: CareOptionsStore = {
             eq(serviceOffers.doctorId, input.doctorId),
             eq(serviceOffers.serviceId, input.serviceId),
             eq(serviceOffers.active, true),
+            eq(doctors.active, true),
             eq(clinicUsers.active, true),
             or(
               eq(clinicUsers.role, "owner"),

@@ -3,6 +3,10 @@ import { z } from "zod";
 import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
 import { inviteAdditionalDoctor } from "~/server/application/doctor-invitations";
 import { completeOwnDoctorProfile } from "~/server/application/doctor-profile";
+import {
+  deactivateDoctor,
+  DoctorDeactivationAccessError,
+} from "~/server/application/doctor-status";
 import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import {
@@ -28,6 +32,10 @@ import {
   listDoctorInvitationStatuses,
   drizzleDoctorInvitationStore,
 } from "~/server/db/doctor-invitation-store";
+import {
+  drizzleDoctorStatusStore,
+  listDoctors,
+} from "~/server/db/doctor-status-store";
 import {
   drizzleServiceCatalogStore,
   listServiceCatalog,
@@ -91,6 +99,28 @@ export const panaceaRouter = {
       identityId: ctx.clinic.identityId,
     }),
   ),
+
+  listDoctors: clinicProcedure.query(async ({ ctx }) => {
+    const doctors = await listDoctors({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    });
+    if (ctx.clinic.role !== "owner") throw new DoctorDeactivationAccessError();
+    return doctors;
+  }),
+
+  deactivateDoctor: clinicProcedure
+    .input(z.object({ doctorId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      deactivateDoctor(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleDoctorStatusStore,
+      ),
+    ),
 
   completeOwnDoctorProfile: clinicProcedure
     .input(

@@ -1,9 +1,6 @@
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
-import {
-  CapacityConflictError,
-  type CapacityConflict,
-} from "~/server/application/availability";
+import { CapacityConflictError } from "~/server/application/availability";
 import {
   type ServiceCatalogStore,
   type ServiceOfferCreator,
@@ -12,14 +9,13 @@ import {
   type ServiceOfferUpdater,
 } from "~/server/application/service-catalog";
 import { inClinicTransaction } from "~/server/db/clinic-context";
+import { capacityConflictsForDoctor } from "~/server/db/doctor-occupancy-store";
 import {
   clinicUsers,
   configurationAuditEvents,
   doctors,
-  appointments,
   serviceOffers,
   services,
-  temporaryReservations,
 } from "~/server/db/schema";
 
 export class IneligibleServiceOfferDoctorError extends Error {
@@ -260,7 +256,7 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
       await transaction.execute(
         sql`select pg_advisory_xact_lock(hashtext(${offer.doctorId}))`,
       );
-      const conflicts = await activeOccupancy(transaction, {
+      const conflicts = await capacityConflictsForDoctor(transaction, {
         clinicId: input.clinicId,
         doctorId: offer.doctorId,
       });
@@ -332,6 +328,7 @@ export async function listServiceCatalog(input: {
         .where(
           and(
             eq(doctors.clinicId, input.clinicId),
+            eq(doctors.active, true),
             eq(clinicUsers.active, true),
             inArray(clinicUsers.role, ["owner", "doctor"]),
           ),
@@ -405,6 +402,7 @@ async function requireEligibleDoctors(
     .where(
       and(
         eq(doctors.clinicId, clinicId),
+        eq(doctors.active, true),
         eq(clinicUsers.active, true),
         inArray(clinicUsers.role, ["owner", "doctor"]),
         inArray(doctors.id, uniqueDoctorIds),
@@ -422,64 +420,5 @@ function offerAuditValues(offer: ServiceOffer) {
     doctorId: offer.doctorId,
     durationMinutes: String(offer.durationMinutes),
     priceUsd: offer.priceUsd,
-  };
-}
-
-async function activeOccupancy(
-  transaction: Parameters<Parameters<typeof inClinicTransaction>[1]>[0],
-  input: { clinicId: string; doctorId: string },
-): Promise<CapacityConflict[]> {
-  const [confirmed, reservations] = await Promise.all([
-    transaction
-      .select({
-        endsAt: appointments.endsAt,
-        id: appointments.id,
-        startsAt: appointments.startsAt,
-      })
-      .from(appointments)
-      .where(
-        and(
-          eq(appointments.clinicId, input.clinicId),
-          eq(appointments.doctorId, input.doctorId),
-          eq(appointments.status, "confirmed"),
-          gt(appointments.endsAt, new Date()),
-        ),
-      ),
-    transaction
-      .select({
-        endsAt: temporaryReservations.endsAt,
-        id: temporaryReservations.id,
-        startsAt: temporaryReservations.startsAt,
-      })
-      .from(temporaryReservations)
-      .where(
-        and(
-          eq(temporaryReservations.clinicId, input.clinicId),
-          eq(temporaryReservations.doctorId, input.doctorId),
-          gt(temporaryReservations.expiresAt, new Date()),
-        ),
-      ),
-  ]);
-  return [
-    ...confirmed.map((event) =>
-      capacityConflict(event, input.doctorId, "confirmed-appointment"),
-    ),
-    ...reservations.map((event) =>
-      capacityConflict(event, input.doctorId, "active-temporary-reservation"),
-    ),
-  ];
-}
-
-function capacityConflict(
-  event: { endsAt: Date; id: string; startsAt: Date },
-  doctorId: string,
-  kind: CapacityConflict["kind"],
-): CapacityConflict {
-  return {
-    doctorId,
-    endsAt: event.endsAt.toISOString(),
-    id: event.id,
-    kind,
-    startsAt: event.startsAt.toISOString(),
   };
 }

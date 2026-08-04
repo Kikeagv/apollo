@@ -124,6 +124,8 @@ export const doctors = createTable(
     clinicUserId: uuid("clinic_user_id").notNull(),
     publicName: text("public_name"),
     primarySpecialty: text("primary_specialty"),
+    active: boolean("active").default(true).notNull(),
+    deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

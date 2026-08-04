@@ -127,6 +127,13 @@
       "when": 1785840120000,
       "tag": "0017_horarios_vigentes_y_bloqueos",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785840180000,
+      "tag": "0018_rich_random",
+      "breakpoints": true
     }
   ]
 }

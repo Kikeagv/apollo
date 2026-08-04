@@ -7,10 +7,19 @@ import { api } from "~/trpc/react";
 export function DoctorsSection() {
   const [result, setResult] = useState<string>();
   const invitations = api.panacea.listDoctorInvitations.useQuery();
+  const doctors = api.panacea.listDoctors.useQuery();
   const invite = api.panacea.inviteAdditionalDoctor.useMutation({
     onSuccess: (invitation) => {
       setResult(`Invitación enviada a ${invitation.recipientName}.`);
       void invitations.refetch();
+    },
+  });
+  const deactivate = api.panacea.deactivateDoctor.useMutation({
+    onSuccess: (doctor) => {
+      setResult(
+        `Médico desactivado: ${doctor.publicName ?? "sin nombre público"}.`,
+      );
+      void doctors.refetch();
     },
   });
 
@@ -63,6 +72,49 @@ export function DoctorsSection() {
       {result ? <p className="text-sm text-teal-300">{result}</p> : null}
       {invite.error ? (
         <p className="text-sm text-rose-300">{invite.error.message}</p>
+      ) : null}
+      <ul className="space-y-2 text-sm">
+        {doctors.data?.map((doctor) => (
+          <li
+            className="flex items-center justify-between gap-3"
+            key={doctor.id}
+          >
+            <span>
+              {doctor.publicName ?? "Médico sin nombre público"}
+              {doctor.primarySpecialty ? ` · ${doctor.primarySpecialty}` : ""}
+            </span>
+            <span
+              className={doctor.active ? "text-teal-300" : "text-slate-400"}
+            >
+              {doctor.active ? "Activo" : "Desactivado"}
+            </span>
+            <button
+              className="rounded border border-rose-300 px-3 py-1 text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!doctor.active || deactivate.isPending}
+              onClick={() => deactivate.mutate({ doctorId: doctor.id })}
+              type="button"
+            >
+              Desactivar
+            </button>
+          </li>
+        ))}
+      </ul>
+      {deactivate.error ? (
+        <div className="space-y-2 text-sm text-rose-300">
+          <p>{deactivate.error.message}</p>
+          {deactivate.error.data?.capacityConflicts?.length ? (
+            <ul className="list-inside list-disc">
+              {deactivate.error.data.capacityConflicts.map((conflict) => (
+                <li key={conflict.id}>
+                  {conflict.kind === "confirmed-appointment"
+                    ? "Cita confirmada"
+                    : "Reserva temporal activa"}{" "}
+                  desde {new Date(conflict.startsAt).toLocaleString("es-SV")}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
       <ul className="space-y-2 text-sm">
         {invitations.data?.map((invitation) => (

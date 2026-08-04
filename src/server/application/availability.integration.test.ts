@@ -31,7 +31,6 @@ import {
   configurationAuditEvents,
   doctors,
   effectiveSchedules,
-  serviceOffers,
   temporaryReservations,
   user as identities,
 } from "../db/schema";
@@ -189,9 +188,9 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
           { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
           (transaction) =>
             transaction
-              .update(serviceOffers)
+              .update(doctors)
               .set({ active: false, deactivatedAt: new Date() })
-              .where(eq(serviceOffers.id, primaryOffer.id)),
+              .where(eq(doctors.id, fixture.ownerDoctorId)),
         );
         await expect(
           calculateCareOptions(

@@ -9,6 +9,7 @@ import {
   deactivateServiceOffer,
   updateServiceOffer,
 } from "./service-catalog";
+import { deactivateDoctor } from "./doctor-status";
 import { db } from "../db";
 import {
   inClinicTransaction,
@@ -30,11 +31,129 @@ import {
   drizzleServiceCatalogStore,
   listServiceCatalog,
 } from "../db/service-catalog-store";
+import { drizzleDoctorStatusStore } from "../db/doctor-status-store";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("catálogo y Ofertas de servicio persistentes", () => {
+  databaseTest(
+    "protege la desactivación de un Médico, conserva su historial y aísla por RLS",
+    async () => {
+      const fixture = await createCatalogFixture();
+
+      try {
+        const additionalDoctorId = fixture.aurora.doctorIds[1];
+        if (
+          additionalDoctorId === undefined ||
+          fixture.aurora.additionalIdentityId === undefined
+        ) {
+          throw new Error("Falta el Médico adicional");
+        }
+        await inClinicTransaction(fixture.aurora, async (transaction) => {
+          await transaction.insert(appointments).values({
+            clinicId: fixture.aurora.clinicId,
+            doctorId: additionalDoctorId,
+            endsAt: new Date(Date.now() + 3_600_000),
+            startsAt: new Date(Date.now() + 1_800_000),
+          });
+          await transaction.insert(temporaryReservations).values({
+            clinicId: fixture.aurora.clinicId,
+            doctorId: additionalDoctorId,
+            endsAt: new Date(Date.now() + 7_200_000),
+            expiresAt: new Date(Date.now() + 3_600_000),
+            startsAt: new Date(Date.now() + 5_400_000),
+          });
+        });
+
+        await expect(
+          deactivateDoctor(
+            {
+              clinicId: fixture.aurora.clinicId,
+              doctorId: additionalDoctorId,
+              identityId: fixture.aurora.identityId,
+            },
+            drizzleDoctorStatusStore,
+          ),
+        ).rejects.toMatchObject({
+          conflicts: [
+            expect.objectContaining({
+              doctorId: additionalDoctorId,
+              kind: "confirmed-appointment",
+            }),
+            expect.objectContaining({
+              doctorId: additionalDoctorId,
+              kind: "active-temporary-reservation",
+            }),
+          ],
+        });
+        await inClinicTransaction(fixture.aurora, async (transaction) => {
+          await transaction
+            .delete(appointments)
+            .where(eq(appointments.doctorId, additionalDoctorId));
+          await transaction
+            .delete(temporaryReservations)
+            .where(eq(temporaryReservations.doctorId, additionalDoctorId));
+        });
+
+        await expect(
+          deactivateDoctor(
+            {
+              clinicId: fixture.aurora.clinicId,
+              doctorId: additionalDoctorId,
+              identityId: fixture.aurora.additionalIdentityId,
+            },
+            drizzleDoctorStatusStore,
+          ),
+        ).rejects.toThrow("Solo el Médico propietario");
+        await expect(
+          deactivateDoctor(
+            {
+              clinicId: fixture.aurora.clinicId,
+              doctorId: additionalDoctorId,
+              identityId: fixture.aurora.identityId,
+            },
+            drizzleDoctorStatusStore,
+          ),
+        ).resolves.toMatchObject({ active: false, id: additionalDoctorId });
+
+        await inClinicTransaction(fixture.aurora, async (transaction) => {
+          await expect(
+            transaction.query.doctors.findFirst({
+              columns: { active: true, deactivatedAt: true, id: true },
+              where: eq(doctors.id, additionalDoctorId),
+            }),
+          ).resolves.toMatchObject({ active: false, id: additionalDoctorId });
+          const audit =
+            await transaction.query.configurationAuditEvents.findFirst({
+              where: eq(configurationAuditEvents.entityId, additionalDoctorId),
+            });
+          expect(audit).toMatchObject({
+            action: "doctor-deactivated",
+            afterValues: { active: "false" },
+            beforeValues: { active: "true" },
+          });
+        });
+        await inClinicTransaction(fixture.cedro, async (transaction) => {
+          await expect(
+            transaction.query.doctors.findFirst({
+              where: eq(doctors.id, additionalDoctorId),
+            }),
+          ).resolves.toBeUndefined();
+          await expect(
+            transaction
+              .update(doctors)
+              .set({ active: true })
+              .where(eq(doctors.id, additionalDoctorId))
+              .returning({ id: doctors.id }),
+          ).resolves.toEqual([]);
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "rechaza desactivar una Oferta que dejaría Citas o Reservas activas sin capacidad",
     async () => {
