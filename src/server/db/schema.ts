@@ -3,7 +3,9 @@ import {
   boolean,
   foreignKey,
   index,
+  integer,
   jsonb,
+  numeric,
   pgTable,
   pgTableCreator,
   text,
@@ -126,11 +128,71 @@ export const doctors = createTable(
   },
   (table) => [
     uniqueIndex("doctor_clinic_user_idx").on(table.clinicUserId),
+    unique("doctor_clinic_id_unique").on(table.clinicId, table.id),
     index("doctor_clinic_idx").on(table.clinicId),
     foreignKey({
       columns: [table.clinicId, table.clinicUserId],
       foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
       name: "doctor_clinic_user_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Catálogo público común a los Médicos de una Clínica. */
+export const services = createTable(
+  "service",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    description: text("description").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("service_clinic_id_unique").on(table.clinicId, table.id),
+    uniqueIndex("service_clinic_normalized_name_unique").on(
+      table.clinicId,
+      table.normalizedName,
+    ),
+    index("service_clinic_idx").on(table.clinicId),
+  ],
+);
+
+/** Configuración de atención activa o histórica para una pareja Médico–Servicio. */
+export const serviceOffers = createTable(
+  "service_offer",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    serviceId: uuid("service_id").notNull(),
+    doctorId: uuid("doctor_id").notNull(),
+    priceUsd: numeric("price_usd", { precision: 12, scale: 2 }).notNull(),
+    durationMinutes: integer("duration_minutes").notNull(),
+    bufferMinutes: integer("buffer_minutes").notNull(),
+    active: boolean("active").default(true).notNull(),
+    deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("service_offer_clinic_idx").on(table.clinicId),
+    index("service_offer_service_idx").on(table.serviceId),
+    index("service_offer_doctor_idx").on(table.doctorId),
+    foreignKey({
+      columns: [table.clinicId, table.serviceId],
+      foreignColumns: [services.clinicId, services.id],
+      name: "service_offer_service_same_clinic_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.doctorId],
+      foreignColumns: [doctors.clinicId, doctors.id],
+      name: "service_offer_doctor_same_clinic_fk",
     }).onDelete("cascade"),
   ],
 );

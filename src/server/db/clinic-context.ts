@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
-import { apoloSuperadmins, clinicUsers } from "~/server/db/schema";
+import { apoloSuperadmins, clinicUsers, doctors } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -38,6 +38,16 @@ export async function inClinicTransaction<T>(
     );
     await transaction.execute(
       sql`select set_config('app.clinic_role', ${membership.role}, true)`,
+    );
+    const doctor = await transaction.query.doctors.findFirst({
+      columns: { id: true },
+      where: and(
+        eq(doctors.clinicId, input.clinicId),
+        eq(doctors.clinicUserId, membership.id),
+      ),
+    });
+    await transaction.execute(
+      sql`select set_config('app.doctor_id', ${doctor?.id ?? ""}, true)`,
     );
     return operation(transaction);
   });

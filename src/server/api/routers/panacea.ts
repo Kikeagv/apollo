@@ -5,11 +5,22 @@ import { inviteAdditionalDoctor } from "~/server/application/doctor-invitations"
 import { completeOwnDoctorProfile } from "~/server/application/doctor-profile";
 import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
+import {
+  addServiceOffer,
+  createService,
+  deactivateServiceOffer,
+  ServiceCatalogAccessError,
+  updateServiceOffer,
+} from "~/server/application/service-catalog";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
 import {
   listDoctorInvitationStatuses,
   drizzleDoctorInvitationStore,
 } from "~/server/db/doctor-invitation-store";
+import {
+  drizzleServiceCatalogStore,
+  listServiceCatalog,
+} from "~/server/db/service-catalog-store";
 import {
   sendSimulatedClinicDoctorInvitation,
   sendSimulatedClinicOwnerInvitation,
@@ -83,6 +94,97 @@ export const panaceaRouter = {
         clinicId: ctx.clinic.clinicId,
         identityId: ctx.clinic.identityId,
       }),
+    ),
+
+  listServiceCatalog: clinicProcedure.query(async ({ ctx }) => {
+    const catalog = await listServiceCatalog({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    });
+    if (catalog === undefined) throw new ServiceCatalogAccessError();
+    return catalog;
+  }),
+
+  createService: clinicProcedure
+    .input(
+      z.object({
+        description: z.string().max(1_000),
+        name: z.string().max(120),
+        offers: z
+          .array(
+            z.object({
+              bufferMinutes: z.number().int().nonnegative(),
+              doctorId: z.string().uuid(),
+              durationMinutes: z.number().int().positive(),
+              priceUsd: z.string(),
+            }),
+          )
+          .min(1),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      createService(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleServiceCatalogStore,
+      ),
+    ),
+
+  addServiceOffer: clinicProcedure
+    .input(
+      z.object({
+        bufferMinutes: z.number().int().nonnegative(),
+        doctorId: z.string().uuid(),
+        durationMinutes: z.number().int().positive(),
+        priceUsd: z.string(),
+        serviceId: z.string().uuid(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      addServiceOffer(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleServiceCatalogStore,
+      ),
+    ),
+
+  updateServiceOffer: clinicProcedure
+    .input(
+      z.object({
+        bufferMinutes: z.number().int().nonnegative(),
+        durationMinutes: z.number().int().positive(),
+        offerId: z.string().uuid(),
+        priceUsd: z.string(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      updateServiceOffer(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleServiceCatalogStore,
+      ),
+    ),
+
+  deactivateServiceOffer: clinicProcedure
+    .input(z.object({ offerId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      deactivateServiceOffer(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleServiceCatalogStore,
+      ),
     ),
 
   createSyntheticClinic: protectedProcedure
