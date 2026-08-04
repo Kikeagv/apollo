@@ -3,6 +3,7 @@
 import { type FormEvent, useState } from "react";
 
 import { api } from "~/trpc/react";
+import { CapacityConflicts } from "./capacity-conflicts";
 
 export function ServiceCatalogSection({
   canCreateServices,
@@ -170,12 +171,17 @@ export function ServiceCatalogSection({
       ) : null}
       {result ? <p className="text-sm text-teal-300">{result}</p> : null}
       {(create.error ?? add.error ?? update.error ?? deactivate.error) ? (
-        <p className="text-sm text-rose-300">
-          {
-            (create.error ?? add.error ?? update.error ?? deactivate.error)
-              ?.message
-          }
-        </p>
+        <div className="space-y-2 text-sm text-rose-300">
+          <p>
+            {
+              (create.error ?? add.error ?? update.error ?? deactivate.error)
+                ?.message
+            }
+          </p>
+          <CapacityConflicts
+            conflicts={deactivate.error?.data?.capacityConflicts}
+          />
+        </div>
       ) : null}
       <div className="space-y-3">
         {catalog.data?.services.map((service) => (
@@ -249,12 +255,18 @@ export function ServiceCatalogSection({
               </form>
             ) : null}
             <div className="mt-3 space-y-3">
-              {service.offers.map((offer) => (
-                <form
-                  className="grid items-end gap-2 rounded border border-slate-800 p-3 sm:grid-cols-4"
-                  key={offer.id}
-                  onSubmit={updateOffer}
-                >
+              {service.offers.map((offer) => {
+                const doctorName =
+                  catalog.data?.doctors.find(
+                    (doctor) => doctor.id === offer.doctorId,
+                  )?.publicName ?? "Médico";
+                return (
+                  <form
+                    aria-label={`Oferta de ${doctorName}`}
+                    className="grid items-end gap-2 rounded border border-slate-800 p-3 sm:grid-cols-4"
+                    key={offer.id}
+                    onSubmit={updateOffer}
+                  >
                   <input name="offerId" type="hidden" value={offer.id} />
                   <label className="text-sm">
                     Precio (USD)
@@ -310,8 +322,9 @@ export function ServiceCatalogSection({
                       {offer.active ? "Desactivar" : "Desactivada"}
                     </button>
                   </div>
-                </form>
-              ))}
+                  </form>
+                );
+              })}
             </div>
           </article>
         ))}

@@ -3,6 +3,7 @@
 import { type FormEvent, useState } from "react";
 
 import { api } from "~/trpc/react";
+import { CapacityConflicts } from "./capacity-conflicts";
 
 export function DoctorsSection() {
   const [result, setResult] = useState<string>();
@@ -102,18 +103,9 @@ export function DoctorsSection() {
       {deactivate.error ? (
         <div className="space-y-2 text-sm text-rose-300">
           <p>{deactivate.error.message}</p>
-          {deactivate.error.data?.capacityConflicts?.length ? (
-            <ul className="list-inside list-disc">
-              {deactivate.error.data.capacityConflicts.map((conflict) => (
-                <li key={conflict.id}>
-                  {conflict.kind === "confirmed-appointment"
-                    ? "Cita confirmada"
-                    : "Reserva temporal activa"}{" "}
-                  desde {new Date(conflict.startsAt).toLocaleString("es-SV")}
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          <CapacityConflicts
+            conflicts={deactivate.error.data?.capacityConflicts}
+          />
         </div>
       ) : null}
       <ul className="space-y-2 text-sm">

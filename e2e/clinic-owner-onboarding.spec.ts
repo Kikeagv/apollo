@@ -20,6 +20,7 @@ import {
   doctors,
   identityAuditEvents,
   services,
+  temporaryReservations,
   user as identities,
   verification,
 } from "../src/server/db/schema";
@@ -195,6 +196,18 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       publicName: invitedDoctorName,
     });
     await page.reload();
+    const catalogAfterAppointment = section(page, "Catálogo de Servicios");
+    const service = catalogAfterAppointment
+      .locator("article")
+      .filter({ hasText: consultationName });
+    const invitedOffer = service
+      .getByRole("form", { name: `Oferta de ${invitedDoctorName}` })
+      .getByRole("button", { name: "Desactivar" });
+    await invitedOffer.click();
+    await expect(
+      catalogAfterAppointment.getByText("Cita confirmada", { exact: false }),
+    ).toBeVisible();
+    await expect(invitedOffer).toBeVisible();
     const doctorsSection = section(page, "Médicos");
     await doctorsSection
       .locator("li")
@@ -209,13 +222,31 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
         .getByText(`${invitedDoctorName} · Pediatría`, { exact: true })
         .locator(".."),
     ).toContainText("Activo");
-    await expect(
-      section(page, "Catálogo de Servicios")
-        .locator("article")
-        .filter({ hasText: consultationName })
-        .getByRole("button", { name: "Guardar" }),
-    ).toHaveCount(2);
     await clearConfirmedAppointments({
+      clinicId: fixture.clinicId(),
+      ownerIdentityId,
+      publicName: invitedDoctorName,
+    });
+    await createTemporaryReservation({
+      clinicId: fixture.clinicId(),
+      date: careDate,
+      ownerIdentityId,
+      publicName: invitedDoctorName,
+    });
+    await doctorsSection
+      .locator("li")
+      .filter({ hasText: invitedDoctorName })
+      .getByRole("button", { name: "Desactivar" })
+      .click();
+    await expect(
+      doctorsSection.getByText("Reserva temporal activa", { exact: false }),
+    ).toBeVisible();
+    await expect(
+      doctorsSection
+        .getByText(`${invitedDoctorName} · Pediatría`, { exact: true })
+        .locator(".."),
+    ).toContainText("Activo");
+    await clearTemporaryReservations({
       clinicId: fixture.clinicId(),
       ownerIdentityId,
       publicName: invitedDoctorName,
@@ -400,23 +431,19 @@ async function inviteDoctor(input: {
   return { token: invitationToken };
 }
 
-async function createConfirmedAppointment(input: {
+type DoctorFixture = {
   clinicId: string;
-  date: string;
   ownerIdentityId: string;
   publicName: string;
+};
+
+async function createConfirmedAppointment(input: DoctorFixture & {
+  date: string;
 }) {
   await inClinicTransaction(
     { clinicId: input.clinicId, identityId: input.ownerIdentityId },
     async (transaction) => {
-      const doctor = await transaction.query.doctors.findFirst({
-        columns: { id: true },
-        where: and(
-          eq(doctors.clinicId, input.clinicId),
-          eq(doctors.publicName, input.publicName),
-        ),
-      });
-      if (doctor === undefined) throw new Error("Falta el Médico E2E");
+      const doctor = await findDoctor(transaction, input);
       await transaction.insert(appointments).values({
         clinicId: input.clinicId,
         doctorId: doctor.id,
@@ -427,22 +454,11 @@ async function createConfirmedAppointment(input: {
   );
 }
 
-async function clearConfirmedAppointments(input: {
-  clinicId: string;
-  ownerIdentityId: string;
-  publicName: string;
-}) {
+async function clearConfirmedAppointments(input: DoctorFixture) {
   await inClinicTransaction(
     { clinicId: input.clinicId, identityId: input.ownerIdentityId },
     async (transaction) => {
-      const doctor = await transaction.query.doctors.findFirst({
-        columns: { id: true },
-        where: and(
-          eq(doctors.clinicId, input.clinicId),
-          eq(doctors.publicName, input.publicName),
-        ),
-      });
-      if (doctor === undefined) throw new Error("Falta el Médico E2E");
+      const doctor = await findDoctor(transaction, input);
       await transaction
         .delete(appointments)
         .where(
@@ -453,6 +469,56 @@ async function clearConfirmedAppointments(input: {
         );
     },
   );
+}
+
+async function createTemporaryReservation(input: DoctorFixture & {
+  date: string;
+}) {
+  await inClinicTransaction(
+    { clinicId: input.clinicId, identityId: input.ownerIdentityId },
+    async (transaction) => {
+      const doctor = await findDoctor(transaction, input);
+      await transaction.insert(temporaryReservations).values({
+        clinicId: input.clinicId,
+        doctorId: doctor.id,
+        endsAt: new Date(`${input.date}T09:00:00-06:00`),
+        expiresAt: new Date(`${input.date}T10:00:00-06:00`),
+        startsAt: new Date(`${input.date}T08:00:00-06:00`),
+      });
+    },
+  );
+}
+
+async function clearTemporaryReservations(input: DoctorFixture) {
+  await inClinicTransaction(
+    { clinicId: input.clinicId, identityId: input.ownerIdentityId },
+    async (transaction) => {
+      const doctor = await findDoctor(transaction, input);
+      await transaction
+        .delete(temporaryReservations)
+        .where(
+          and(
+            eq(temporaryReservations.clinicId, input.clinicId),
+            eq(temporaryReservations.doctorId, doctor.id),
+          ),
+        );
+    },
+  );
+}
+
+async function findDoctor(
+  transaction: Parameters<Parameters<typeof inClinicTransaction>[1]>[0],
+  input: { clinicId: string; publicName: string },
+) {
+  const doctor = await transaction.query.doctors.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(doctors.clinicId, input.clinicId),
+      eq(doctors.publicName, input.publicName),
+    ),
+  });
+  if (doctor === undefined) throw new Error("Falta el Médico E2E");
+  return doctor;
 }
 
 function nextClinicMonday() {
