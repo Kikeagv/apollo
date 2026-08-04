@@ -9,6 +9,8 @@ import {
   createAvailabilityBlock,
   createAvailabilityBlocks,
 } from "./availability";
+import { calculateCareOptions } from "./care-options";
+import { createService } from "./service-catalog";
 import { db } from "../db";
 import {
   inClinicTransaction,
@@ -16,8 +18,10 @@ import {
 } from "../db/clinic-context";
 import {
   drizzleAvailabilityStore,
+  drizzleCareOptionsStore,
   listAvailabilityConfiguration,
 } from "../db/availability-store";
+import { drizzleServiceCatalogStore } from "../db/service-catalog-store";
 import {
   appointments,
   apoloSuperadmins,
@@ -27,6 +31,7 @@ import {
   configurationAuditEvents,
   doctors,
   effectiveSchedules,
+  serviceOffers,
   temporaryReservations,
   user as identities,
 } from "../db/schema";
@@ -35,6 +40,181 @@ const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("Horarios vigentes y Bloqueos persistentes", () => {
+  databaseTest(
+    "calcula Opciones desde las tablas protegidas por RLS sin materializar slots",
+    async () => {
+      const fixture = await createFixture();
+      const secretaryIdentityId = `apo-35-secretary-${randomUUID()}`;
+      try {
+        await db.insert(identities).values({
+          id: secretaryIdentityId,
+          name: "Secretaria APO-35",
+          email: `${secretaryIdentityId}@example.test`,
+          emailVerified: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            await transaction.insert(clinicUsers).values({
+              active: true,
+              clinicId: fixture.clinicId,
+              identityId: secretaryIdentityId,
+              role: "secretary",
+            });
+          },
+        );
+        const service = await createService(
+          {
+            clinicId: fixture.clinicId,
+            description: "Consulta para calcular Opciones",
+            identityId: fixture.ownerIdentityId,
+            name: "Consulta Agenda",
+            offers: [
+              {
+                bufferMinutes: 15,
+                doctorId: fixture.ownerDoctorId,
+                durationMinutes: 30,
+                priceUsd: "35.00",
+              },
+            ],
+          },
+          drizzleServiceCatalogStore,
+        );
+        await configureEffectiveSchedule(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.ownerDoctorId,
+            effectiveFrom: "2026-08-01",
+            identityId: fixture.ownerIdentityId,
+            periods: [{ dayOfWeek: 1, endTime: "12:00", startTime: "08:00" }],
+          },
+          drizzleAvailabilityStore,
+        );
+        await inClinicTransaction(
+          { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
+          async (transaction) => {
+            await transaction.insert(appointments).values({
+              clinicId: fixture.clinicId,
+              doctorId: fixture.ownerDoctorId,
+              endsAt: new Date("2026-08-10T15:00:00.000Z"),
+              startsAt: new Date("2026-08-10T14:00:00.000Z"),
+            });
+            await transaction.insert(temporaryReservations).values([
+              {
+                clinicId: fixture.clinicId,
+                doctorId: fixture.ownerDoctorId,
+                endsAt: new Date("2026-08-10T17:00:00.000Z"),
+                expiresAt: new Date("2030-01-01T00:00:00.000Z"),
+                startsAt: new Date("2026-08-10T16:00:00.000Z"),
+              },
+              {
+                clinicId: fixture.clinicId,
+                doctorId: fixture.ownerDoctorId,
+                endsAt: new Date("2026-08-10T18:00:00.000Z"),
+                expiresAt: new Date("2026-08-10T13:00:00.000Z"),
+                startsAt: new Date("2026-08-10T17:00:00.000Z"),
+              },
+            ]);
+          },
+        );
+        await createAvailabilityBlock(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.ownerDoctorId,
+            endsAt: new Date("2026-08-10T16:00:00.000Z"),
+            identityId: fixture.ownerIdentityId,
+            privateLabel: "Reunión privada",
+            startsAt: new Date("2026-08-10T15:00:00.000Z"),
+          },
+          drizzleAvailabilityStore,
+        );
+
+        const options = await calculateCareOptions(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.ownerDoctorId,
+            from: "2026-08-10",
+            identityId: fixture.ownerIdentityId,
+            serviceId: service.id,
+            to: "2026-08-10",
+          },
+          drizzleCareOptionsStore,
+          new Date("2026-08-10T13:00:00.000Z"),
+        );
+        expect(options.map((option) => option.startsAt.toISOString())).toEqual([
+          "2026-08-10T17:00:00.000Z",
+          "2026-08-10T17:05:00.000Z",
+          "2026-08-10T17:10:00.000Z",
+          "2026-08-10T17:15:00.000Z",
+        ]);
+        expect(options.every((option) => !("privateLabel" in option))).toBe(
+          true,
+        );
+        await expect(
+          calculateCareOptions(
+            {
+              clinicId: fixture.otherClinicId,
+              doctorId: fixture.ownerDoctorId,
+              from: "2026-08-10",
+              identityId: fixture.otherClinicOwnerId,
+              serviceId: service.id,
+              to: "2026-08-10",
+            },
+            drizzleCareOptionsStore,
+          ),
+        ).resolves.toEqual([]);
+        await expect(
+          calculateCareOptions(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.ownerDoctorId,
+              from: "2026-08-10",
+              identityId: secretaryIdentityId,
+              serviceId: service.id,
+              to: "2026-08-10",
+            },
+            drizzleCareOptionsStore,
+          ),
+        ).resolves.toEqual([]);
+
+        const primaryOffer = service.offers[0];
+        if (primaryOffer === undefined)
+          throw new Error("Falta la Oferta activa");
+        await inClinicTransaction(
+          { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
+          (transaction) =>
+            transaction
+              .update(serviceOffers)
+              .set({ active: false, deactivatedAt: new Date() })
+              .where(eq(serviceOffers.id, primaryOffer.id)),
+        );
+        await expect(
+          calculateCareOptions(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.ownerDoctorId,
+              from: "2026-08-10",
+              identityId: fixture.ownerIdentityId,
+              serviceId: service.id,
+              to: "2026-08-10",
+            },
+            drizzleCareOptionsStore,
+          ),
+        ).resolves.toEqual([]);
+      } finally {
+        await fixture.cleanup();
+        await db
+          .delete(identities)
+          .where(eq(identities.id, secretaryIdentityId));
+      }
+    },
+  );
+
   databaseTest(
     "protege permisos, vigencias, conflictos, auditoría y RLS",
     async () => {
@@ -292,6 +472,7 @@ async function createFixture() {
     otherDoctorId,
     otherClinicId: other.clinicId,
     otherClinicOwnerId: ids.otherOwner,
+    superadminIdentityId: ids.superadmin,
     async cleanup() {
       for (const clinicId of [primary.clinicId, other.clinicId])
         await inSuperadminTransaction(ids.superadmin, async (transaction) => {

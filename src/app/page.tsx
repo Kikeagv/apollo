@@ -11,6 +11,7 @@ import { ClinicSessionActivity } from "./clinic-session-activity";
 import { ClinicSignInForm } from "./clinic-sign-in-form";
 import { DoctorProfileSetup } from "./doctor-profile-setup";
 import { AvailabilitySection } from "./availability-section";
+import { CareOptionsSection } from "./care-options-section";
 import { DoctorsSection } from "./doctors-section";
 import { ServiceCatalogSection } from "./service-catalog-section";
 import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
@@ -68,6 +69,7 @@ export default async function Home({
                   canCreateServices={context.role === "owner"}
                 />
                 <AvailabilitySection canManageAll={context.role === "owner"} />
+                <CareOptionsSection />
               </>
             ) : null}
             <SyntheticClinicalActionForm />

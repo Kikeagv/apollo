@@ -10,6 +10,7 @@ import {
   createAvailabilityBlock,
   createAvailabilityBlocks,
 } from "~/server/application/availability";
+import { calculateCareOptions } from "~/server/application/care-options";
 import {
   addServiceOffer,
   createService,
@@ -20,6 +21,7 @@ import {
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
 import {
   drizzleAvailabilityStore,
+  drizzleCareOptionsStore,
   listAvailabilityConfiguration,
 } from "~/server/db/availability-store";
 import {
@@ -202,6 +204,26 @@ export const panaceaRouter = {
       identityId: ctx.clinic.identityId,
     }),
   ),
+
+  listCareOptions: clinicProcedure
+    .input(
+      z.object({
+        doctorId: z.string().uuid(),
+        from: z.string(),
+        serviceId: z.string().uuid(),
+        to: z.string(),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      calculateCareOptions(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleCareOptionsStore,
+      ),
+    ),
 
   configureEffectiveSchedule: clinicProcedure
     .input(

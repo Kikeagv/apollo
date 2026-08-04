@@ -6,12 +6,13 @@ import {
   gte,
   inArray,
   isNull,
+  lt,
   lte,
   or,
   sql,
 } from "drizzle-orm";
 
-import { CLINIC_TIMEZONE } from "~/clinic-timezone";
+import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
   CapacityConflictError,
   type AvailabilityBlock,
@@ -22,6 +23,7 @@ import {
   type EffectiveScheduleReplacer,
   type WeeklyPeriod,
 } from "~/server/application/availability";
+import type { CareOptionsStore } from "~/server/application/care-options";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import {
@@ -32,6 +34,7 @@ import {
   doctors,
   effectiveSchedulePeriods,
   effectiveSchedules,
+  serviceOffers,
   temporaryReservations,
 } from "~/server/db/schema";
 
@@ -185,6 +188,108 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
   },
 };
 
+/** Lee exclusivamente los insumos que la Agenda necesita para derivar Opciones. */
+export const drizzleCareOptionsStore: CareOptionsStore = {
+  async find(input) {
+    return inClinicTransaction(input, async (transaction) => {
+      const [offer] = await transaction
+        .select({
+          bufferMinutes: serviceOffers.bufferMinutes,
+          durationMinutes: serviceOffers.durationMinutes,
+        })
+        .from(serviceOffers)
+        .innerJoin(
+          doctors,
+          and(
+            eq(serviceOffers.clinicId, doctors.clinicId),
+            eq(serviceOffers.doctorId, doctors.id),
+          ),
+        )
+        .innerJoin(
+          clinicUsers,
+          and(
+            eq(doctors.clinicId, clinicUsers.clinicId),
+            eq(doctors.clinicUserId, clinicUsers.id),
+          ),
+        )
+        .where(
+          and(
+            eq(serviceOffers.clinicId, input.clinicId),
+            eq(serviceOffers.doctorId, input.doctorId),
+            eq(serviceOffers.serviceId, input.serviceId),
+            eq(serviceOffers.active, true),
+            eq(clinicUsers.active, true),
+            inArray(clinicUsers.role, ["owner", "doctor"]),
+          ),
+        );
+      if (offer === undefined) return undefined;
+
+      const [schedules, periods, blocks, appointmentsForRange, reservations] =
+        await Promise.all([
+          transaction.query.effectiveSchedules.findMany({
+            columns: { effectiveFrom: true, effectiveUntil: true, id: true },
+            where: and(
+              eq(effectiveSchedules.clinicId, input.clinicId),
+              eq(effectiveSchedules.doctorId, input.doctorId),
+            ),
+          }),
+          transaction.query.effectiveSchedulePeriods.findMany({
+            columns: {
+              dayOfWeek: true,
+              endTime: true,
+              scheduleId: true,
+              startTime: true,
+            },
+            where: and(
+              eq(effectiveSchedulePeriods.clinicId, input.clinicId),
+              eq(effectiveSchedulePeriods.doctorId, input.doctorId),
+            ),
+          }),
+          transaction
+            .select({
+              endsAt: availabilityBlocks.endsAt,
+              startsAt: availabilityBlocks.startsAt,
+            })
+            .from(availabilityBlocks)
+            .where(overlapsRange(availabilityBlocks, input)),
+          transaction
+            .select({
+              endsAt: appointments.endsAt,
+              startsAt: appointments.startsAt,
+            })
+            .from(appointments)
+            .where(overlapsRange(appointments, input)),
+          transaction
+            .select({
+              endsAt: temporaryReservations.endsAt,
+              expiresAt: temporaryReservations.expiresAt,
+              startsAt: temporaryReservations.startsAt,
+            })
+            .from(temporaryReservations)
+            .where(overlapsRange(temporaryReservations, input)),
+        ]);
+
+      return {
+        appointments: appointmentsForRange,
+        blocks,
+        offer,
+        schedules: schedules.map((schedule) => ({
+          effectiveFrom: schedule.effectiveFrom,
+          effectiveUntil: schedule.effectiveUntil,
+          periods: periods
+            .filter((period) => period.scheduleId === schedule.id)
+            .map(({ dayOfWeek, endTime, startTime }) => ({
+              dayOfWeek,
+              endTime: clockTime(endTime),
+              startTime: clockTime(startTime),
+            })),
+        })),
+        temporaryReservations: reservations,
+      };
+    });
+  },
+};
+
 /** Datos exclusivos de Panacea; ningún adaptador público devuelve privateLabel. */
 export async function listAvailabilityConfiguration(input: {
   clinicId: string;
@@ -269,6 +374,37 @@ async function insertBlock(
     entityId: block.id,
   });
   return block;
+}
+
+function overlapsRange(
+  table:
+    | typeof availabilityBlocks
+    | typeof appointments
+    | typeof temporaryReservations,
+  input: { clinicId: string; doctorId: string; from: string; to: string },
+) {
+  const startsAt = localMidnight(input.from);
+  const endsAt = localMidnight(nextLocalDate(input.to));
+  return and(
+    eq(table.clinicId, input.clinicId),
+    eq(table.doctorId, input.doctorId),
+    lt(table.startsAt, endsAt),
+    gt(table.endsAt, startsAt),
+  );
+}
+
+function localMidnight(date: string) {
+  return new Date(`${date}T00:00:00${CLINIC_UTC_OFFSET}`);
+}
+
+function nextLocalDate(date: string) {
+  const next = new Date(`${date}T00:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
+function clockTime(value: string) {
+  return value.slice(0, 5);
 }
 
 async function scheduleConflicts(
