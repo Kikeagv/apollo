@@ -6,6 +6,11 @@ import { completeOwnDoctorProfile } from "~/server/application/doctor-profile";
 import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import {
+  configureEffectiveSchedule,
+  createAvailabilityBlock,
+  createAvailabilityBlocks,
+} from "~/server/application/availability";
+import {
   addServiceOffer,
   createService,
   deactivateServiceOffer,
@@ -13,6 +18,10 @@ import {
   updateServiceOffer,
 } from "~/server/application/service-catalog";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
+import {
+  drizzleAvailabilityStore,
+  listAvailabilityConfiguration,
+} from "~/server/db/availability-store";
 import {
   listDoctorInvitationStatuses,
   drizzleDoctorInvitationStore,
@@ -184,6 +193,80 @@ export const panaceaRouter = {
           identityId: ctx.clinic.identityId,
         },
         drizzleServiceCatalogStore,
+      ),
+    ),
+
+  listAvailabilityConfiguration: clinicProcedure.query(async ({ ctx }) =>
+    listAvailabilityConfiguration({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    }),
+  ),
+
+  configureEffectiveSchedule: clinicProcedure
+    .input(
+      z.object({
+        doctorId: z.string().uuid(),
+        effectiveFrom: z.string(),
+        periods: z
+          .array(
+            z.object({
+              dayOfWeek: z.number().int().min(0).max(6),
+              endTime: z.string(),
+              startTime: z.string(),
+            }),
+          )
+          .min(1),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      configureEffectiveSchedule(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAvailabilityStore,
+      ),
+    ),
+
+  createAvailabilityBlock: clinicProcedure
+    .input(
+      z.object({
+        doctorId: z.string().uuid(),
+        endsAt: z.coerce.date(),
+        privateLabel: z.string().max(160).optional(),
+        startsAt: z.coerce.date(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      createAvailabilityBlock(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAvailabilityStore,
+      ),
+    ),
+
+  createAvailabilityBlocks: clinicProcedure
+    .input(
+      z.object({
+        doctorIds: z.array(z.string().uuid()).min(1),
+        endsAt: z.coerce.date(),
+        privateLabel: z.string().max(160).optional(),
+        startsAt: z.coerce.date(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      createAvailabilityBlocks(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAvailabilityStore,
       ),
     ),
 

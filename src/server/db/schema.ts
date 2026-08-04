@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
   boolean,
+  date,
   foreignKey,
   index,
   integer,
@@ -9,6 +10,7 @@ import {
   pgTable,
   pgTableCreator,
   text,
+  time,
   timestamp,
   unique,
   uniqueIndex,
@@ -193,6 +195,145 @@ export const serviceOffers = createTable(
       columns: [table.clinicId, table.doctorId],
       foreignColumns: [doctors.clinicId, doctors.id],
       name: "service_offer_doctor_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Regla semanal histórica de disponibilidad de un Médico. */
+export const effectiveSchedules = createTable(
+  "effective_schedule",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    doctorId: uuid("doctor_id").notNull(),
+    effectiveFrom: date("effective_from", { mode: "string" }).notNull(),
+    effectiveUntil: date("effective_until", { mode: "string" }),
+    timezone: text("timezone").default("America/El_Salvador").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("effective_schedule_clinic_id_unique").on(table.clinicId, table.id),
+    unique("effective_schedule_clinic_doctor_id_unique").on(
+      table.clinicId,
+      table.doctorId,
+      table.id,
+    ),
+    index("effective_schedule_doctor_idx").on(
+      table.clinicId,
+      table.doctorId,
+      table.effectiveFrom,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.doctorId],
+      foreignColumns: [doctors.clinicId, doctors.id],
+      name: "effective_schedule_doctor_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Franja recurrente semanal; una jornada que cruza medianoche se divide. */
+export const effectiveSchedulePeriods = createTable(
+  "effective_schedule_period",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    doctorId: uuid("doctor_id").notNull(),
+    scheduleId: uuid("schedule_id").notNull(),
+    dayOfWeek: integer("day_of_week").notNull(),
+    startTime: time("start_time").notNull(),
+    endTime: time("end_time").notNull(),
+  },
+  (table) => [
+    index("effective_schedule_period_schedule_idx").on(table.scheduleId),
+    foreignKey({
+      columns: [table.clinicId, table.doctorId],
+      foreignColumns: [doctors.clinicId, doctors.id],
+      name: "effective_schedule_period_doctor_same_clinic_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.scheduleId],
+      foreignColumns: [effectiveSchedules.clinicId, effectiveSchedules.id],
+      name: "effective_schedule_period_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Excepción individual de disponibilidad; su etiqueta es exclusiva de Panacea. */
+export const availabilityBlocks = createTable(
+  "availability_block",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    doctorId: uuid("doctor_id").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    privateLabel: text("private_label"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("availability_block_doctor_starts_at_idx").on(
+      table.clinicId,
+      table.doctorId,
+      table.startsAt,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.doctorId],
+      foreignColumns: [doctors.clinicId, doctors.id],
+      name: "availability_block_doctor_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Ocupación confirmada mínima, usada para proteger cambios que reducen capacidad. */
+export const appointments = createTable(
+  "appointment",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    doctorId: uuid("doctor_id").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    status: text("status").$type<"confirmed">().default("confirmed").notNull(),
+  },
+  (table) => [
+    index("appointment_doctor_starts_at_idx").on(
+      table.clinicId,
+      table.doctorId,
+      table.startsAt,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.doctorId],
+      foreignColumns: [doctors.clinicId, doctors.id],
+      name: "appointment_doctor_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Ocupación temporal vigente, usada antes de confirmar una Cita. */
+export const temporaryReservations = createTable(
+  "temporary_reservation",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    doctorId: uuid("doctor_id").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("temporary_reservation_doctor_starts_at_idx").on(
+      table.clinicId,
+      table.doctorId,
+      table.startsAt,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.doctorId],
+      foreignColumns: [doctors.clinicId, doctors.id],
+      name: "temporary_reservation_doctor_same_clinic_fk",
     }).onDelete("cascade"),
   ],
 );

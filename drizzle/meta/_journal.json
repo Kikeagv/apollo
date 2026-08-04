@@ -120,6 +120,13 @@
       "when": 1785840060000,
       "tag": "0016_cascada_catalogo_al_eliminar_clinica",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785840120000,
+      "tag": "0017_horarios_vigentes_y_bloqueos",
+      "breakpoints": true
     }
   ]
 }

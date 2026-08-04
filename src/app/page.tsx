@@ -10,6 +10,7 @@ import { cookies } from "next/headers";
 import { ClinicSessionActivity } from "./clinic-session-activity";
 import { ClinicSignInForm } from "./clinic-sign-in-form";
 import { DoctorProfileSetup } from "./doctor-profile-setup";
+import { AvailabilitySection } from "./availability-section";
 import { DoctorsSection } from "./doctors-section";
 import { ServiceCatalogSection } from "./service-catalog-section";
 import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
@@ -62,9 +63,12 @@ export default async function Home({
             {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
             {context.role === "owner" ? <DoctorsSection /> : null}
             {context.role === "owner" || context.role === "doctor" ? (
-              <ServiceCatalogSection
-                canCreateServices={context.role === "owner"}
-              />
+              <>
+                <ServiceCatalogSection
+                  canCreateServices={context.role === "owner"}
+                />
+                <AvailabilitySection canManageAll={context.role === "owner"} />
+              </>
             ) : null}
             <SyntheticClinicalActionForm />
           </>
