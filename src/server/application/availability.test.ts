@@ -122,11 +122,38 @@ describe("crear Bloqueos", () => {
 
   it("convierte un Bloqueo masivo en Bloqueos individuales", async () => {
     const createMany = vi.fn().mockResolvedValue([
-      { endsAt: new Date("2026-08-12T16:00:00.000Z"), id: "block-1", privateLabel: null, startsAt: new Date("2026-08-12T14:00:00.000Z") },
-      { endsAt: new Date("2026-08-12T16:00:00.000Z"), id: "block-2", privateLabel: null, startsAt: new Date("2026-08-12T14:00:00.000Z") },
+      {
+        endsAt: new Date("2026-08-12T16:00:00.000Z"),
+        id: "block-1",
+        privateLabel: null,
+        startsAt: new Date("2026-08-12T14:00:00.000Z"),
+      },
+      {
+        endsAt: new Date("2026-08-12T16:00:00.000Z"),
+        id: "block-2",
+        privateLabel: null,
+        startsAt: new Date("2026-08-12T14:00:00.000Z"),
+      },
     ]);
 
-    await expect(createAvailabilityBlocks({ clinicId: "clinic-1", doctorIds: ["doctor-1", "doctor-2"], endsAt: new Date("2026-08-12T16:00:00.000Z"), identityId: "owner-1", startsAt: new Date("2026-08-12T14:00:00.000Z") }, { createMany })).resolves.toHaveLength(2);
-    expect(createMany).toHaveBeenCalledWith(expect.objectContaining({ doctorIds: ["doctor-1", "doctor-2"], privateLabel: null, timezone: "America/El_Salvador" }));
+    await expect(
+      createAvailabilityBlocks(
+        {
+          clinicId: "clinic-1",
+          doctorIds: ["doctor-1", "doctor-2"],
+          endsAt: new Date("2026-08-12T16:00:00.000Z"),
+          identityId: "owner-1",
+          startsAt: new Date("2026-08-12T14:00:00.000Z"),
+        },
+        { createMany },
+      ),
+    ).resolves.toHaveLength(2);
+    expect(createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        doctorIds: ["doctor-1", "doctor-2"],
+        privateLabel: null,
+        timezone: "America/El_Salvador",
+      }),
+    );
   });
 });

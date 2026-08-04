@@ -12,6 +12,7 @@ import superjson from "superjson";
 import { ZodError } from "zod";
 
 import { auth } from "~/server/better-auth";
+import { CapacityConflictError } from "~/server/application/availability";
 import {
   CLINIC_SESSION_COOKIE,
   CLINIC_TRUSTED_DEVICE_COOKIE,
@@ -58,6 +59,10 @@ const t = initTRPC.context<typeof createTRPCContext>().create({
         ...shape.data,
         zodError:
           error.cause instanceof ZodError ? error.cause.flatten() : null,
+        capacityConflicts:
+          error.cause instanceof CapacityConflictError
+            ? error.cause.conflicts
+            : null,
       },
     };
   },

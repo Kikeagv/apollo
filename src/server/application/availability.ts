@@ -1,4 +1,5 @@
-const CLINIC_TIMEZONE = "America/El_Salvador";
+import { CLINIC_TIMEZONE } from "~/clinic-timezone";
+
 const MAX_PRIVATE_LABEL_LENGTH = 160;
 
 export type WeeklyPeriod = {
@@ -31,6 +32,24 @@ export type AvailabilityBlock = {
   privateLabel: string | null;
   startsAt: Date;
 };
+
+/** Conflicto seguro de mostrar en Panacea, sin datos de Pacientes. */
+export type CapacityConflict = {
+  doctorId: string;
+  endsAt: string;
+  id: string;
+  kind: "confirmed-appointment" | "active-temporary-reservation";
+  startsAt: string;
+};
+
+export class CapacityConflictError extends Error {
+  constructor(readonly conflicts: CapacityConflict[]) {
+    super(
+      "El cambio reduce capacidad y entra en conflicto con Citas confirmadas o Reservas temporales activas",
+    );
+    this.name = "CapacityConflictError";
+  }
+}
 
 export type AvailabilityBlockCreator = {
   create(input: {
@@ -118,7 +137,10 @@ export async function createAvailabilityBlocks(
   },
   store: AvailabilityBlockBatchCreator,
 ) {
-  if (new Set(input.doctorIds).size !== input.doctorIds.length || input.doctorIds.length === 0) {
+  if (
+    new Set(input.doctorIds).size !== input.doctorIds.length ||
+    input.doctorIds.length === 0
+  ) {
     throw new Error("Seleccione uno o más Médicos distintos");
   }
   const checked = await validateBlockInput(input);
@@ -172,7 +194,10 @@ function requiredDate(value: string) {
     throw new Error("La vigencia debe expresarse como una fecha local válida");
   }
   const date = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== value) {
+  if (
+    Number.isNaN(date.valueOf()) ||
+    date.toISOString().slice(0, 10) !== value
+  ) {
     throw new Error("La vigencia debe expresarse como una fecha local válida");
   }
   return value;

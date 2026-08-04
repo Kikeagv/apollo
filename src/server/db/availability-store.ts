@@ -1,12 +1,26 @@
-import { and, desc, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 
-import type {
-  AvailabilityBlock,
-  AvailabilityBlockBatchCreator,
-  AvailabilityBlockCreator,
-  EffectiveSchedule,
-  EffectiveScheduleReplacer,
-  WeeklyPeriod,
+import { CLINIC_TIMEZONE } from "~/clinic-timezone";
+import {
+  CapacityConflictError,
+  type AvailabilityBlock,
+  type AvailabilityBlockBatchCreator,
+  type AvailabilityBlockCreator,
+  type CapacityConflict,
+  type EffectiveSchedule,
+  type EffectiveScheduleReplacer,
+  type WeeklyPeriod,
 } from "~/server/application/availability";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
@@ -22,22 +36,6 @@ import {
 } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-type CapacityConflict = {
-  endsAt: Date;
-  id: string;
-  kind: "confirmed-appointment" | "active-temporary-reservation";
-  startsAt: Date;
-};
-
-export class CapacityConflictError extends Error {
-  constructor(readonly conflicts: CapacityConflict[]) {
-    super(
-      "El cambio reduce capacidad y entra en conflicto con Citas confirmadas o Reservas temporales activas",
-    );
-    this.name = "CapacityConflictError";
-  }
-}
 
 export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
   AvailabilityBlockCreator &
@@ -84,7 +82,9 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
       if (current !== undefined) {
         const effectiveUntil = previousLocalDate(input.effectiveFrom);
         if (effectiveUntil < current.effectiveFrom) {
-          throw new Error("La nueva vigencia no puede preceder al Horario vigente");
+          throw new Error(
+            "La nueva vigencia no puede preceder al Horario vigente",
+          );
         }
         await transaction
           .update(effectiveSchedules)
@@ -108,7 +108,9 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
           doctorId: input.doctorId,
           effectiveFrom: input.effectiveFrom,
           effectiveUntil:
-            future === undefined ? null : previousLocalDate(future.effectiveFrom),
+            future === undefined
+              ? null
+              : previousLocalDate(future.effectiveFrom),
           timezone: input.timezone,
         })
         .returning({
@@ -116,7 +118,8 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
           effectiveUntil: effectiveSchedules.effectiveUntil,
           id: effectiveSchedules.id,
         });
-      if (schedule === undefined) throw new Error("No se pudo crear el Horario vigente");
+      if (schedule === undefined)
+        throw new Error("No se pudo crear el Horario vigente");
       await transaction.insert(effectiveSchedulePeriods).values(
         input.periods.map((period) => ({
           ...period,
@@ -128,7 +131,10 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
       await transaction.insert(configurationAuditEvents).values({
         action: "effective-schedule-created",
         actorIdentityId: input.identityId,
-        afterValues: scheduleAuditValues({ ...schedule, periods: input.periods }),
+        afterValues: scheduleAuditValues({
+          ...schedule,
+          periods: input.periods,
+        }),
         clinicId: input.clinicId,
         entity: "effective-schedule",
         entityId: schedule.id,
@@ -160,7 +166,8 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
           ),
         );
       if (eligible.length !== input.doctorIds.length) return undefined;
-      for (const doctorId of input.doctorIds) await lockDoctor(transaction, doctorId);
+      for (const doctorId of input.doctorIds)
+        await lockDoctor(transaction, doctorId);
       const conflicts = (
         await Promise.all(
           input.doctorIds.map((doctorId) =>
@@ -189,7 +196,8 @@ export async function listAvailabilityConfiguration(input: {
       .from(doctors)
       .where(eq(doctors.clinicId, input.clinicId));
     const doctorIds = managedDoctors.map((doctor) => doctor.id);
-    if (doctorIds.length === 0) return { blocks: [], doctors: [], schedules: [] };
+    if (doctorIds.length === 0)
+      return { blocks: [], doctors: [], schedules: [] };
     const [schedules, periods, blocks] = await Promise.all([
       transaction.query.effectiveSchedules.findMany({
         orderBy: [desc(effectiveSchedules.effectiveFrom)],
@@ -272,19 +280,25 @@ async function scheduleConflicts(
   const occupancy = await activeOccupancy(transaction, input);
   return occupancy.filter(
     (event) =>
-      localDate(event.startsAt) >= input.effectiveFrom &&
-      (input.effectiveUntil === null || localDate(event.startsAt) <= input.effectiveUntil) &&
+      localDate(new Date(event.startsAt)) >= input.effectiveFrom &&
+      (input.effectiveUntil === null ||
+        localDate(new Date(event.startsAt)) <= input.effectiveUntil) &&
       !isCoveredBySchedule(event, input.periods),
   );
 }
 
 async function intervalConflicts(
   transaction: ClinicTransaction,
-  input: Pick<Parameters<AvailabilityBlockCreator["create"]>[0], "clinicId" | "doctorId" | "endsAt" | "startsAt">,
+  input: Pick<
+    Parameters<AvailabilityBlockCreator["create"]>[0],
+    "clinicId" | "doctorId" | "endsAt" | "startsAt"
+  >,
 ) {
   const occupancy = await activeOccupancy(transaction, input);
   return occupancy.filter(
-    (event) => event.startsAt < input.endsAt && event.endsAt > input.startsAt,
+    (event) =>
+      new Date(event.startsAt) < input.endsAt &&
+      new Date(event.endsAt) > input.startsAt,
   );
 }
 
@@ -294,7 +308,11 @@ async function activeOccupancy(
 ): Promise<CapacityConflict[]> {
   const [confirmed, reservations] = await Promise.all([
     transaction
-      .select({ endsAt: appointments.endsAt, id: appointments.id, startsAt: appointments.startsAt })
+      .select({
+        endsAt: appointments.endsAt,
+        id: appointments.id,
+        startsAt: appointments.startsAt,
+      })
       .from(appointments)
       .where(
         and(
@@ -304,7 +322,11 @@ async function activeOccupancy(
         ),
       ),
     transaction
-      .select({ endsAt: temporaryReservations.endsAt, id: temporaryReservations.id, startsAt: temporaryReservations.startsAt })
+      .select({
+        endsAt: temporaryReservations.endsAt,
+        id: temporaryReservations.id,
+        startsAt: temporaryReservations.startsAt,
+      })
       .from(temporaryReservations)
       .where(
         and(
@@ -315,8 +337,12 @@ async function activeOccupancy(
       ),
   ]);
   return [
-    ...confirmed.map((event) => ({ ...event, kind: "confirmed-appointment" as const })),
-    ...reservations.map((event) => ({ ...event, kind: "active-temporary-reservation" as const })),
+    ...confirmed.map((event) =>
+      capacityConflict(event, input.doctorId, "confirmed-appointment"),
+    ),
+    ...reservations.map((event) =>
+      capacityConflict(event, input.doctorId, "active-temporary-reservation"),
+    ),
   ];
 }
 
@@ -362,15 +388,17 @@ async function isOwner(
 }
 
 async function lockDoctor(transaction: ClinicTransaction, doctorId: string) {
-  await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${doctorId}))`);
+  await transaction.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${doctorId}))`,
+  );
 }
 
 function isCoveredBySchedule(
   event: Pick<CapacityConflict, "endsAt" | "startsAt">,
   periods: WeeklyPeriod[],
 ) {
-  const startsAt = localDateTime(event.startsAt);
-  const endsAt = localDateTime(event.endsAt);
+  const startsAt = localDateTime(new Date(event.startsAt));
+  const endsAt = localDateTime(new Date(event.endsAt));
   if (startsAt.date !== endsAt.date) return false;
   return periods.some(
     (period) =>
@@ -378,6 +406,20 @@ function isCoveredBySchedule(
       period.startTime <= startsAt.time &&
       period.endTime >= endsAt.time,
   );
+}
+
+function capacityConflict(
+  event: { endsAt: Date; id: string; startsAt: Date },
+  doctorId: string,
+  kind: CapacityConflict["kind"],
+): CapacityConflict {
+  return {
+    doctorId,
+    endsAt: event.endsAt.toISOString(),
+    id: event.id,
+    kind,
+    startsAt: event.startsAt.toISOString(),
+  };
 }
 
 function localDate(value: Date) {
@@ -391,14 +433,16 @@ function localDateTime(value: Date) {
     hourCycle: "h23",
     minute: "2-digit",
     month: "2-digit",
-    timeZone: "America/El_Salvador",
+    timeZone: CLINIC_TIMEZONE,
     weekday: "short",
     year: "numeric",
   }).formatToParts(value);
   const part = (kind: Intl.DateTimeFormatPartTypes) =>
     parts.find(({ type }) => type === kind)?.value;
   const weekday = part("weekday");
-  const dayOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekday ?? "");
+  const dayOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(
+    weekday ?? "",
+  );
   return {
     date: `${part("year")}-${part("month")}-${part("day")}`,
     dayOfWeek,
