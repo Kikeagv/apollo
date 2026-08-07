@@ -20,17 +20,25 @@ _Avoid_: bot de Praxia
 El CRM y panel interno para operar agenda, pacientes y, en fases posteriores, expediente.
 _Avoid_: Praxia cuando se habla del panel
 
+**Calendario de Panacea**:
+La superficie central de la Operación diaria de agenda. Abre en vista semanal de toda la Clínica, permite cambiar a vista diaria y aplica el mismo filtro de Médico a ambas vistas; al filtrar muestra las Citas y Bloqueos de ese Médico. Muestra solo Citas activas para que una cancelación libere visualmente el espacio; la Cita cancelada permanece consultable desde la ficha del Paciente y sus eventos. Cada Cita muestra el nombre del Paciente y Servicio, y también el Médico cuando no hay filtro; los datos de Contacto aparecen solo en el detalle. Su tablero lateral mínimo presenta el detalle de la Cita seleccionada, sus eventos y las acciones de cancelación y ficha; no incluye Escalamientos ni conversaciones.
+_Avoid_: una agenda separada por rol o filtros distintos entre las vistas semanal y diaria
+
 **Clínica**:
 La unidad cliente y de aislamiento de datos de Praxia; puede incluir uno o más médicos y usa un solo número de WhatsApp. Es la fuente de zona horaria para sus Horarios, Bloqueos, Citas y Agenda; durante el piloto usa `America/El_Salvador`.
 _Avoid_: tenant, cuenta
 
 **Contacto**:
-La persona identificada por un número de WhatsApp dentro de una clínica. Puede estar vinculada a uno o más pacientes.
+La persona identificada por un número de WhatsApp normalizado a E.164 y único dentro de una clínica. En Panacea su ficha administrativa mínima conserva nombre y teléfono, y puede estar vinculada a uno o más pacientes; el número es un atributo, no su clave primaria.
 _Avoid_: paciente cuando se habla del titular de un teléfono
 
 **Paciente**:
-La persona para quien se gestiona una cita dentro de una clínica. No tiene identidad compartida entre clínicas.
+La persona para quien se gestiona una cita dentro de una clínica. En Panacea su ficha administrativa mínima conserva nombre y fecha de nacimiento. No tiene identidad compartida entre clínicas.
 _Avoid_: contacto cuando se habla de la persona atendida
+
+**Vínculo Contacto–Paciente**:
+La relación explícita dentro de una Clínica entre un Contacto y un Paciente. Permite que un Contacto esté vinculado a más de un Paciente y que un Paciente tenga varios Contactos; el vínculo de Tutor es su variante con tutela legal registrada.
+_Avoid_: inferir el Paciente desde el Contacto o la última Cita
 
 **Tutor**:
 Un contacto vinculado a un paciente menor de edad con una relación de tutela legal registrada.
@@ -65,8 +73,12 @@ El Usuario de clínica con perfil de Médico y sin rol de propietario. Puede edi
 _Avoid_: otorgarle los privilegios administrativos del Médico propietario
 
 **Secretaria**:
-El Usuario de clínica sin perfil de Médico. No configura Médicos, Servicios, Ofertas de servicio, Horarios vigentes ni Bloqueos; sus operaciones de agenda se definen en los flujos correspondientes.
+El Usuario de clínica sin perfil de Médico. Puede consultar la Agenda, gestionar fichas administrativas y crear o cancelar Citas para cualquier Médico de su Clínica. No configura Médicos, Servicios, Ofertas de servicio, Horarios vigentes ni Bloqueos.
 _Avoid_: modelarla como Médico o concederle administración clínica
+
+**Operación diaria de agenda**:
+Las consultas del calendario y la gestión de fichas administrativas y Citas para cualquier Médico de una Clínica. Está autorizada para todo Usuario de clínica activo; es distinta de configurar la capacidad de atención.
+_Avoid_: extender las restricciones de configuración de un Médico no propietario a la operación de Citas
 
 **Servicio**:
 La prestación administrativa que una Clínica pone en su catálogo, con nombre único normalizado dentro de la Clínica y descripción pública común a todos los Médicos que la ofrecen. En fase 1 esa descripción no admite variantes por Médico. Su alta requiere al menos una Oferta de servicio activa; no existe un Servicio público sin un Médico que pueda atenderlo. No determina por sí sola la disponibilidad, duración, buffer ni precio de una atención.
@@ -84,6 +96,22 @@ _Avoid_: modificar retrospectivamente la disponibilidad o usarlo para una ausenc
 La excepción puntual o acotada que resta disponibilidad a la agenda de un Médico, por ejemplo una capacitación, vacaciones o un feriado. Puede incluir una etiqueta privada visible solo en Panacea; no se expone a pacientes ni por WhatsApp. No reemplaza ni modifica su Horario vigente. Una acción masiva de Panacea puede crear el mismo Bloqueo individual para varios Médicos, sin convertirlo en un cierre global de Clínica. No puede cubrir una Cita confirmada ni una Reserva temporal activa: el operador debe resolver la Cita o esperar el vencimiento de la Reserva antes de crear el Bloqueo.
 _Avoid_: editar el Horario vigente para registrar una ausencia
 
+**Cita manual**:
+La Cita que un Médico o Secretaria crea desde Panacea. Requiere seleccionar un Paciente con al menos un Contacto vinculado; Panacea permite registrar manualmente el Contacto, el Paciente y su Vínculo tanto desde el flujo de nueva Cita como desde su ficha administrativa. La Agenda vuelve a validar la capacidad al confirmarla: ante un conflicto concurrente no la crea ni cambia su horario automáticamente. Inicia en una cuadrícula de cinco minutos y no inicia en el pasado. Al crearla, el operador puede enviar una confirmación inicial a un único Contacto vinculado que selecciona explícitamente, mediante un control desactivado por defecto; ese control no modifica los recordatorios futuros. No se edita ni reprograma: se cancela y se crea una Cita nueva. Su evento de creación identifica al Usuario de clínica que la registró, pero no tiene Autor de la cita y Asclepio no permite su autogestión hasta que un flujo posterior le asigne explícitamente un autor.
+_Avoid_: atribuir su creación al Contacto vinculado al Paciente
+
+**Cita manual fuera de horario**:
+La Cita manual para un período que no cabe por completo en el Horario vigente. Panacea muestra una advertencia y exige confirmación explícita antes de crearla, sin pedir una justificación obligatoria, y conserva una marca visible en el Calendario de Panacea y el detalle de la Cita. La excepción omite únicamente el Horario vigente y sigue rechazando traslapes con Bloqueos, Citas y Reservas temporales, incluida la duración y el buffer de la Oferta de servicio. Asclepio nunca puede crearla y solo confirma Opciones de atención calculadas por la Agenda.
+_Avoid_: tratar la advertencia como una Opción de atención o permitir a Asclepio ignorar el Horario vigente
+
+**Cita**:
+La atención confirmada de un Paciente con un Médico en un período concreto. Su origen es manual o una Reserva de Contacto confirmada, y determina si puede tener Autor de la cita. Al crearse desde una Oferta de servicio activa, conserva una instantánea del precio, duración y buffer cotizados; cambios posteriores a la Oferta no alteran esa Cita. Antes de su inicio puede pasar a estado cancelada, liberar la disponibilidad y no eliminarse; una Cita iniciada o pasada no se cancela. Su cancelación puede solicitar un aviso opcional a un único Contacto vinculado seleccionado explícitamente, pero el evento y la liberación de disponibilidad ocurren siempre.
+_Avoid_: recalcular una Cita confirmada desde la Oferta de servicio actual
+
+**Evento de Cita**:
+El registro append-only de una transición de Cita o del resultado de una notificación solicitada. Conserva como mínimo el tipo de evento, el actor y el instante; la cancelación puede incluir una razón opcional. Una falla de envío no revierte una Cita creada o cancelada válidamente.
+_Avoid_: sobrescribir o borrar el historial al cancelar una Cita
+
 **Opción de atención**:
 El inicio elegible que la Agenda calcula para una Oferta de servicio de un Médico activo que ya aceptó su invitación. Solo existe si la duración de la atención y su buffer posterior completos caben dentro de los Horarios vigentes, y no se traslapan con Bloqueos, Citas ni Reservas temporales. Un Médico sin esa capacidad permanece visible en Panacea, pero no aparece disponible a pacientes ni a Asclepio.
 _Avoid_: slot materializado o espacio que solo alcanza para la atención sin su buffer
@@ -97,7 +125,7 @@ La creación de un Bloqueo, el cierre o acortamiento de un Horario vigente, o la
 _Avoid_: aceptar cambios de configuración que invaliden una opción o Cita existente
 
 **Mensaje transaccional de cita**:
-El mensaje proactivo que Asclepio envía sobre una cita concreta: confirmación, recordatorio o aviso de cancelación. No incluye campañas ni seguimiento comercial.
+El mensaje proactivo por WhatsApp que Asclepio envía al Contacto sobre una Cita concreta: confirmación, recordatorio o aviso de cancelación. No incluye campañas ni seguimiento comercial.
 _Avoid_: mensaje proactivo cuando se habla de comunicación promocional
 
 **Confirmación automática**:
@@ -137,7 +165,7 @@ El bloqueo de un espacio que la Agenda crea únicamente después de que el Conta
 _Avoid_: disponibilidad calculada o retenida por Asclepio
 
 **Autor de la cita**:
-El Contacto que creó una cita. Es el único Contacto autorizado para cancelarla o reprogramarla dentro de la Ventana de autogestión; los demás Tutores pueden recibir recordatorios, pero no alterarla.
+El Contacto que creó una Cita mediante una aceptación de Reserva temporal. Es el único Contacto autorizado para cancelarla o reprogramarla dentro de la Ventana de autogestión; los demás Tutores pueden recibir recordatorios, pero no alterarla. Una Cita manual no tiene Autor de la cita hasta que un flujo posterior le asigne uno explícitamente.
 _Avoid_: cualquier tutor como modificador de la cita
 
 **Notificación de escalamiento**:
