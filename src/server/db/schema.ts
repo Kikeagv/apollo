@@ -387,16 +387,82 @@ export const clinicSessions = createTable(
   (table) => [index("clinic_session_identity_idx").on(table.identityId)],
 );
 
-export const patients = createTable("patient", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  clinicId: uuid("clinic_id")
-    .notNull()
-    .references(() => clinics.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+/** Titular de un número de WhatsApp dentro de una Clínica. */
+export const contacts = createTable(
+  "contact",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    phoneE164: text("phone_e164").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("contact_clinic_id_unique").on(table.clinicId, table.id),
+    uniqueIndex("contact_clinic_phone_e164_unique").on(
+      table.clinicId,
+      table.phoneE164,
+    ),
+    index("contact_clinic_idx").on(table.clinicId),
+  ],
+);
+
+/** Persona para quien se gestiona una Cita, sin identidad compartida entre Clínicas. */
+export const patients = createTable(
+  "patient",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** Las fichas previas a APO-38 no tenían fecha; al editarlas se completa. */
+    birthDate: date("birth_date", { mode: "string" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("patient_clinic_id_unique").on(table.clinicId, table.id),
+    index("patient_clinic_idx").on(table.clinicId),
+  ],
+);
+
+/** Relación explícita entre un Contacto y un Paciente de la misma Clínica. */
+export const contactPatientLinks = createTable(
+  "contact_patient_link",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    patientId: uuid("patient_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("contact_patient_link_unique").on(
+      table.contactId,
+      table.patientId,
+    ),
+    index("contact_patient_link_contact_idx").on(table.contactId),
+    index("contact_patient_link_patient_idx").on(table.patientId),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "contact_patient_link_contact_same_clinic_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.patientId],
+      foreignColumns: [patients.clinicId, patients.id],
+      name: "contact_patient_link_patient_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
 
 export const identityAuditEvents = createTable("identity_audit_event", {
   id: uuid("id").defaultRandom().primaryKey(),

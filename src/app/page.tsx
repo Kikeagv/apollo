@@ -11,6 +11,7 @@ import { ClinicSessionActivity } from "./clinic-session-activity";
 import { ClinicSignInForm } from "./clinic-sign-in-form";
 import { DoctorProfileSetup } from "./doctor-profile-setup";
 import { AvailabilitySection } from "./availability-section";
+import { AdministrativeRecordsSection } from "./administrative-records-section";
 import { CareOptionsSection } from "./care-options-section";
 import { DoctorsSection } from "./doctors-section";
 import { ServiceCatalogSection } from "./service-catalog-section";
@@ -62,6 +63,7 @@ export default async function Home({
               Panacea vacía.
             </p>
             {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
+            <AdministrativeRecordsSection />
             {context.role === "owner" ? <DoctorsSection /> : null}
             {context.role === "owner" || context.role === "doctor" ? (
               <>

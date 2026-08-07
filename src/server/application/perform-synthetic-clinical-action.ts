@@ -15,6 +15,7 @@ export async function performSyntheticClinicalAction(input: {
     const [patient] = await transaction
       .insert(patients)
       .values({
+        birthDate: "2000-01-01",
         clinicId: input.clinicId,
         name: `Paciente sintético APO-30 ${randomUUID()}`,
       })

@@ -16,6 +16,14 @@ import {
 } from "~/server/application/availability";
 import { calculateCareOptions } from "~/server/application/care-options";
 import {
+  createContact,
+  createContactPatientLink,
+  createPatient,
+  listAdministrativeRecords,
+  updateContact,
+  updatePatient,
+} from "~/server/application/administrative-records";
+import {
   addServiceOffer,
   createService,
   deactivateServiceOffer,
@@ -40,6 +48,7 @@ import {
   drizzleServiceCatalogStore,
   listServiceCatalog,
 } from "~/server/db/service-catalog-store";
+import { drizzleAdministrativeRecordsStore } from "~/server/db/administrative-records-store";
 import {
   sendSimulatedClinicDoctorInvitation,
   sendSimulatedClinicOwnerInvitation,
@@ -135,6 +144,108 @@ export const panaceaRouter = {
         clinicId: ctx.clinic.clinicId,
         identityId: ctx.clinic.identityId,
       }),
+    ),
+
+  listAdministrativeRecords: clinicProcedure.query(({ ctx }) =>
+    listAdministrativeRecords(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleAdministrativeRecordsStore,
+    ),
+  ),
+
+  createContact: clinicProcedure
+    .input(
+      z.object({
+        name: z.string().max(120),
+        phone: z.string().max(32),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      createContact(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  updateContact: clinicProcedure
+    .input(
+      z.object({
+        id: z.string().uuid(),
+        name: z.string().max(120),
+        phone: z.string().max(32),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      updateContact(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  createPatient: clinicProcedure
+    .input(
+      z.object({
+        birthDate: z.string().max(10),
+        name: z.string().max(120),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      createPatient(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  updatePatient: clinicProcedure
+    .input(
+      z.object({
+        birthDate: z.string().max(10),
+        id: z.string().uuid(),
+        name: z.string().max(120),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      updatePatient(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  createContactPatientLink: clinicProcedure
+    .input(
+      z.object({
+        contactId: z.string().uuid(),
+        patientId: z.string().uuid(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      createContactPatientLink(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
     ),
 
   listServiceCatalog: clinicProcedure.query(async ({ ctx }) => {

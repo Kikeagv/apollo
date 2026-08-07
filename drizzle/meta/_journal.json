@@ -134,6 +134,13 @@
       "when": 1785840180000,
       "tag": "0018_rich_random",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786128648035,
+      "tag": "0019_administrative_records",
+      "breakpoints": true
     }
   ]
 }
