@@ -1,4 +1,4 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, or } from "drizzle-orm";
 
 import { type CapacityConflict } from "~/server/application/availability";
 import type { db } from "~/server/db";
@@ -17,6 +17,7 @@ export async function capacityConflictsForDoctor(
       .select({
         endsAt: appointments.endsAt,
         id: appointments.id,
+        occupiedUntil: appointments.occupiedUntil,
         startsAt: appointments.startsAt,
       })
       .from(appointments)
@@ -25,7 +26,7 @@ export async function capacityConflictsForDoctor(
           eq(appointments.clinicId, input.clinicId),
           eq(appointments.doctorId, input.doctorId),
           eq(appointments.status, "confirmed"),
-          gt(appointments.endsAt, now),
+          or(gt(appointments.endsAt, now), gt(appointments.occupiedUntil, now)),
         ),
       ),
     transaction
@@ -45,7 +46,11 @@ export async function capacityConflictsForDoctor(
   ]);
   return [
     ...confirmed.map((event) =>
-      capacityConflict(event, input.doctorId, "confirmed-appointment"),
+      capacityConflict(
+        { ...event, endsAt: event.occupiedUntil ?? event.endsAt },
+        input.doctorId,
+        "confirmed-appointment",
+      ),
     ),
     ...reservations.map((event) =>
       capacityConflict(event, input.doctorId, "active-temporary-reservation"),

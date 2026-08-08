@@ -21,6 +21,8 @@ export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
 export type ClinicUserRole = "owner" | "doctor" | "secretary";
 export type ClinicInvitationRole = "owner" | "doctor";
+export type AppointmentOrigin = "manual" | "reservation";
+export type AppointmentEventType = "manual-created";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -185,6 +187,7 @@ export const serviceOffers = createTable(
       .notNull(),
   },
   (table) => [
+    unique("service_offer_clinic_id_unique").on(table.clinicId, table.id),
     index("service_offer_clinic_idx").on(table.clinicId),
     index("service_offer_service_idx").on(table.serviceId),
     index("service_offer_doctor_idx").on(table.doctorId),
@@ -290,18 +293,27 @@ export const availabilityBlocks = createTable(
   ],
 );
 
-/** Ocupación confirmada mínima, usada para proteger cambios que reducen capacidad. */
+/** Cita confirmada y su período ocupado, incluidos sus snapshots cotizados. */
 export const appointments = createTable(
   "appointment",
   {
     id: uuid("id").defaultRandom().primaryKey(),
     clinicId: uuid("clinic_id").notNull(),
     doctorId: uuid("doctor_id").notNull(),
+    patientId: uuid("patient_id"),
+    serviceOfferId: uuid("service_offer_id"),
+    actorClinicUserId: uuid("actor_clinic_user_id"),
+    origin: text("origin").$type<AppointmentOrigin>(),
+    priceUsd: numeric("price_usd", { precision: 12, scale: 2 }),
+    durationMinutes: integer("duration_minutes"),
+    bufferMinutes: integer("buffer_minutes"),
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    occupiedUntil: timestamp("occupied_until", { withTimezone: true }),
     status: text("status").$type<"confirmed">().default("confirmed").notNull(),
   },
   (table) => [
+    unique("appointment_clinic_id_unique").on(table.clinicId, table.id),
     index("appointment_doctor_starts_at_idx").on(
       table.clinicId,
       table.doctorId,
@@ -312,6 +324,50 @@ export const appointments = createTable(
       foreignColumns: [doctors.clinicId, doctors.id],
       name: "appointment_doctor_same_clinic_fk",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.patientId],
+      foreignColumns: [patients.clinicId, patients.id],
+      name: "appointment_patient_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.serviceOfferId],
+      foreignColumns: [serviceOffers.clinicId, serviceOffers.id],
+      name: "appointment_service_offer_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.actorClinicUserId],
+      foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
+      name: "appointment_actor_same_clinic_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+/** Historial append-only de los cambios y mensajes asociados a una Cita. */
+export const appointmentEvents = createTable(
+  "appointment_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    appointmentId: uuid("appointment_id").notNull(),
+    type: text("type").$type<AppointmentEventType>().notNull(),
+    actorClinicUserId: uuid("actor_clinic_user_id").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("appointment_event_appointment_idx").on(table.appointmentId),
+    index("appointment_event_clinic_idx").on(table.clinicId),
+    foreignKey({
+      columns: [table.clinicId, table.appointmentId],
+      foreignColumns: [appointments.clinicId, appointments.id],
+      name: "appointment_event_appointment_same_clinic_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.actorClinicUserId],
+      foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
+      name: "appointment_event_actor_same_clinic_fk",
+    }).onDelete("restrict"),
   ],
 );
 

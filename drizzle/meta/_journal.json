@@ -141,6 +141,48 @@
       "when": 1786128648035,
       "tag": "0019_administrative_records",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786217383730,
+      "tag": "0020_tricky_gertrude_yorkes",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786217393730,
+      "tag": "0021_operating_calendar_read_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786217403730,
+      "tag": "0022_scope_calendar_reads_to_appointments",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786217413730,
+      "tag": "0023_restore_temporary_reservation_capacity_write",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786217423730,
+      "tag": "0024_preserve_appointment_event_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786217433730,
+      "tag": "0025_append_only_appointment_events",
+      "breakpoints": true
     }
   ]
 }

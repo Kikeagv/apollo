@@ -14,6 +14,7 @@ import { AvailabilitySection } from "./availability-section";
 import { AdministrativeRecordsSection } from "./administrative-records-section";
 import { CareOptionsSection } from "./care-options-section";
 import { DoctorsSection } from "./doctors-section";
+import { ManualAppointmentsSection } from "./manual-appointments-section";
 import { ServiceCatalogSection } from "./service-catalog-section";
 import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
 import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
@@ -64,6 +65,7 @@ export default async function Home({
             </p>
             {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
             <AdministrativeRecordsSection />
+            <ManualAppointmentsSection />
             {context.role === "owner" ? <DoctorsSection /> : null}
             {context.role === "owner" || context.role === "doctor" ? (
               <>

@@ -1,0 +1,534 @@
+import { randomUUID } from "node:crypto";
+
+import { and, eq, sql } from "drizzle-orm";
+import { describe, expect, it } from "vitest";
+
+import { createManualAppointment } from "./manual-appointments";
+import { db } from "../db";
+import {
+  inClinicTransaction,
+  inSuperadminTransaction,
+} from "../db/clinic-context";
+import {
+  drizzleManualAppointmentStore,
+  listManualAppointments,
+} from "../db/manual-appointment-store";
+import {
+  appointmentEvents,
+  appointments,
+  apoloSuperadmins,
+  availabilityBlocks,
+  clinicUsers,
+  clinics,
+  contactPatientLinks,
+  contacts,
+  doctors,
+  effectiveSchedulePeriods,
+  effectiveSchedules,
+  patients,
+  serviceOffers,
+  services,
+  temporaryReservations,
+  user as identities,
+} from "../db/schema";
+
+const databaseTest =
+  process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
+
+describe("Citas manuales persistentes", () => {
+  databaseTest(
+    "crea una Cita elegible con snapshots, evento y detalle operativo para una Secretaria",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const created = await createManualAppointment(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.doctorId,
+            identityId: fixture.secretaryIdentityId,
+            patientId: fixture.patientId,
+            serviceOfferId: fixture.serviceOfferId,
+            startsAt: new Date("2026-08-10T14:00:00.000Z"),
+          },
+          drizzleManualAppointmentStore,
+          new Date("2026-08-08T00:00:00.000Z"),
+        );
+
+        expect(created).toMatchObject({
+          bufferMinutes: 5,
+          durationMinutes: 30,
+          origin: "manual",
+          patientId: fixture.patientId,
+          priceUsd: "35.00",
+          startsAt: new Date("2026-08-10T14:00:00.000Z"),
+        });
+        const listed = await listManualAppointments({
+          clinicId: fixture.clinicId,
+          identityId: fixture.secretaryIdentityId,
+        });
+        expect(listed).toHaveLength(1);
+        expect(listed[0]).toMatchObject({
+          contacts: [{ name: "Ana Martínez", phoneE164: "+50371234567" }],
+          doctor: { name: "Dra. Sol" },
+          events: [
+            {
+              actorClinicUserId: fixture.secretaryClinicUserId,
+              type: "manual-created",
+            },
+          ],
+          id: created.id,
+          patient: { name: "Lucía Martínez" },
+          service: { name: "Consulta" },
+        });
+
+        await inClinicTransaction(
+          {
+            clinicId: fixture.otherClinicId,
+            identityId: fixture.otherOwnerIdentityId,
+          },
+          async (transaction) => {
+            await expect(
+              transaction
+                .select({ id: appointments.id })
+                .from(appointments)
+                .where(eq(appointments.id, created.id)),
+            ).resolves.toEqual([]);
+            await expect(
+              transaction
+                .select({ id: appointmentEvents.id })
+                .from(appointmentEvents)
+                .where(eq(appointmentEvents.appointmentId, created.id)),
+            ).resolves.toEqual([]);
+          },
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "autoriza al propietario, Médico y Secretaria a operar Citas, sin permitir a la Secretaria configurar Ofertas",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const startsAt = ["14:00", "14:40", "15:20"];
+        const identities = [
+          fixture.ownerIdentityId,
+          fixture.doctorIdentityId,
+          fixture.secretaryIdentityId,
+        ];
+        const created = await Promise.all(
+          identities.map((identityId, index) =>
+            createManualAppointment(
+              {
+                clinicId: fixture.clinicId,
+                doctorId: fixture.doctorId,
+                identityId,
+                patientId: fixture.patientId,
+                serviceOfferId: fixture.serviceOfferId,
+                startsAt: new Date(
+                  `2026-08-10T${startsAt[index] ?? "14:00"}:00.000Z`,
+                ),
+              },
+              drizzleManualAppointmentStore,
+              new Date("2026-08-08T00:00:00.000Z"),
+            ),
+          ),
+        );
+        expect(created.map((appointment) => appointment.id)).toHaveLength(3);
+
+        await inClinicTransaction(
+          {
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          },
+          async (transaction) => {
+            await expect(
+              transaction
+                .update(serviceOffers)
+                .set({ priceUsd: "99.00" })
+                .where(eq(serviceOffers.id, fixture.serviceOfferId))
+                .returning({ id: serviceOffers.id }),
+            ).resolves.toEqual([]);
+          },
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "rechaza un traslape concurrente sin mover la Cita manual solicitada",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-08T00:00:00.000Z");
+      try {
+        await createManualAppointment(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.doctorId,
+            identityId: fixture.ownerIdentityId,
+            patientId: fixture.patientId,
+            serviceOfferId: fixture.serviceOfferId,
+            startsAt: new Date("2026-08-10T14:00:00.000Z"),
+          },
+          drizzleManualAppointmentStore,
+          now,
+        );
+        await expect(
+          createManualAppointment(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.doctorId,
+              identityId: fixture.secretaryIdentityId,
+              patientId: fixture.patientId,
+              serviceOfferId: fixture.serviceOfferId,
+              startsAt: new Date("2026-08-10T14:05:00.000Z"),
+            },
+            drizzleManualAppointmentStore,
+            now,
+          ),
+        ).rejects.toThrow(
+          "La Cita manual ya no es una Opción de atención autorizada",
+        );
+        await expect(
+          listManualAppointments({
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          }),
+        ).resolves.toMatchObject([
+          { startsAt: new Date("2026-08-10T14:00:00.000Z") },
+        ]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "muestra en el Calendario una Cita activa creada desde una Reserva temporal",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        await inClinicTransaction(
+          {
+            clinicId: fixture.clinicId,
+            identityId: fixture.ownerIdentityId,
+          },
+          (transaction) =>
+            transaction.insert(appointments).values({
+              actorClinicUserId: fixture.ownerClinicUserId,
+              bufferMinutes: 5,
+              clinicId: fixture.clinicId,
+              doctorId: fixture.doctorId,
+              durationMinutes: 30,
+              endsAt: new Date("2026-08-10T15:30:00.000Z"),
+              occupiedUntil: new Date("2026-08-10T15:35:00.000Z"),
+              origin: "reservation",
+              patientId: fixture.patientId,
+              priceUsd: "35.00",
+              serviceOfferId: fixture.serviceOfferId,
+              startsAt: new Date("2026-08-10T15:00:00.000Z"),
+            }),
+        );
+        await expect(
+          listManualAppointments({
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          }),
+        ).resolves.toMatchObject([
+          {
+            origin: "reservation",
+            patient: { name: "Lucía Martínez" },
+            service: { name: "Consulta" },
+          },
+        ]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "rechaza Bloqueos y Reservas temporales activas sin crear una Cita",
+    async () => {
+      const fixture = await createFixture();
+      const input = {
+        clinicId: fixture.clinicId,
+        doctorId: fixture.doctorId,
+        identityId: fixture.secretaryIdentityId,
+        patientId: fixture.patientId,
+        serviceOfferId: fixture.serviceOfferId,
+        startsAt: new Date("2026-08-10T14:00:00.000Z"),
+      };
+      try {
+        await inClinicTransaction(
+          { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
+          (transaction) =>
+            transaction.insert(availabilityBlocks).values({
+              clinicId: fixture.clinicId,
+              doctorId: fixture.doctorId,
+              endsAt: new Date("2026-08-10T14:30:00.000Z"),
+              startsAt: new Date("2026-08-10T14:00:00.000Z"),
+            }),
+        );
+        await expect(
+          createManualAppointment(
+            input,
+            drizzleManualAppointmentStore,
+            new Date("2026-08-08T00:00:00.000Z"),
+          ),
+        ).rejects.toThrow(
+          "La Cita manual ya no es una Opción de atención autorizada",
+        );
+        await inClinicTransaction(
+          { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
+          (transaction) =>
+            transaction
+              .delete(availabilityBlocks)
+              .where(eq(availabilityBlocks.clinicId, fixture.clinicId)),
+        );
+        await inClinicTransaction(
+          { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
+          (transaction) =>
+            transaction.insert(temporaryReservations).values({
+              clinicId: fixture.clinicId,
+              doctorId: fixture.doctorId,
+              endsAt: new Date("2026-08-10T14:30:00.000Z"),
+              expiresAt: new Date(Date.now() + 10 * 60_000),
+              startsAt: new Date("2026-08-10T14:00:00.000Z"),
+            }),
+        );
+        await expect(
+          createManualAppointment(
+            input,
+            drizzleManualAppointmentStore,
+            new Date("2026-08-08T00:00:00.000Z"),
+          ),
+        ).rejects.toThrow(
+          "La Cita manual ya no es una Opción de atención autorizada",
+        );
+        await expect(
+          listManualAppointments({
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          }),
+        ).resolves.toEqual([]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+});
+
+async function createFixture() {
+  const suffix = randomUUID();
+  const ids = {
+    doctor: `apo-39-doctor-${suffix}`,
+    otherOwner: `apo-39-other-owner-${suffix}`,
+    owner: `apo-39-owner-${suffix}`,
+    secretary: `apo-39-secretary-${suffix}`,
+    superadmin: `apo-39-superadmin-${suffix}`,
+  };
+  await db.insert(identities).values(
+    Object.entries(ids).map(([name, id]) => ({
+      createdAt: new Date(),
+      email: `${id}@example.test`,
+      emailVerified: true,
+      id,
+      name,
+      updatedAt: new Date(),
+    })),
+  );
+  await db.insert(apoloSuperadmins).values({ identityId: ids.superadmin });
+
+  const primary = await inSuperadminTransaction(
+    ids.superadmin,
+    async (transaction) => {
+      const [clinic] = await transaction
+        .insert(clinics)
+        .values({ isSynthetic: true, name: "Clínica APO-39" })
+        .returning({ id: clinics.id });
+      if (clinic === undefined) throw new Error("No se creó la Clínica");
+      await transaction.execute(
+        sql`select set_config('app.clinic_id', ${clinic.id}, true)`,
+      );
+      const members = await transaction
+        .insert(clinicUsers)
+        .values([
+          { clinicId: clinic.id, identityId: ids.owner, role: "owner" },
+          { clinicId: clinic.id, identityId: ids.doctor, role: "doctor" },
+          {
+            clinicId: clinic.id,
+            identityId: ids.secretary,
+            role: "secretary",
+          },
+        ])
+        .returning({ id: clinicUsers.id, identityId: clinicUsers.identityId });
+      const doctorMember = members.find(
+        (member) => member.identityId === ids.doctor,
+      );
+      const secretaryMember = members.find(
+        (member) => member.identityId === ids.secretary,
+      );
+      const ownerMember = members.find(
+        (member) => member.identityId === ids.owner,
+      );
+      if (
+        doctorMember === undefined ||
+        ownerMember === undefined ||
+        secretaryMember === undefined
+      ) {
+        throw new Error("No se crearon los Usuarios de clínica");
+      }
+      const [doctor] = await transaction
+        .insert(doctors)
+        .values({
+          clinicId: clinic.id,
+          clinicUserId: doctorMember.id,
+          primarySpecialty: "Medicina familiar",
+          publicName: "Dra. Sol",
+        })
+        .returning({ id: doctors.id });
+      const [service] = await transaction
+        .insert(services)
+        .values({
+          clinicId: clinic.id,
+          description: "Consulta general",
+          name: "Consulta",
+          normalizedName: "consulta",
+        })
+        .returning({ id: services.id });
+      if (doctor === undefined || service === undefined) {
+        throw new Error("No se creó la configuración de atención");
+      }
+      const [offer] = await transaction
+        .insert(serviceOffers)
+        .values({
+          bufferMinutes: 5,
+          clinicId: clinic.id,
+          doctorId: doctor.id,
+          durationMinutes: 30,
+          priceUsd: "35.00",
+          serviceId: service.id,
+        })
+        .returning({ id: serviceOffers.id });
+      const [schedule] = await transaction
+        .insert(effectiveSchedules)
+        .values({
+          clinicId: clinic.id,
+          doctorId: doctor.id,
+          effectiveFrom: "2026-08-01",
+          timezone: "America/El_Salvador",
+        })
+        .returning({ id: effectiveSchedules.id });
+      if (offer === undefined || schedule === undefined) {
+        throw new Error("No se creó la Oferta u Horario vigente");
+      }
+      await transaction.insert(effectiveSchedulePeriods).values({
+        clinicId: clinic.id,
+        dayOfWeek: 1,
+        doctorId: doctor.id,
+        endTime: "10:00",
+        scheduleId: schedule.id,
+        startTime: "08:00",
+      });
+      const [contact] = await transaction
+        .insert(contacts)
+        .values({
+          clinicId: clinic.id,
+          name: "Ana Martínez",
+          phoneE164: "+50371234567",
+        })
+        .returning({ id: contacts.id });
+      const [patient] = await transaction
+        .insert(patients)
+        .values({
+          birthDate: "2018-04-02",
+          clinicId: clinic.id,
+          name: "Lucía Martínez",
+        })
+        .returning({ id: patients.id });
+      if (contact === undefined || patient === undefined) {
+        throw new Error("No se creó la ficha administrativa");
+      }
+      await transaction.insert(contactPatientLinks).values({
+        clinicId: clinic.id,
+        contactId: contact.id,
+        patientId: patient.id,
+      });
+      return {
+        clinicId: clinic.id,
+        doctorId: doctor.id,
+        ownerClinicUserId: ownerMember.id,
+        patientId: patient.id,
+        secretaryClinicUserId: secretaryMember.id,
+        serviceOfferId: offer.id,
+      };
+    },
+  );
+  const other = await inSuperadminTransaction(
+    ids.superadmin,
+    async (transaction) => {
+      const [clinic] = await transaction
+        .insert(clinics)
+        .values({ isSynthetic: true, name: "Clínica externa APO-39" })
+        .returning({ id: clinics.id });
+      if (clinic === undefined)
+        throw new Error("No se creó la Clínica externa");
+      await transaction.execute(
+        sql`select set_config('app.clinic_id', ${clinic.id}, true)`,
+      );
+      await transaction.insert(clinicUsers).values({
+        clinicId: clinic.id,
+        identityId: ids.otherOwner,
+        role: "owner",
+      });
+      return { clinicId: clinic.id };
+    },
+  );
+
+  return {
+    ...primary,
+    otherClinicId: other.clinicId,
+    doctorIdentityId: ids.doctor,
+    otherOwnerIdentityId: ids.otherOwner,
+    ownerIdentityId: ids.owner,
+    secretaryIdentityId: ids.secretary,
+    async cleanup() {
+      for (const clinicId of [primary.clinicId, other.clinicId]) {
+        await inSuperadminTransaction(ids.superadmin, async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${clinicId}, true)`,
+          );
+          await transaction.execute(
+            sql`set local role panacea_clinical_access`,
+          );
+          await transaction
+            .delete(appointmentEvents)
+            .where(eq(appointmentEvents.clinicId, clinicId));
+          await transaction.execute(sql`set local role none`);
+          await transaction
+            .delete(appointments)
+            .where(eq(appointments.clinicId, clinicId));
+          await transaction.delete(clinics).where(eq(clinics.id, clinicId));
+        });
+      }
+      await db
+        .delete(apoloSuperadmins)
+        .where(eq(apoloSuperadmins.identityId, ids.superadmin));
+      await db
+        .delete(identities)
+        .where(
+          and(eq(identities.id, ids.owner), eq(identities.id, ids.doctor)),
+        );
+      await db.delete(identities).where(eq(identities.id, ids.owner));
+      await db.delete(identities).where(eq(identities.id, ids.doctor));
+      await db.delete(identities).where(eq(identities.id, ids.secretary));
+      await db.delete(identities).where(eq(identities.id, ids.otherOwner));
+      await db.delete(identities).where(eq(identities.id, ids.superadmin));
+    },
+  };
+}

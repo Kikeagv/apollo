@@ -264,6 +264,7 @@ export const drizzleCareOptionsStore: CareOptionsStore = {
           transaction
             .select({
               endsAt: appointments.endsAt,
+              occupiedUntil: appointments.occupiedUntil,
               startsAt: appointments.startsAt,
             })
             .from(appointments)
@@ -279,7 +280,10 @@ export const drizzleCareOptionsStore: CareOptionsStore = {
         ]);
 
       return {
-        appointments: appointmentsForRange,
+        appointments: appointmentsForRange.map((appointment) => ({
+          endsAt: appointment.occupiedUntil ?? appointment.endsAt,
+          startsAt: appointment.startsAt,
+        })),
         blocks,
         offer,
         schedules: schedules.map((schedule) => ({
@@ -394,6 +398,17 @@ function overlapsRange(
 ) {
   const startsAt = localMidnight(input.from);
   const endsAt = localMidnight(nextLocalDate(input.to));
+  if (table === appointments) {
+    return and(
+      eq(appointments.clinicId, input.clinicId),
+      eq(appointments.doctorId, input.doctorId),
+      lt(appointments.startsAt, endsAt),
+      or(
+        gt(appointments.endsAt, startsAt),
+        gt(appointments.occupiedUntil, startsAt),
+      ),
+    );
+  }
   return and(
     eq(table.clinicId, input.clinicId),
     eq(table.doctorId, input.doctorId),
@@ -456,6 +471,7 @@ async function activeOccupancy(
       .select({
         endsAt: appointments.endsAt,
         id: appointments.id,
+        occupiedUntil: appointments.occupiedUntil,
         startsAt: appointments.startsAt,
       })
       .from(appointments)
@@ -483,7 +499,11 @@ async function activeOccupancy(
   ]);
   return [
     ...confirmed.map((event) =>
-      capacityConflict(event, input.doctorId, "confirmed-appointment"),
+      capacityConflict(
+        { ...event, endsAt: event.occupiedUntil ?? event.endsAt },
+        input.doctorId,
+        "confirmed-appointment",
+      ),
     ),
     ...reservations.map((event) =>
       capacityConflict(event, input.doctorId, "active-temporary-reservation"),
