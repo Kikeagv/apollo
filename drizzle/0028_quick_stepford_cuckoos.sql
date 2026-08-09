@@ -1,0 +1,2 @@
+ALTER TABLE "pg-drizzle_appointment_event" ADD COLUMN "recipient_contact_id" uuid;--> statement-breakpoint
+ALTER TABLE "pg-drizzle_appointment_event" ADD CONSTRAINT "appointment_event_recipient_contact_same_clinic_fk" FOREIGN KEY ("clinic_id","recipient_contact_id") REFERENCES "public"."pg-drizzle_contact"("clinic_id","id") ON DELETE restrict ON UPDATE no action;

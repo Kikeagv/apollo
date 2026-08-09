@@ -63,6 +63,7 @@ import {
   sendSimulatedClinicDoctorInvitation,
   sendSimulatedClinicOwnerInvitation,
 } from "~/server/email/simulated-identity-email";
+import { simulatedAppointmentMessageSender } from "~/server/whatsapp/simulated-appointment-messages";
 import {
   clinicProcedure,
   protectedProcedure,
@@ -405,6 +406,7 @@ export const panaceaRouter = {
         serviceOfferId: z.string().uuid(),
         startsAt: z.coerce.date(),
         outsideScheduleConfirmed: z.boolean().optional(),
+        notificationRecipientContactId: z.string().uuid().optional(),
       }),
     )
     .mutation(({ ctx, input }) =>
@@ -415,6 +417,8 @@ export const panaceaRouter = {
           identityId: ctx.clinic.identityId,
         },
         drizzleManualAppointmentStore,
+        undefined,
+        simulatedAppointmentMessageSender,
       ),
     ),
 
@@ -422,6 +426,7 @@ export const panaceaRouter = {
     .input(
       z.object({
         appointmentId: z.string().uuid(),
+        notificationRecipientContactId: z.string().uuid().optional(),
         reason: z.string().max(500).optional(),
       }),
     )
@@ -433,6 +438,8 @@ export const panaceaRouter = {
           identityId: ctx.clinic.identityId,
         },
         drizzleManualAppointmentStore,
+        undefined,
+        simulatedAppointmentMessageSender,
       ),
     ),
 

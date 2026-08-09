@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   cancelManualAppointment,
   createManualAppointment,
+  type ManualAppointmentTransactionalMessage,
   ManualAppointmentNotCancellableError,
   ManualAppointmentOutsideScheduleConfirmationRequiredError,
 } from "./manual-appointments";
@@ -42,6 +43,124 @@ const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("Citas manuales persistentes", () => {
+  databaseTest(
+    "envía Mensajes transaccionales opcionales al Contacto vinculado elegido, registra sus resultados y conserva el aislamiento de Clínica",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-08T00:00:00.000Z");
+      const sent: ManualAppointmentTransactionalMessage[] = [];
+      const sender = {
+        async send(message: ManualAppointmentTransactionalMessage) {
+          sent.push(message);
+        },
+      };
+      try {
+        const appointment = await createManualAppointment(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.doctorId,
+            identityId: fixture.secretaryIdentityId,
+            notificationRecipientContactId: fixture.contactId,
+            patientId: fixture.patientId,
+            serviceOfferId: fixture.serviceOfferId,
+            startsAt: new Date("2026-08-10T14:00:00.000Z"),
+          },
+          drizzleManualAppointmentStore,
+          now,
+          sender,
+        );
+        expect(sent).toHaveLength(1);
+        expect(sent[0]?.recipient.id).toBe(fixture.contactId);
+        expect(sent[0]?.type).toBe("manual-confirmation");
+
+        await cancelManualAppointment(
+          {
+            appointmentId: appointment.id,
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+            notificationRecipientContactId: fixture.contactId,
+          },
+          drizzleManualAppointmentStore,
+          now,
+          sender,
+        );
+        const cancelled = await listCancelledManualAppointments({
+          clinicId: fixture.clinicId,
+          identityId: fixture.secretaryIdentityId,
+        });
+        expect(cancelled).toMatchObject([
+          {
+            events: [
+              { type: "manual-created" },
+              {
+                recipient: { id: fixture.contactId },
+                type: "manual-confirmation-sent",
+              },
+              { type: "cancelled" },
+              {
+                recipient: { id: fixture.contactId },
+                type: "manual-cancellation-sent",
+              },
+            ],
+            id: appointment.id,
+          },
+        ]);
+
+        const failedDelivery = await createManualAppointment(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.doctorId,
+            identityId: fixture.secretaryIdentityId,
+            notificationRecipientContactId: fixture.contactId,
+            patientId: fixture.patientId,
+            serviceOfferId: fixture.serviceOfferId,
+            startsAt: new Date("2026-08-10T14:40:00.000Z"),
+          },
+          drizzleManualAppointmentStore,
+          now,
+          {
+            async send() {
+              throw new Error("Proveedor no disponible");
+            },
+          },
+        );
+        await expect(
+          listManualAppointments({
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          }),
+        ).resolves.toMatchObject([
+          {
+            events: [
+              { type: "manual-created" },
+              {
+                recipient: { id: fixture.contactId },
+                type: "manual-confirmation-failed",
+              },
+            ],
+            id: failedDelivery.id,
+          },
+        ]);
+        await inClinicTransaction(
+          {
+            clinicId: fixture.otherClinicId,
+            identityId: fixture.otherOwnerIdentityId,
+          },
+          async (transaction) => {
+            await expect(
+              transaction
+                .select({ id: appointmentEvents.id })
+                .from(appointmentEvents)
+                .where(eq(appointmentEvents.appointmentId, appointment.id)),
+            ).resolves.toEqual([]);
+          },
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "cancela Citas manuales para todos los roles, conserva el historial y libera la capacidad sin cruzar Clínicas",
     async () => {
@@ -743,6 +862,7 @@ async function createFixture() {
       });
       return {
         clinicId: clinic.id,
+        contactId: contact.id,
         doctorId: doctor.id,
         ownerClinicUserId: ownerMember.id,
         patientId: patient.id,

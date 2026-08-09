@@ -10,6 +10,8 @@ import {
   type CreateManualAppointmentInput,
   type ManualAppointmentCanceller,
   type ManualAppointmentCreator,
+  type ManualAppointmentMessageDeliveryRecorder,
+  type ManualAppointmentMessageType,
 } from "~/server/application/manual-appointments";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
@@ -32,7 +34,8 @@ import {
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export const drizzleManualAppointmentStore: ManualAppointmentCreator &
-  ManualAppointmentCanceller = {
+  ManualAppointmentCanceller &
+  ManualAppointmentMessageDeliveryRecorder = {
   async create(input) {
     return inClinicTransaction(input, async (transaction) => {
       await setCalendarOperation(transaction);
@@ -107,6 +110,12 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         outsideSchedule,
         patientId: input.patientId,
         priceUsd: appointmentInput.priceUsd,
+        transactionalMessage: appointmentInput.notificationRecipient && {
+          appointmentId: appointment.id,
+          clinicId: input.clinicId,
+          recipient: appointmentInput.notificationRecipient,
+          type: "manual-confirmation" as const,
+        },
       };
     });
   },
@@ -114,15 +123,29 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   async cancel(input) {
     return inClinicTransaction(input, async (transaction) => {
       await setCalendarOperation(transaction);
-      const actor = await transaction.query.clinicUsers.findFirst({
-        columns: { id: true },
-        where: and(
-          eq(clinicUsers.clinicId, input.clinicId),
-          eq(clinicUsers.identityId, input.identityId),
-          eq(clinicUsers.active, true),
+      const [actor, notificationRecipient] = await Promise.all([
+        transaction.query.clinicUsers.findFirst({
+          columns: { id: true },
+          where: and(
+            eq(clinicUsers.clinicId, input.clinicId),
+            eq(clinicUsers.identityId, input.identityId),
+            eq(clinicUsers.active, true),
+          ),
+        }),
+        notificationRecipientForAppointment(
+          transaction,
+          input.clinicId,
+          input.appointmentId,
+          input.notificationRecipientContactId,
         ),
-      });
+      ]);
       if (actor === undefined) return undefined;
+      if (
+        input.notificationRecipientContactId !== undefined &&
+        notificationRecipient === undefined
+      ) {
+        return undefined;
+      }
       const [appointment] = await transaction
         .update(appointments)
         .set({ status: "cancelled" })
@@ -144,8 +167,54 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         reason: input.reason,
         type: "cancelled",
       });
-      return { ...appointment, status: "cancelled" as const };
+      return {
+        ...appointment,
+        status: "cancelled" as const,
+        transactionalMessage: notificationRecipient && {
+          appointmentId: appointment.id,
+          clinicId: input.clinicId,
+          recipient: notificationRecipient,
+          type: "manual-cancellation" as const,
+        },
+      };
     });
+  },
+
+  async recordMessageDelivery(input) {
+    return inClinicTransaction(
+      { clinicId: input.clinicId, identityId: input.actorIdentityId },
+      async (transaction) => {
+        await setCalendarOperation(transaction);
+        const [actor, recipient] = await Promise.all([
+          transaction.query.clinicUsers.findFirst({
+            columns: { id: true },
+            where: and(
+              eq(clinicUsers.clinicId, input.clinicId),
+              eq(clinicUsers.identityId, input.actorIdentityId),
+              eq(clinicUsers.active, true),
+            ),
+          }),
+          notificationRecipientForAppointment(
+            transaction,
+            input.clinicId,
+            input.appointmentId,
+            input.recipientContactId,
+          ),
+        ]);
+        if (actor === undefined || recipient === undefined) {
+          throw new Error(
+            "No se pudo registrar el resultado del Mensaje de Cita",
+          );
+        }
+        await transaction.insert(appointmentEvents).values({
+          actorClinicUserId: actor.id,
+          appointmentId: input.appointmentId,
+          clinicId: input.clinicId,
+          recipientContactId: recipient.id,
+          type: messageEventType(input.type, input.result),
+        });
+      },
+    );
   },
 };
 
@@ -157,13 +226,26 @@ export async function listManualAppointmentFormData(input: {
     await setCalendarOperation(transaction);
     const [linkedPatients, activeOffers] = await Promise.all([
       transaction
-        .select({ id: patients.id, name: patients.name })
+        .select({
+          contactId: contacts.id,
+          contactName: contacts.name,
+          contactPhoneE164: contacts.phoneE164,
+          patientId: patients.id,
+          patientName: patients.name,
+        })
         .from(patients)
         .innerJoin(
           contactPatientLinks,
           and(
             eq(patients.clinicId, contactPatientLinks.clinicId),
             eq(patients.id, contactPatientLinks.patientId),
+          ),
+        )
+        .innerJoin(
+          contacts,
+          and(
+            eq(contactPatientLinks.clinicId, contacts.clinicId),
+            eq(contactPatientLinks.contactId, contacts.id),
           ),
         )
         .where(eq(patients.clinicId, input.clinicId))
@@ -217,7 +299,22 @@ export async function listManualAppointmentFormData(input: {
       })),
       patients: [
         ...new Map(
-          linkedPatients.map((patient) => [patient.id, patient]),
+          linkedPatients.map((patient) => [
+            patient.patientId,
+            {
+              contacts: linkedPatients
+                .filter(
+                  (candidate) => candidate.patientId === patient.patientId,
+                )
+                .map((candidate) => ({
+                  id: candidate.contactId,
+                  name: candidate.contactName,
+                  phoneE164: candidate.contactPhoneE164,
+                })),
+              id: patient.patientId,
+              name: patient.patientName,
+            },
+          ]),
         ).values(),
       ],
     };
@@ -334,6 +431,7 @@ async function listAppointments(
           actorClinicUserId: appointmentEvents.actorClinicUserId,
           appointmentId: appointmentEvents.appointmentId,
           occurredAt: appointmentEvents.occurredAt,
+          recipientContactId: appointmentEvents.recipientContactId,
           reason: appointmentEvents.reason,
           type: appointmentEvents.type,
         })
@@ -362,7 +460,22 @@ async function listAppointments(
       ),
       events: events
         .filter((event) => event.appointmentId === appointment.id)
-        .map(({ appointmentId: _, ...event }) => event),
+        .map(({ appointmentId: _, recipientContactId, ...event }) => {
+          const recipient = linkedContacts.find(
+            (contact) => contact.id === recipientContactId,
+          );
+          return {
+            ...event,
+            recipient:
+              recipient === undefined
+                ? null
+                : {
+                    id: recipient.id,
+                    name: recipient.name,
+                    phoneE164: recipient.phoneE164,
+                  },
+          };
+        }),
       id: appointment.id,
       origin: appointment.origin,
       outsideSchedule: appointment.outsideSchedule,
@@ -394,7 +507,7 @@ async function appointmentInputs(
   transaction: ClinicTransaction,
   input: CreateManualAppointmentInput,
 ) {
-  const [actor, offer, linkedContact] = await Promise.all([
+  const [actor, offer, linkedContacts] = await Promise.all([
     transaction.query.clinicUsers.findFirst({
       columns: { id: true },
       where: and(
@@ -443,25 +556,96 @@ async function appointmentInputs(
           inArray(clinicUsers.role, ["owner", "doctor"]),
         ),
       ),
-    transaction.query.contactPatientLinks.findFirst({
-      columns: { id: true },
-      where: and(
-        eq(contactPatientLinks.clinicId, input.clinicId),
-        eq(contactPatientLinks.patientId, input.patientId),
+    transaction
+      .select({
+        id: contacts.id,
+        name: contacts.name,
+        phoneE164: contacts.phoneE164,
+      })
+      .from(contactPatientLinks)
+      .innerJoin(
+        contacts,
+        and(
+          eq(contactPatientLinks.clinicId, contacts.clinicId),
+          eq(contactPatientLinks.contactId, contacts.id),
+        ),
+      )
+      .where(
+        and(
+          eq(contactPatientLinks.clinicId, input.clinicId),
+          eq(contactPatientLinks.patientId, input.patientId),
+        ),
       ),
-    }),
   ]);
   const selectedOffer = offer[0];
+  const notificationRecipient =
+    input.notificationRecipientContactId === undefined
+      ? undefined
+      : linkedContacts.find(
+          (contact) => contact.id === input.notificationRecipientContactId,
+        );
   if (
     actor === undefined ||
     selectedOffer === undefined ||
-    linkedContact === undefined
+    linkedContacts.length === 0 ||
+    (input.notificationRecipientContactId !== undefined &&
+      notificationRecipient === undefined)
   ) {
     return undefined;
   }
 
   const capacity = await capacityInputs(transaction, input);
-  return { ...selectedOffer, actorClinicUserId: actor.id, capacity };
+  return {
+    ...selectedOffer,
+    actorClinicUserId: actor.id,
+    capacity,
+    notificationRecipient,
+  };
+}
+
+async function notificationRecipientForAppointment(
+  transaction: ClinicTransaction,
+  clinicId: string,
+  appointmentId: string,
+  recipientContactId: string | undefined,
+) {
+  if (recipientContactId === undefined) return undefined;
+  const [recipient] = await transaction
+    .select({
+      id: contacts.id,
+      name: contacts.name,
+      phoneE164: contacts.phoneE164,
+    })
+    .from(appointments)
+    .innerJoin(
+      contactPatientLinks,
+      and(
+        eq(appointments.clinicId, contactPatientLinks.clinicId),
+        eq(appointments.patientId, contactPatientLinks.patientId),
+      ),
+    )
+    .innerJoin(
+      contacts,
+      and(
+        eq(contactPatientLinks.clinicId, contacts.clinicId),
+        eq(contactPatientLinks.contactId, contacts.id),
+      ),
+    )
+    .where(
+      and(
+        eq(appointments.clinicId, clinicId),
+        eq(appointments.id, appointmentId),
+        eq(contacts.id, recipientContactId),
+      ),
+    );
+  return recipient;
+}
+
+function messageEventType(
+  type: ManualAppointmentMessageType,
+  result: "sent" | "failed",
+) {
+  return `${type}-${result}` as const;
 }
 
 async function capacityInputs(

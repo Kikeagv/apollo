@@ -6,6 +6,13 @@ import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import { api } from "~/trpc/react";
 
 type CalendarView = "day" | "week";
+type AppointmentEventType =
+  | "manual-created"
+  | "cancelled"
+  | "manual-confirmation-sent"
+  | "manual-confirmation-failed"
+  | "manual-cancellation-sent"
+  | "manual-cancellation-failed";
 type CalendarAppointment = {
   bufferMinutes: number | null;
   contacts: { id: string; name: string; phoneE164: string }[];
@@ -15,8 +22,9 @@ type CalendarAppointment = {
   events: {
     actorClinicUserId: string;
     occurredAt: Date;
+    recipient: { id: string; name: string; phoneE164: string } | null;
     reason: string | null;
-    type: "manual-created" | "cancelled";
+    type: AppointmentEventType;
   }[];
   id: string;
   patient: { id: string; name: string };
@@ -29,6 +37,7 @@ type CalendarAppointment = {
 
 type ManualAppointmentRequest = {
   doctorId: string;
+  notificationRecipientContactId?: string;
   outsideScheduleConfirmed?: boolean;
   patientId: string;
   serviceOfferId: string;
@@ -42,6 +51,8 @@ export function ManualAppointmentsSection() {
   const [outsideScheduleConfirmation, setOutsideScheduleConfirmation] =
     useState<ManualAppointmentRequest>();
   const [selectedId, setSelectedId] = useState<string>();
+  const [patientId, setPatientId] = useState("");
+  const [sendConfirmation, setSendConfirmation] = useState(false);
   const [view, setView] = useState<CalendarView>("week");
   const formData = api.panacea.listManualAppointmentFormData.useQuery();
   const appointments = api.panacea.listManualAppointments.useQuery();
@@ -90,6 +101,9 @@ export function ManualAppointmentsSection() {
         visibleDates.includes(localDate(appointment.startsAt)) &&
         (doctorId === "" || appointment.doctor.id === doctorId),
     ) ?? [];
+  const selectedPatient = formData.data?.patients.find(
+    (patient) => patient.id === patientId,
+  );
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -101,7 +115,10 @@ export function ManualAppointmentsSection() {
     setOutsideScheduleConfirmation(undefined);
     create.mutate({
       doctorId: offer.doctorId,
-      patientId: value(data, "patientId"),
+      notificationRecipientContactId: sendConfirmation
+        ? value(data, "notificationRecipientContactId")
+        : undefined,
+      patientId,
       serviceOfferId: offer.serviceOfferId,
       startsAt: clinicDateTime(value(data, "startsAt")),
     });
@@ -122,7 +139,9 @@ export function ManualAppointmentsSection() {
             className={inputClass}
             disabled={formData.data?.patients.length === 0}
             name="patientId"
+            onChange={(event) => setPatientId(event.target.value)}
             required
+            value={patientId}
           >
             <option value="">Seleccione un Paciente</option>
             {formData.data?.patients.map((patient) => (
@@ -148,6 +167,32 @@ export function ManualAppointmentsSection() {
             ))}
           </select>
         </label>
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            checked={sendConfirmation}
+            onChange={(event) => setSendConfirmation(event.target.checked)}
+            type="checkbox"
+          />
+          Enviar confirmación inmediata por WhatsApp
+        </label>
+        {sendConfirmation ? (
+          <label className="text-sm sm:col-span-2">
+            Contacto destinatario
+            <select
+              className={inputClass}
+              disabled={selectedPatient === undefined}
+              name="notificationRecipientContactId"
+              required
+            >
+              <option value="">Seleccione un Contacto vinculado</option>
+              {selectedPatient?.contacts.map((contact) => (
+                <option key={contact.id} value={contact.id}>
+                  {contact.name} · {contact.phoneE164}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="text-sm">
           Inicio
           <input
@@ -320,11 +365,11 @@ export function ManualAppointmentsSection() {
           appointment={selected}
           cancelError={cancel.error?.message}
           cancelling={cancel.isPending}
-          onCancel={(reason) => {
+          onCancel={(input) => {
             if (selected !== undefined) {
               cancel.mutate({
                 appointmentId: selected.id,
-                reason: reason || undefined,
+                ...input,
               });
             }
           }}
@@ -343,8 +388,12 @@ function AppointmentDetail({
   appointment: CalendarAppointment | undefined;
   cancelError: string | undefined;
   cancelling: boolean;
-  onCancel: (reason: string) => void;
+  onCancel: (input: {
+    notificationRecipientContactId?: string;
+    reason?: string;
+  }) => void;
 }) {
+  const [sendCancellation, setSendCancellation] = useState(false);
   if (appointment === undefined) {
     return (
       <aside className="rounded border border-slate-800 p-3 text-sm text-slate-400">
@@ -354,7 +403,13 @@ function AppointmentDetail({
   }
   function cancelAppointment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onCancel(value(new FormData(event.currentTarget), "reason"));
+    const data = new FormData(event.currentTarget);
+    onCancel({
+      notificationRecipientContactId: sendCancellation
+        ? value(data, "notificationRecipientContactId")
+        : undefined,
+      reason: value(data, "reason") || undefined,
+    });
   }
   const canCancel =
     appointment.status === "confirmed" && appointment.startsAt > new Date();
@@ -391,9 +446,10 @@ function AppointmentDetail({
         <ul className="mt-1 space-y-1 text-slate-300">
           {appointment.events.map((event) => (
             <li key={`${event.type}-${event.occurredAt.toString()}`}>
-              {event.type === "manual-created"
-                ? "Cita manual creada"
-                : "Cita cancelada"}
+              {appointmentEventLabel(event.type)}
+              {event.recipient
+                ? ` · ${event.recipient.name} · ${event.recipient.phoneE164}`
+                : ""}
               {event.reason ? ` · ${event.reason}` : ""} · Usuario de clínica{" "}
               {event.actorClinicUserId} · {formatClinicDate(event.occurredAt)}
             </li>
@@ -406,6 +462,31 @@ function AppointmentDetail({
             Razón de cancelación (opcional)
             <input className={inputClass} maxLength={500} name="reason" />
           </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              checked={sendCancellation}
+              onChange={(event) => setSendCancellation(event.target.checked)}
+              type="checkbox"
+            />
+            Enviar aviso de cancelación por WhatsApp
+          </label>
+          {sendCancellation ? (
+            <label className="text-sm">
+              Contacto destinatario
+              <select
+                className={inputClass}
+                name="notificationRecipientContactId"
+                required
+              >
+                <option value="">Seleccione un Contacto vinculado</option>
+                {appointment.contacts.map((contact) => (
+                  <option key={contact.id} value={contact.id}>
+                    {contact.name} · {contact.phoneE164}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <button
             className="w-fit rounded bg-rose-300 px-3 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={cancelling}
@@ -423,6 +504,23 @@ function AppointmentDetail({
       {cancelError ? <p className="text-rose-300">{cancelError}</p> : null}
     </aside>
   );
+}
+
+function appointmentEventLabel(type: AppointmentEventType) {
+  switch (type) {
+    case "manual-created":
+      return "Cita manual creada";
+    case "cancelled":
+      return "Cita cancelada";
+    case "manual-confirmation-sent":
+      return "Confirmación por WhatsApp enviada";
+    case "manual-confirmation-failed":
+      return "No se pudo enviar la confirmación por WhatsApp";
+    case "manual-cancellation-sent":
+      return "Aviso de cancelación por WhatsApp enviado";
+    case "manual-cancellation-failed":
+      return "No se pudo enviar el aviso de cancelación por WhatsApp";
+  }
 }
 
 function Detail({ label, value }: { label: string; value: string }) {

@@ -1,6 +1,32 @@
 export type ManualAppointment = {
   id: string;
   startsAt: Date;
+  transactionalMessage?: ManualAppointmentTransactionalMessage;
+};
+
+export type ManualAppointmentMessageType =
+  "manual-confirmation" | "manual-cancellation";
+
+export type ManualAppointmentTransactionalMessage = {
+  appointmentId: string;
+  clinicId: string;
+  recipient: { id: string; name: string; phoneE164: string };
+  type: ManualAppointmentMessageType;
+};
+
+export type ManualAppointmentMessageSender = {
+  send(message: ManualAppointmentTransactionalMessage): Promise<void>;
+};
+
+export type ManualAppointmentMessageDeliveryRecorder = {
+  recordMessageDelivery(input: {
+    actorIdentityId: string;
+    appointmentId: string;
+    clinicId: string;
+    recipientContactId: string;
+    result: "sent" | "failed";
+    type: ManualAppointmentMessageType;
+  }): Promise<void>;
 };
 
 export type ManualAppointmentOutsideScheduleConfirmation = {
@@ -21,8 +47,12 @@ export type ManualAppointmentCanceller = {
     clinicId: string;
     identityId: string;
     now: Date;
+    notificationRecipientContactId?: string;
     reason: string | null;
-  }): Promise<{ id: string; status: "cancelled" } | undefined>;
+  }): Promise<
+    | ({ id: string; status: "cancelled" } & Partial<ManualAppointment>)
+    | undefined
+  >;
 };
 
 export class ManualAppointmentUnavailableError extends Error {
@@ -58,13 +88,16 @@ export type CreateManualAppointmentInput = {
   serviceOfferId: string;
   startsAt: Date;
   outsideScheduleConfirmed?: boolean;
+  notificationRecipientContactId?: string;
 };
 
 /** Registra una Cita manual después de que la Agenda autoriza su capacidad. */
 export async function createManualAppointment(
   input: CreateManualAppointmentInput,
-  store: ManualAppointmentCreator,
+  store: ManualAppointmentCreator &
+    Partial<ManualAppointmentMessageDeliveryRecorder>,
   now = new Date(),
+  messageSender?: ManualAppointmentMessageSender,
 ) {
   if (input.startsAt <= now) {
     throw new Error("La Cita manual debe iniciar en el futuro");
@@ -79,6 +112,12 @@ export async function createManualAppointment(
   if ("requiresOutsideScheduleConfirmation" in appointment) {
     throw new ManualAppointmentOutsideScheduleConfirmationRequiredError();
   }
+  await deliverTransactionalMessage(
+    appointment,
+    input.identityId,
+    store,
+    messageSender,
+  );
   return appointment;
 }
 
@@ -88,10 +127,13 @@ export async function cancelManualAppointment(
     appointmentId: string;
     clinicId: string;
     identityId: string;
+    notificationRecipientContactId?: string;
     reason?: string;
   },
-  store: ManualAppointmentCanceller,
+  store: ManualAppointmentCanceller &
+    Partial<ManualAppointmentMessageDeliveryRecorder>,
   now = new Date(),
+  messageSender?: ManualAppointmentMessageSender,
 ) {
   const appointment = await store.cancel({
     ...input,
@@ -100,7 +142,57 @@ export async function cancelManualAppointment(
   });
   if (appointment === undefined)
     throw new ManualAppointmentNotCancellableError();
+  await deliverTransactionalMessage(
+    appointment,
+    input.identityId,
+    store,
+    messageSender,
+  );
   return appointment;
+}
+
+async function deliverTransactionalMessage(
+  appointment: Partial<ManualAppointment>,
+  actorIdentityId: string,
+  store:
+    | (ManualAppointmentCreator &
+        Partial<ManualAppointmentMessageDeliveryRecorder>)
+    | (ManualAppointmentCanceller &
+        Partial<ManualAppointmentMessageDeliveryRecorder>),
+  messageSender: ManualAppointmentMessageSender | undefined,
+) {
+  if (appointment.transactionalMessage === undefined) return;
+  if (messageSender === undefined || !hasMessageDeliveryRecorder(store)) {
+    throw new Error(
+      "No se configuró el envío de Mensajes transaccionales de Cita",
+    );
+  }
+  let result: "sent" | "failed" = "sent";
+  try {
+    await messageSender.send(appointment.transactionalMessage);
+  } catch {
+    result = "failed";
+  }
+  await store.recordMessageDelivery({
+    actorIdentityId,
+    appointmentId: appointment.transactionalMessage.appointmentId,
+    clinicId: appointment.transactionalMessage.clinicId,
+    recipientContactId: appointment.transactionalMessage.recipient.id,
+    result,
+    type: appointment.transactionalMessage.type,
+  });
+}
+
+function hasMessageDeliveryRecorder(
+  store:
+    | (ManualAppointmentCreator &
+        Partial<ManualAppointmentMessageDeliveryRecorder>)
+    | (ManualAppointmentCanceller &
+        Partial<ManualAppointmentMessageDeliveryRecorder>),
+): store is
+  | (ManualAppointmentCreator & ManualAppointmentMessageDeliveryRecorder)
+  | (ManualAppointmentCanceller & ManualAppointmentMessageDeliveryRecorder) {
+  return "recordMessageDelivery" in store;
 }
 
 function optionalReason(value: string | undefined) {

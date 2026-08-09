@@ -8,6 +8,103 @@ import {
 } from "./manual-appointments";
 
 describe("crear una Cita manual", () => {
+  it("solicita y registra una confirmación inmediata para el Contacto vinculado elegido", async () => {
+    const startsAt = new Date("2026-08-10T14:00:00.000Z");
+    const send = vi.fn().mockResolvedValue(undefined);
+    const recordMessageDelivery = vi.fn().mockResolvedValue(undefined);
+    const create = vi.fn().mockResolvedValue({
+      id: "appointment-1",
+      startsAt,
+      transactionalMessage: {
+        appointmentId: "appointment-1",
+        clinicId: "clinic-1",
+        recipient: {
+          id: "contact-1",
+          name: "Ana Martínez",
+          phoneE164: "+50371234567",
+        },
+        type: "manual-confirmation",
+      },
+    });
+
+    await expect(
+      createManualAppointment(
+        {
+          clinicId: "clinic-1",
+          doctorId: "doctor-1",
+          identityId: "operator-1",
+          notificationRecipientContactId: "contact-1",
+          patientId: "patient-1",
+          serviceOfferId: "offer-1",
+          startsAt,
+        },
+        { create, recordMessageDelivery },
+        new Date("2026-08-01T00:00:00.000Z"),
+        { send },
+      ),
+    ).resolves.toMatchObject({ id: "appointment-1" });
+
+    expect(send).toHaveBeenCalledWith({
+      appointmentId: "appointment-1",
+      clinicId: "clinic-1",
+      recipient: {
+        id: "contact-1",
+        name: "Ana Martínez",
+        phoneE164: "+50371234567",
+      },
+      type: "manual-confirmation",
+    });
+    expect(recordMessageDelivery).toHaveBeenCalledWith({
+      actorIdentityId: "operator-1",
+      appointmentId: "appointment-1",
+      clinicId: "clinic-1",
+      recipientContactId: "contact-1",
+      result: "sent",
+      type: "manual-confirmation",
+    });
+  });
+
+  it("conserva la Cita creada y registra el fallo cuando no se puede enviar su confirmación", async () => {
+    const send = vi
+      .fn()
+      .mockRejectedValue(new Error("Proveedor no disponible"));
+    const recordMessageDelivery = vi.fn().mockResolvedValue(undefined);
+    const create = vi.fn().mockResolvedValue({
+      id: "appointment-1",
+      startsAt: new Date("2026-08-10T14:00:00.000Z"),
+      transactionalMessage: {
+        appointmentId: "appointment-1",
+        clinicId: "clinic-1",
+        recipient: { id: "contact-1", name: "Ana", phoneE164: "+50371234567" },
+        type: "manual-confirmation",
+      },
+    });
+
+    await expect(
+      createManualAppointment(
+        {
+          clinicId: "clinic-1",
+          doctorId: "doctor-1",
+          identityId: "operator-1",
+          notificationRecipientContactId: "contact-1",
+          patientId: "patient-1",
+          serviceOfferId: "offer-1",
+          startsAt: new Date("2026-08-10T14:00:00.000Z"),
+        },
+        { create, recordMessageDelivery },
+        new Date("2026-08-01T00:00:00.000Z"),
+        { send },
+      ),
+    ).resolves.toMatchObject({ id: "appointment-1" });
+
+    expect(recordMessageDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: "failed",
+        type: "manual-confirmation",
+      }),
+    );
+  });
+
   it("solicita a la Agenda crear una Cita futura para el Paciente, Médico y Oferta seleccionados", async () => {
     const create = vi.fn().mockResolvedValue({
       id: "appointment-1",
@@ -130,6 +227,46 @@ describe("crear una Cita manual", () => {
 });
 
 describe("cancelar una Cita manual", () => {
+  it("envía y registra un aviso de cancelación al Contacto vinculado elegido", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const recordMessageDelivery = vi.fn().mockResolvedValue(undefined);
+    const cancel = vi.fn().mockResolvedValue({
+      id: "appointment-1",
+      status: "cancelled",
+      transactionalMessage: {
+        appointmentId: "appointment-1",
+        clinicId: "clinic-1",
+        recipient: {
+          id: "contact-1",
+          name: "Ana Martínez",
+          phoneE164: "+50371234567",
+        },
+        type: "manual-cancellation",
+      },
+    });
+
+    await expect(
+      cancelManualAppointment(
+        {
+          appointmentId: "appointment-1",
+          clinicId: "clinic-1",
+          identityId: "operator-1",
+          notificationRecipientContactId: "contact-1",
+        },
+        { cancel, recordMessageDelivery },
+        new Date("2026-08-01T00:00:00.000Z"),
+        { send },
+      ),
+    ).resolves.toMatchObject({ id: "appointment-1", status: "cancelled" });
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "manual-cancellation" }),
+    );
+    expect(recordMessageDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ result: "sent", type: "manual-cancellation" }),
+    );
+  });
+
   it("registra la cancelación futura con la razón normalizada", async () => {
     const cancel = vi.fn().mockResolvedValue({
       id: "appointment-1",

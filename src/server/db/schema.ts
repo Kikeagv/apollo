@@ -23,7 +23,13 @@ export type ClinicUserRole = "owner" | "doctor" | "secretary";
 export type ClinicInvitationRole = "owner" | "doctor";
 export type AppointmentOrigin = "manual" | "reservation";
 export type AppointmentStatus = "confirmed" | "cancelled";
-export type AppointmentEventType = "manual-created" | "cancelled";
+export type AppointmentEventType =
+  | "manual-created"
+  | "cancelled"
+  | "manual-confirmation-sent"
+  | "manual-confirmation-failed"
+  | "manual-cancellation-sent"
+  | "manual-cancellation-failed";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -356,6 +362,7 @@ export const appointmentEvents = createTable(
     appointmentId: uuid("appointment_id").notNull(),
     type: text("type").$type<AppointmentEventType>().notNull(),
     actorClinicUserId: uuid("actor_clinic_user_id").notNull(),
+    recipientContactId: uuid("recipient_contact_id"),
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -373,6 +380,11 @@ export const appointmentEvents = createTable(
       columns: [table.clinicId, table.actorClinicUserId],
       foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
       name: "appointment_event_actor_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.recipientContactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "appointment_event_recipient_contact_same_clinic_fk",
     }).onDelete("restrict"),
   ],
 );
