@@ -31,9 +31,23 @@ export function ManualAppointmentsSection() {
     useState<ManualAppointmentRequest>();
   const [selectedId, setSelectedId] = useState<string>();
   const [patientId, setPatientId] = useState("");
+  const [recordRegistrationOpen, setRecordRegistrationOpen] = useState(false);
+  const [recordRegistrationResult, setRecordRegistrationResult] =
+    useState<string>();
   const [sendConfirmation, setSendConfirmation] = useState(false);
   const [view, setView] = useState<CalendarView>("week");
   const formData = api.panacea.listManualAppointmentFormData.useQuery();
+  const registerAdministrativeRecords =
+    api.panacea.registerAdministrativeRecordsForManualAppointment.useMutation({
+      onSuccess: async ({ patient }) => {
+        await formData.refetch();
+        setPatientId(patient.id);
+        setRecordRegistrationOpen(false);
+        setRecordRegistrationResult(
+          `Paciente ${patient.name} seleccionado para la nueva Cita.`,
+        );
+      },
+    });
   const cancelledAppointments =
     api.panacea.listCancelledManualAppointments.useQuery();
   const visibleDates =
@@ -101,6 +115,18 @@ export function ManualAppointmentsSection() {
       patientId,
       serviceOfferId: offer.serviceOfferId,
       startsAt: clinicDateTime(value(data, "startsAt")),
+    });
+  }
+
+  function registerRecords(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setRecordRegistrationResult(undefined);
+    registerAdministrativeRecords.mutate({
+      birthDate: value(data, "birthDate"),
+      contactName: value(data, "contactName"),
+      patientName: value(data, "patientName"),
+      phone: value(data, "phone"),
     });
   }
 
@@ -186,6 +212,7 @@ export function ManualAppointmentsSection() {
           className={buttonClass}
           disabled={
             create.isPending ||
+            registerAdministrativeRecords.isPending ||
             formData.data?.patients.length === 0 ||
             formData.data?.offers.length === 0
           }
@@ -194,13 +221,72 @@ export function ManualAppointmentsSection() {
           {create.isPending ? "Validando…" : "Crear Cita manual"}
         </button>
       </form>
+      <div className="rounded border border-slate-800 p-3">
+        <button
+          className={secondaryButtonClass}
+          onClick={() => setRecordRegistrationOpen((open) => !open)}
+          type="button"
+        >
+          {recordRegistrationOpen
+            ? "Cerrar registro de Paciente"
+            : "Registrar Paciente nuevo"}
+        </button>
+        {recordRegistrationOpen ? (
+          <form
+            className="mt-3 grid gap-2 sm:grid-cols-2"
+            onSubmit={registerRecords}
+          >
+            <label className="text-sm">
+              Nombre del Contacto
+              <input className={inputClass} name="contactName" required />
+            </label>
+            <label className="text-sm">
+              Teléfono E.164 del Contacto
+              <input
+                className={inputClass}
+                name="phone"
+                placeholder="+50371234567"
+                required
+                type="tel"
+              />
+            </label>
+            <label className="text-sm">
+              Nombre del Paciente
+              <input className={inputClass} name="patientName" required />
+            </label>
+            <label className="text-sm">
+              Fecha de nacimiento del Paciente
+              <input
+                className={inputClass}
+                name="birthDate"
+                required
+                type="date"
+              />
+            </label>
+            <button
+              className={buttonClass}
+              disabled={registerAdministrativeRecords.isPending}
+              type="submit"
+            >
+              {registerAdministrativeRecords.isPending
+                ? "Registrando…"
+                : "Registrar Contacto y Paciente"}
+            </button>
+          </form>
+        ) : null}
+      </div>
+      {recordRegistrationResult ? (
+        <p className="text-sm text-teal-300">{recordRegistrationResult}</p>
+      ) : null}
       {formData.data?.patients.length === 0 ? (
         <p className="text-sm text-amber-300">
           Registre y vincule al menos un Contacto antes de crear la Cita.
         </p>
       ) : null}
-      {create.error ? (
-        <p className="text-sm text-rose-300">{create.error.message}</p>
+      {create.error || registerAdministrativeRecords.error ? (
+        <p className="text-sm text-rose-300">
+          {(create.error ?? registerAdministrativeRecords.error)?.message}
+        </p>
       ) : null}
       {outsideScheduleConfirmation ? (
         <div className="space-y-2 rounded border border-amber-500/70 p-3 text-sm text-amber-100">
@@ -440,6 +526,23 @@ function AppointmentDetail({
       <h3 className="font-semibold">Detalle de la Cita</h3>
       <dl className="space-y-1">
         <Detail label="Paciente" value={appointment.patient.name} />
+        <div className="flex gap-2">
+          <a
+            className="text-teal-300 underline-offset-2 hover:underline"
+            href={`#patient-${appointment.patient.id}`}
+          >
+            Abrir ficha del Paciente
+          </a>
+          {appointment.contacts.map((contact) => (
+            <a
+              className="text-teal-300 underline-offset-2 hover:underline"
+              href={`#contact-${contact.id}`}
+              key={contact.id}
+            >
+              Abrir ficha del Contacto
+            </a>
+          ))}
+        </div>
         <Detail
           label="Contacto"
           value={appointment.contacts

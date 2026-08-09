@@ -24,6 +24,18 @@ export type AdministrativeRecords = {
 };
 
 export type AdministrativeRecordsStore = {
+  register(input: {
+    birthDate: string;
+    clinicId: string;
+    contactName: string;
+    identityId: string;
+    patientName: string;
+    phoneE164: string;
+  }): Promise<{
+    contact: Contact;
+    link: ContactPatientLink;
+    patient: Patient;
+  }>;
   createContact(input: {
     clinicId: string;
     identityId: string;
@@ -149,6 +161,28 @@ export async function createContactPatientLink(
   store: Pick<AdministrativeRecordsStore, "createContactPatientLink">,
 ) {
   return store.createContactPatientLink(input);
+}
+
+/** Registra las fichas y el Vínculo que una Cita manual necesita en una sola operación. */
+export async function registerAdministrativeRecordsForManualAppointment(
+  input: {
+    birthDate: string;
+    clinicId: string;
+    contactName: string;
+    identityId: string;
+    patientName: string;
+    phone: string;
+  },
+  store: Pick<AdministrativeRecordsStore, "register">,
+) {
+  return store.register({
+    birthDate: validBirthDate(input.birthDate),
+    clinicId: input.clinicId,
+    contactName: requiredName(input.contactName),
+    identityId: input.identityId,
+    patientName: requiredName(input.patientName),
+    phoneE164: normalizeE164Phone(input.phone),
+  });
 }
 
 /** Lista las fichas de la Clínica con sus Vínculos explícitos. */

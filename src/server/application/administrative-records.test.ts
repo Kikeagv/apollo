@@ -4,6 +4,7 @@ import {
   createContact,
   createContactPatientLink,
   createPatient,
+  registerAdministrativeRecordsForManualAppointment,
   updateContact,
   updatePatient,
 } from "./administrative-records";
@@ -138,6 +139,49 @@ describe("gestionar fichas administrativas", () => {
       contactId: "contact-1",
       id: "link-1",
       patientId: "patient-1",
+    });
+  });
+
+  it("registra un Contacto, Paciente y Vínculo atómicos para una Cita manual", async () => {
+    const register = vi.fn().mockResolvedValue({
+      contact: {
+        id: "contact-1",
+        name: "Ana Martínez",
+        phoneE164: "+50371234567",
+      },
+      link: {
+        contactId: "contact-1",
+        id: "link-1",
+        patientId: "patient-1",
+      },
+      patient: {
+        birthDate: "2018-04-02",
+        id: "patient-1",
+        name: "Lucía Martínez",
+      },
+    });
+
+    await expect(
+      registerAdministrativeRecordsForManualAppointment(
+        {
+          birthDate: "2018-04-02",
+          clinicId: "clinic-1",
+          contactName: "  Ana   Martínez ",
+          identityId: "operator-1",
+          patientName: " Lucía  Martínez ",
+          phone: " +503 7123-4567 ",
+        },
+        { register },
+      ),
+    ).resolves.toMatchObject({ patient: { id: "patient-1" } });
+
+    expect(register).toHaveBeenCalledWith({
+      birthDate: "2018-04-02",
+      clinicId: "clinic-1",
+      contactName: "Ana Martínez",
+      identityId: "operator-1",
+      patientName: "Lucía Martínez",
+      phoneE164: "+50371234567",
     });
   });
 });

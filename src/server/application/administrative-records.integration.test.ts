@@ -8,6 +8,7 @@ import {
   createContactPatientLink,
   createPatient,
   listAdministrativeRecords,
+  registerAdministrativeRecordsForManualAppointment,
   updateContact,
   updatePatient,
 } from "./administrative-records";
@@ -262,6 +263,103 @@ describe("fichas administrativas persistentes", () => {
       }
     },
   );
+
+  databaseTest(
+    "registra fichas atómicas para una Cita manual sin filtrar otra Clínica",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const registered = await registerAdministrativeRecordsForManualAppointment(
+          {
+            birthDate: "2018-04-02",
+            clinicId: fixture.primary.clinicId,
+            contactName: " Ana Inline ",
+            identityId: fixture.secretary.identityId,
+            patientName: " Lucía Inline ",
+            phone: "+503 7123-4567",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+
+        await expect(
+          listAdministrativeRecords(
+            fixture.primary,
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toEqual({
+          contacts: [
+            {
+              id: registered.contact.id,
+              name: "Ana Inline",
+              patientIds: [registered.patient.id],
+              phoneE164: "+50371234567",
+            },
+          ],
+          patients: [
+            {
+              birthDate: "2018-04-02",
+              contactIds: [registered.contact.id],
+              id: registered.patient.id,
+              name: "Lucía Inline",
+            },
+          ],
+        });
+        await expect(
+          listAdministrativeRecords(
+            fixture.other,
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toEqual({ contacts: [], patients: [] });
+        await expect(
+          listAdministrativeRecords(
+            fixture.secretary,
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toMatchObject({
+          contacts: [{ id: registered.contact.id }],
+          patients: [{ id: registered.patient.id }],
+        });
+        await expect(
+          registerAdministrativeRecordsForManualAppointment(
+            {
+              birthDate: "1990-01-01",
+              clinicId: fixture.primary.clinicId,
+              contactName: "Contacto duplicado",
+              identityId: fixture.primary.identityId,
+              patientName: "Paciente que no debe crearse",
+              phone: "+50371234567",
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).rejects.toThrow("Ya existe un Contacto con ese teléfono");
+        await expect(
+          listAdministrativeRecords(
+            fixture.primary,
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toEqual({
+          contacts: [
+            {
+              id: registered.contact.id,
+              name: "Ana Inline",
+              patientIds: [registered.patient.id],
+              phoneE164: "+50371234567",
+            },
+          ],
+          patients: [
+            {
+              birthDate: "2018-04-02",
+              contactIds: [registered.contact.id],
+              id: registered.patient.id,
+              name: "Lucía Inline",
+            },
+          ],
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
 });
 
 async function createFixture() {
@@ -269,6 +367,7 @@ async function createFixture() {
   const identitiesByRole = {
     otherOwner: `apo-38-other-owner-${suffix}`,
     owner: `apo-38-owner-${suffix}`,
+    secretary: `apo-46-secretary-${suffix}`,
     superadmin: `apo-38-superadmin-${suffix}`,
   };
   await db.insert(identities).values(
@@ -314,9 +413,27 @@ async function createFixture() {
     identitiesByRole.otherOwner,
     "Clínica externa APO-38",
   );
+  const secretary = {
+    clinicId: primary.clinicId,
+    identityId: identitiesByRole.secretary,
+  };
+  await inSuperadminTransaction(
+    identitiesByRole.superadmin,
+    async (transaction) => {
+      await transaction.execute(
+        sql`select set_config('app.clinic_id', ${primary.clinicId}, true)`,
+      );
+      await transaction.insert(clinicUsers).values({
+        clinicId: primary.clinicId,
+        identityId: secretary.identityId,
+        role: "secretary",
+      });
+    },
+  );
   return {
     other,
     primary,
+    secretary,
     async cleanup() {
       for (const { clinicId } of [primary, other]) {
         await inSuperadminTransaction(
@@ -346,6 +463,9 @@ async function createFixture() {
       await db
         .delete(identities)
         .where(eq(identities.id, identitiesByRole.otherOwner));
+      await db
+        .delete(identities)
+        .where(eq(identities.id, identitiesByRole.secretary));
       await db
         .delete(identities)
         .where(eq(identities.id, identitiesByRole.superadmin));

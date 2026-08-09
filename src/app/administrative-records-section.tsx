@@ -177,6 +177,7 @@ export function AdministrativeRecordsSection() {
           {records.data?.contacts.map((contact) => (
             <form
               className="grid gap-2 rounded border border-slate-800 p-3"
+              id={`contact-${contact.id}`}
               key={contact.id}
               onSubmit={updateContactRecord}
             >
@@ -201,6 +202,7 @@ export function AdministrativeRecordsSection() {
           {records.data?.patients.map((patient) => (
             <form
               className="grid gap-2 rounded border border-slate-800 p-3"
+              id={`patient-${patient.id}`}
               key={patient.id}
               onSubmit={updatePatientRecord}
             >

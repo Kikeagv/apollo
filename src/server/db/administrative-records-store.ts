@@ -26,6 +26,53 @@ export class AdministrativeRecordNotFoundError extends Error {
 }
 
 export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
+  async register(input) {
+    return inClinicTransaction(input, async (transaction) => {
+      const existing = await transaction.query.contacts.findFirst({
+        columns: { id: true },
+        where: and(
+          eq(contacts.clinicId, input.clinicId),
+          eq(contacts.phoneE164, input.phoneE164),
+        ),
+      });
+      if (existing !== undefined) throw new ContactPhoneConflictError();
+
+      const [contact] = await transaction
+        .insert(contacts)
+        .values({
+          clinicId: input.clinicId,
+          name: input.contactName,
+          phoneE164: input.phoneE164,
+        })
+        .returning(contactFields);
+      if (contact === undefined)
+        throw new Error("No se pudo crear el Contacto");
+
+      const [patient] = await transaction
+        .insert(patients)
+        .values({
+          birthDate: input.birthDate,
+          clinicId: input.clinicId,
+          name: input.patientName,
+        })
+        .returning(patientFields);
+      if (patient === undefined)
+        throw new Error("No se pudo crear el Paciente");
+
+      const [link] = await transaction
+        .insert(contactPatientLinks)
+        .values({
+          clinicId: input.clinicId,
+          contactId: contact.id,
+          patientId: patient.id,
+        })
+        .returning(linkFields);
+      if (link === undefined) throw new Error("No se pudo crear el Vínculo");
+
+      return { contact, link, patient };
+    });
+  },
+
   async createContact(input) {
     return inClinicTransaction(input, async (transaction) => {
       const existing = await transaction.query.contacts.findFirst({

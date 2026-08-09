@@ -28,6 +28,7 @@ import {
   createContactPatientLink,
   createPatient,
   listAdministrativeRecords,
+  registerAdministrativeRecordsForManualAppointment,
   updateContact,
   updatePatient,
 } from "~/server/application/administrative-records";
@@ -249,6 +250,26 @@ export const panaceaRouter = {
     )
     .mutation(({ ctx, input }) =>
       createContactPatientLink(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  registerAdministrativeRecordsForManualAppointment: clinicProcedure
+    .input(
+      z.object({
+        birthDate: z.string().max(10),
+        contactName: z.string().max(120),
+        patientName: z.string().max(120),
+        phone: z.string().max(32),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      registerAdministrativeRecordsForManualAppointment(
         {
           ...input,
           clinicId: ctx.clinic.clinicId,

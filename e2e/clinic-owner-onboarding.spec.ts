@@ -17,6 +17,7 @@ import {
 } from "../src/server/db/clinic-context";
 import {
   apoloSuperadmins,
+  appointmentEvents,
   appointments,
   clinics,
   configurationAuditEvents,
@@ -324,6 +325,87 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       careDate,
       false,
     );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("Panacea registra fichas dentro de una nueva Cita y las deja seleccionadas", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+  const doctorName = "Dra. Inés Inline";
+  const serviceName = "Consulta inline";
+  const careDate = nextClinicMonday();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+
+    const profile = section(page, "Configuración inicial");
+    await profile.getByLabel("Nombre público").fill(doctorName);
+    await profile.getByLabel("Especialidad principal").fill("Medicina general");
+    await profile.getByRole("button", { name: "Guardar perfil" }).click();
+    await expect(profile.getByText("Perfil de Médico guardado.")).toBeVisible();
+    await page.reload();
+
+    const catalog = section(page, "Catálogo de Servicios");
+    const createServiceForm = catalog
+      .getByRole("button", { name: "Crear Servicio" })
+      .locator("..");
+    await createServiceForm.locator('input[name="name"]').fill(serviceName);
+    await createServiceForm
+      .locator('textarea[name="description"]')
+      .fill("Consulta creada en el recorrido E2E");
+    await createServiceForm.locator('select[name="doctorId"]').selectOption({
+      label: doctorName,
+    });
+    await createServiceForm.locator('input[name="priceUsd"]').fill("35.00");
+    await createServiceForm
+      .locator('input[name="durationMinutes"]')
+      .fill("30");
+    await createServiceForm.locator('input[name="bufferMinutes"]').fill("0");
+    await createServiceForm
+      .getByRole("button", { name: "Crear Servicio" })
+      .click();
+    await saveSchedule(page, careDate, doctorName);
+
+    const calendar = section(page, "Calendario");
+    await calendar.getByRole("button", { name: "Registrar Paciente nuevo" }).click();
+    await calendar.getByLabel("Nombre del Contacto").fill("Ana Inline");
+    await calendar
+      .getByLabel("Teléfono E.164 del Contacto")
+      .fill("+50371234567");
+    await calendar.getByLabel("Nombre del Paciente").fill("Lucía Inline");
+    await calendar
+      .getByLabel("Fecha de nacimiento del Paciente")
+      .fill("2018-04-02");
+    await calendar
+      .getByRole("button", { name: "Registrar Contacto y Paciente" })
+      .click();
+    await expect(
+      calendar.getByText("Paciente Lucía Inline seleccionado para la nueva Cita."),
+    ).toBeVisible();
+    await expect(calendar.getByLabel("Paciente")).toHaveValue(/.+/);
+
+    await calendar.locator('input[type="date"]').fill(careDate);
+    await calendar.locator('input[name="startsAt"]').fill(`${careDate}T08:00`);
+    await calendar.locator('select[name="serviceOfferId"]').selectOption({
+      label: `${doctorName} · ${serviceName}`,
+    });
+    await calendar
+      .getByRole("button", { name: "Crear Cita manual" })
+      .click();
+    await expect(calendar.getByRole("heading", { name: "Detalle de la Cita" })).toBeVisible();
+    await expect(
+      calendar.getByRole("link", { name: "Abrir ficha del Paciente" }),
+    ).toBeVisible();
+    await expect(
+      calendar.getByRole("link", { name: "Abrir ficha del Contacto" }),
+    ).toBeVisible();
   } finally {
     await fixture.cleanup();
   }
@@ -669,6 +751,12 @@ async function createFixture() {
               .delete(configurationAuditEvents)
               .where(eq(configurationAuditEvents.clinicId, createdClinicId));
             await transaction
+              .delete(appointmentEvents)
+              .where(eq(appointmentEvents.clinicId, createdClinicId));
+            await transaction
+              .delete(appointments)
+              .where(eq(appointments.clinicId, createdClinicId));
+            await transaction
               .delete(clinics)
               .where(eq(clinics.id, createdClinicId));
           });
@@ -701,10 +789,16 @@ async function createFixture() {
         await transaction
           .delete(identityAuditEvents)
           .where(eq(identityAuditEvents.clinicId, createdClinicId));
-        await transaction
-          .delete(configurationAuditEvents)
-          .where(eq(configurationAuditEvents.clinicId, createdClinicId));
-        await transaction
+          await transaction
+            .delete(configurationAuditEvents)
+            .where(eq(configurationAuditEvents.clinicId, createdClinicId));
+          await transaction
+            .delete(appointmentEvents)
+            .where(eq(appointmentEvents.clinicId, createdClinicId));
+          await transaction
+            .delete(appointments)
+            .where(eq(appointments.clinicId, createdClinicId));
+          await transaction
           .delete(clinics)
           .where(eq(clinics.id, createdClinicId));
       });
