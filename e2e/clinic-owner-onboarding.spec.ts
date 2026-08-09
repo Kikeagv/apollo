@@ -509,6 +509,106 @@ test("el Calendario cancela una Cita activa y conserva su historial", async ({
   }
 });
 
+test("el Calendario solo ofrece cancelar Citas manuales futuras", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+  const doctorName = "Dra. Inés Orígenes";
+  const serviceName = "Consulta con orígenes";
+  const patientName = "Paciente de orígenes";
+  const careDate = nextClinicMonday();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    await configureCalendarScenario({
+      careDate,
+      doctorName,
+      page,
+      serviceDescription: "Consulta para distinguir el origen de la Cita",
+      serviceName,
+    });
+
+    const calendar = section(page, "Calendario");
+    await registerInlinePatient(calendar, {
+      contactName: "Contacto de orígenes",
+      patientName,
+    });
+    await createManualAppointmentInCalendar(calendar, {
+      careDate,
+      doctorName,
+      serviceName,
+      startsAt: "08:00",
+    });
+    await expect(
+      calendar.getByRole("button", {
+        name: new RegExp(`8:00.*${patientName}`),
+      }),
+    ).toBeVisible();
+
+    const ownerIdentityId = await fixture.ownerIdentityId();
+    await inClinicTransaction(
+      { clinicId: fixture.clinicId(), identityId: ownerIdentityId },
+      async (transaction) => {
+        const manualAppointment = await transaction.query.appointments.findFirst({
+          columns: {
+            actorClinicUserId: true,
+            bufferMinutes: true,
+            clinicId: true,
+            doctorId: true,
+            durationMinutes: true,
+            patientId: true,
+            priceUsd: true,
+            serviceOfferId: true,
+          },
+          where: and(
+            eq(appointments.clinicId, fixture.clinicId()),
+            eq(appointments.startsAt, new Date(`${careDate}T08:00:00-06:00`)),
+          ),
+        });
+        if (manualAppointment === undefined) {
+          throw new Error("Falta la Cita manual E2E");
+        }
+        await transaction.insert(appointments).values({
+          ...manualAppointment,
+          endsAt: new Date(`${careDate}T09:10:00-06:00`),
+          occupiedUntil: new Date(`${careDate}T09:10:00-06:00`),
+          origin: "reservation",
+          startsAt: new Date(`${careDate}T08:40:00-06:00`),
+        });
+      },
+    );
+    await reloadPanacea(page);
+    await calendar.locator('input[type="date"]').fill(careDate);
+
+    const manualAppointment = calendar.getByRole("button", {
+      name: new RegExp(`8:00.*${patientName}`),
+    });
+    await manualAppointment.click();
+    const appointmentDetail = calendar
+      .getByRole("heading", { name: "Detalle de la Cita" })
+      .locator("..");
+    await expect(appointmentDetail).toContainText(patientName);
+    await expect(
+      appointmentDetail.getByRole("button", { name: "Cancelar Cita" }),
+    ).toBeVisible();
+
+    const reservationAppointment = calendar.getByRole("button", {
+      name: new RegExp(`8:40.*${patientName}`),
+    });
+    await reservationAppointment.click();
+    await expect(appointmentDetail).toContainText(patientName);
+    await expect(
+      appointmentDetail.getByRole("button", { name: "Cancelar Cita" }),
+    ).not.toBeVisible();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("el Calendario rechaza una Cita que se traslapa con capacidad ocupada", async ({
   page,
 }) => {
