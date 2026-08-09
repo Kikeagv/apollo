@@ -84,6 +84,42 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
   }
 });
 
+test("el alta de perfil no envía el formulario antes de hidratar Panacea", async ({
+  browser,
+  page,
+}) => {
+  const fixture = await createFixture();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    const preHydrationContext = await browser.newContext({
+      javaScriptEnabled: false,
+      storageState: await page.context().storageState(),
+    });
+    try {
+      const preHydrationPage = await preHydrationContext.newPage();
+      await preHydrationPage.goto("/");
+
+      const profile = section(preHydrationPage, "Configuración inicial");
+      const submit = profile.getByRole("button", {
+        name: "Guardar perfil",
+      });
+      await expect(submit).toBeDisabled();
+      await submit.click({ force: true });
+      await expect(preHydrationPage).toHaveURL(/\/$/);
+      await expect(profile).toBeVisible();
+    } finally {
+      await preHydrationContext.close();
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("Panacea configura disponibilidad y protege la capacidad de Médicos", async ({
   browser,
   page,

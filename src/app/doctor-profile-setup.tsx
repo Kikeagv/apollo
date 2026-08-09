@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { api } from "~/trpc/react";
 
@@ -16,6 +16,7 @@ export function DoctorProfileSetup({
     initialProfile.primarySpecialty !== null &&
       initialProfile.publicName !== null,
   );
+  const [isHydrated, setIsHydrated] = useState(false);
   const [result, setResult] = useState<string>();
   const completion = api.panacea.completeOwnDoctorProfile.useMutation({
     onSuccess: () => {
@@ -36,6 +37,10 @@ export function DoctorProfileSetup({
     });
   }
 
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
+
   return (
     <section className="space-y-4 rounded-xl border border-slate-700 p-5">
       <div>
@@ -55,33 +60,35 @@ export function DoctorProfileSetup({
         <li>Definir el primer Horario vigente</li>
       </ol>
       <form className="space-y-3" onSubmit={submit}>
-        <label className="block text-sm">
-          Nombre público
-          <input
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            defaultValue={initialProfile.publicName ?? ""}
-            maxLength={120}
-            name="publicName"
-            required
-          />
-        </label>
-        <label className="block text-sm">
-          Especialidad principal
-          <input
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            defaultValue={initialProfile.primarySpecialty ?? ""}
-            maxLength={160}
-            name="primarySpecialty"
-            required
-          />
-        </label>
-        <button
-          className="rounded bg-teal-300 px-4 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={completion.isPending}
-          type="submit"
-        >
-          {completion.isPending ? "Guardando…" : "Guardar perfil"}
-        </button>
+        <fieldset disabled={!isHydrated}>
+          <label className="block text-sm">
+            Nombre público
+            <input
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+              defaultValue={initialProfile.publicName ?? ""}
+              maxLength={120}
+              name="publicName"
+              required
+            />
+          </label>
+          <label className="block text-sm">
+            Especialidad principal
+            <input
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+              defaultValue={initialProfile.primarySpecialty ?? ""}
+              maxLength={160}
+              name="primarySpecialty"
+              required
+            />
+          </label>
+          <button
+            className="mt-3 rounded bg-teal-300 px-4 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={completion.isPending}
+            type="submit"
+          >
+            {completion.isPending ? "Guardando…" : "Guardar perfil"}
+          </button>
+        </fieldset>
       </form>
       {result ? <p className="text-sm text-teal-300">{result}</p> : null}
       {completion.error ? (
