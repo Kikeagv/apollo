@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cancelManualAppointment,
   createManualAppointment,
+  listCancelledManualAppointments,
+  listManualAppointmentFormData,
+  listManualAppointments,
   ManualAppointmentNotCancellableError,
   ManualAppointmentOutsideScheduleConfirmationRequiredError,
 } from "./manual-appointments";
@@ -223,6 +226,53 @@ describe("crear una Cita manual", () => {
         new Date("2026-08-01T00:00:00.000Z"),
       ),
     ).resolves.toEqual({ id: "appointment-1", startsAt: input.startsAt });
+  });
+});
+
+describe("consultar la Agenda", () => {
+  it("consulta datos del formulario, Citas activas y canceladas mediante el almacén de Agenda", async () => {
+    const input = { clinicId: "clinic-1", identityId: "operator-1" };
+    const formData = { offers: [], patients: [] };
+    const activeAppointments = [
+      {
+        events: [],
+        id: "appointment-active",
+        status: "confirmed" as const,
+      },
+    ];
+    const cancelledAppointments = [
+      {
+        events: [],
+        id: "appointment-cancelled",
+        status: "cancelled" as const,
+      },
+    ];
+    const listFormData = vi.fn().mockResolvedValue(formData);
+    const listAppointments = vi
+      .fn()
+      .mockResolvedValueOnce(activeAppointments)
+      .mockResolvedValueOnce(cancelledAppointments);
+    const store = { listAppointments, listFormData };
+
+    await expect(listManualAppointmentFormData(input, store)).resolves.toEqual(
+      formData,
+    );
+    await expect(listManualAppointments(input, store)).resolves.toEqual(
+      activeAppointments,
+    );
+    await expect(
+      listCancelledManualAppointments(input, store),
+    ).resolves.toEqual(cancelledAppointments);
+
+    expect(listFormData).toHaveBeenCalledWith(input);
+    expect(listAppointments).toHaveBeenNthCalledWith(1, {
+      ...input,
+      status: "confirmed",
+    });
+    expect(listAppointments).toHaveBeenNthCalledWith(2, {
+      ...input,
+      status: "cancelled",
+    });
   });
 });
 

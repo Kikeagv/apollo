@@ -12,6 +12,7 @@ import {
   type ManualAppointmentCreator,
   type ManualAppointmentMessageDeliveryRecorder,
   type ManualAppointmentMessageType,
+  type ManualAppointmentReader,
 } from "~/server/application/manual-appointments";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
@@ -35,7 +36,8 @@ type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   ManualAppointmentCanceller &
-  ManualAppointmentMessageDeliveryRecorder = {
+  ManualAppointmentMessageDeliveryRecorder &
+  ManualAppointmentReader = {
   async create(input) {
     return inClinicTransaction(input, async (transaction) => {
       await setCalendarOperation(transaction);
@@ -216,9 +218,17 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
       },
     );
   },
+
+  async listFormData(input) {
+    return readManualAppointmentFormData(input);
+  },
+
+  async listAppointments(input) {
+    return readAppointments(input, input.status);
+  },
 };
 
-export async function listManualAppointmentFormData(input: {
+async function readManualAppointmentFormData(input: {
   clinicId: string;
   identityId: string;
 }) {
@@ -321,22 +331,7 @@ export async function listManualAppointmentFormData(input: {
   });
 }
 
-export async function listManualAppointments(input: {
-  clinicId: string;
-  identityId: string;
-}) {
-  return listAppointments(input, "confirmed");
-}
-
-/** Lista las Citas manuales canceladas para su detalle y ficha administrativa. */
-export async function listCancelledManualAppointments(input: {
-  clinicId: string;
-  identityId: string;
-}) {
-  return listAppointments(input, "cancelled");
-}
-
-async function listAppointments(
+async function readAppointments(
   input: { clinicId: string; identityId: string },
   status: "confirmed" | "cancelled",
 ) {

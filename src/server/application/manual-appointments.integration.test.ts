@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   cancelManualAppointment,
   createManualAppointment,
+  listCancelledManualAppointments,
+  listManualAppointmentFormData,
+  listManualAppointments,
   type ManualAppointmentTransactionalMessage,
   ManualAppointmentNotCancellableError,
   ManualAppointmentOutsideScheduleConfirmationRequiredError,
@@ -15,11 +18,7 @@ import {
   inClinicTransaction,
   inSuperadminTransaction,
 } from "../db/clinic-context";
-import {
-  drizzleManualAppointmentStore,
-  listCancelledManualAppointments,
-  listManualAppointments,
-} from "../db/manual-appointment-store";
+import { drizzleManualAppointmentStore } from "../db/manual-appointment-store";
 import {
   appointmentEvents,
   appointments,
@@ -84,10 +83,13 @@ describe("Citas manuales persistentes", () => {
           now,
           sender,
         );
-        const cancelled = await listCancelledManualAppointments({
-          clinicId: fixture.clinicId,
-          identityId: fixture.secretaryIdentityId,
-        });
+        const cancelled = await listCancelledManualAppointments(
+          {
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          },
+          drizzleManualAppointmentStore,
+        );
         expect(cancelled).toMatchObject([
           {
             events: [
@@ -125,10 +127,13 @@ describe("Citas manuales persistentes", () => {
           },
         );
         await expect(
-          listManualAppointments({
-            clinicId: fixture.clinicId,
-            identityId: fixture.secretaryIdentityId,
-          }),
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
         ).resolves.toMatchObject([
           {
             events: [
@@ -207,15 +212,21 @@ describe("Citas manuales persistentes", () => {
         );
 
         await expect(
-          listManualAppointments({
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([]);
+        const cancelled = await listCancelledManualAppointments(
+          {
             clinicId: fixture.clinicId,
             identityId: fixture.secretaryIdentityId,
-          }),
-        ).resolves.toEqual([]);
-        const cancelled = await listCancelledManualAppointments({
-          clinicId: fixture.clinicId,
-          identityId: fixture.secretaryIdentityId,
-        });
+          },
+          drizzleManualAppointmentStore,
+        );
         const firstCancelled = cancelled.find(
           (appointment) => appointment.id === appointmentsToCancel[0]?.id,
         );
@@ -260,10 +271,13 @@ describe("Citas manuales persistentes", () => {
           ),
         ).rejects.toBeInstanceOf(ManualAppointmentNotCancellableError);
         await expect(
-          listManualAppointments({
-            clinicId: fixture.clinicId,
-            identityId: fixture.secretaryIdentityId,
-          }),
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
         ).resolves.toMatchObject([{ id: replacement.id }]);
 
         await inClinicTransaction(
@@ -291,6 +305,153 @@ describe("Citas manuales persistentes", () => {
             ).resolves.toEqual([]);
           },
         );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "consulta datos del formulario de Agenda para cada rol clínico sin filtrar otra Clínica",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const inputs = [
+          fixture.ownerIdentityId,
+          fixture.doctorIdentityId,
+          fixture.secretaryIdentityId,
+        ].map((identityId) => ({
+          clinicId: fixture.clinicId,
+          identityId,
+        }));
+        const expected = {
+          offers: [
+            {
+              doctorId: fixture.doctorId,
+              doctorName: "Dra. Sol",
+              serviceName: "Consulta",
+              serviceOfferId: fixture.serviceOfferId,
+            },
+          ],
+          patients: [
+            {
+              contacts: [
+                {
+                  id: fixture.contactId,
+                  name: "Ana Martínez",
+                  phoneE164: "+50371234567",
+                },
+              ],
+              id: fixture.patientId,
+              name: "Lucía Martínez",
+            },
+          ],
+        };
+
+        await expect(
+          Promise.all(
+            inputs.map((input) =>
+              listManualAppointmentFormData(
+                input,
+                drizzleManualAppointmentStore,
+              ),
+            ),
+          ),
+        ).resolves.toEqual([expected, expected, expected]);
+        await expect(
+          listManualAppointmentFormData(
+            {
+              clinicId: fixture.otherClinicId,
+              identityId: fixture.otherOwnerIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual({ offers: [], patients: [] });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "consulta Citas activas y canceladas para cada rol clínico sin filtrar otra Clínica",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-08T00:00:00.000Z");
+      const clinicInputs = [
+        fixture.ownerIdentityId,
+        fixture.doctorIdentityId,
+        fixture.secretaryIdentityId,
+      ].map((identityId) => ({
+        clinicId: fixture.clinicId,
+        identityId,
+      }));
+      const otherClinicInput = {
+        clinicId: fixture.otherClinicId,
+        identityId: fixture.otherOwnerIdentityId,
+      };
+      try {
+        const appointment = await createManualAppointment(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.doctorId,
+            identityId: fixture.ownerIdentityId,
+            patientId: fixture.patientId,
+            serviceOfferId: fixture.serviceOfferId,
+            startsAt: new Date("2026-08-10T14:00:00.000Z"),
+          },
+          drizzleManualAppointmentStore,
+          now,
+        );
+
+        await expect(
+          Promise.all(
+            clinicInputs.map((input) =>
+              listManualAppointments(input, drizzleManualAppointmentStore),
+            ),
+          ),
+        ).resolves.toEqual([
+          [expect.objectContaining({ id: appointment.id })],
+          [expect.objectContaining({ id: appointment.id })],
+          [expect.objectContaining({ id: appointment.id })],
+        ]);
+        await expect(
+          listManualAppointments(
+            otherClinicInput,
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([]);
+
+        await cancelManualAppointment(
+          {
+            appointmentId: appointment.id,
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          },
+          drizzleManualAppointmentStore,
+          now,
+        );
+
+        await expect(
+          Promise.all(
+            clinicInputs.map((input) =>
+              listCancelledManualAppointments(
+                input,
+                drizzleManualAppointmentStore,
+              ),
+            ),
+          ),
+        ).resolves.toEqual([
+          [expect.objectContaining({ id: appointment.id })],
+          [expect.objectContaining({ id: appointment.id })],
+          [expect.objectContaining({ id: appointment.id })],
+        ]);
+        await expect(
+          listCancelledManualAppointments(
+            otherClinicInput,
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([]);
       } finally {
         await fixture.cleanup();
       }
@@ -357,10 +518,13 @@ describe("Citas manuales persistentes", () => {
           new Date("2026-08-08T00:00:00.000Z"),
         );
         await expect(
-          listManualAppointments({
-            clinicId: fixture.clinicId,
-            identityId: fixture.doctorIdentityId,
-          }),
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.doctorIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
         ).resolves.toMatchObject([{ id: created.id, outsideSchedule: true }]);
       } finally {
         await fixture.cleanup();
@@ -410,10 +574,13 @@ describe("Citas manuales persistentes", () => {
           "La Cita manual ya no es una Opción de atención autorizada",
         );
         await expect(
-          listManualAppointments({
-            clinicId: fixture.clinicId,
-            identityId: fixture.secretaryIdentityId,
-          }),
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
         ).resolves.toMatchObject([{ id: created.id, outsideSchedule: true }]);
         await inClinicTransaction(
           {
@@ -461,10 +628,13 @@ describe("Citas manuales persistentes", () => {
           priceUsd: "35.00",
           startsAt: new Date("2026-08-10T14:00:00.000Z"),
         });
-        const listed = await listManualAppointments({
-          clinicId: fixture.clinicId,
-          identityId: fixture.secretaryIdentityId,
-        });
+        const listed = await listManualAppointments(
+          {
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          },
+          drizzleManualAppointmentStore,
+        );
         expect(listed).toHaveLength(1);
         expect(listed[0]).toMatchObject({
           contacts: [{ name: "Ana Martínez", phoneE164: "+50371234567" }],
@@ -594,10 +764,13 @@ describe("Citas manuales persistentes", () => {
           "La Cita manual ya no es una Opción de atención autorizada",
         );
         await expect(
-          listManualAppointments({
-            clinicId: fixture.clinicId,
-            identityId: fixture.secretaryIdentityId,
-          }),
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
         ).resolves.toMatchObject([
           { startsAt: new Date("2026-08-10T14:00:00.000Z") },
         ]);
@@ -634,10 +807,13 @@ describe("Citas manuales persistentes", () => {
             }),
         );
         await expect(
-          listManualAppointments({
-            clinicId: fixture.clinicId,
-            identityId: fixture.secretaryIdentityId,
-          }),
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
         ).resolves.toMatchObject([
           {
             origin: "reservation",
@@ -712,10 +888,13 @@ describe("Citas manuales persistentes", () => {
           "La Cita manual ya no es una Opción de atención autorizada",
         );
         await expect(
-          listManualAppointments({
-            clinicId: fixture.clinicId,
-            identityId: fixture.secretaryIdentityId,
-          }),
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
         ).resolves.toEqual([]);
       } finally {
         await fixture.cleanup();

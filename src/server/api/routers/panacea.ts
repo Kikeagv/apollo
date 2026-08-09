@@ -18,6 +18,9 @@ import { calculateCareOptions } from "~/server/application/care-options";
 import {
   cancelManualAppointment,
   createManualAppointment,
+  listCancelledManualAppointments,
+  listManualAppointmentFormData,
+  listManualAppointments,
 } from "~/server/application/manual-appointments";
 import {
   createContact,
@@ -53,12 +56,7 @@ import {
   listServiceCatalog,
 } from "~/server/db/service-catalog-store";
 import { drizzleAdministrativeRecordsStore } from "~/server/db/administrative-records-store";
-import {
-  drizzleManualAppointmentStore,
-  listCancelledManualAppointments,
-  listManualAppointmentFormData,
-  listManualAppointments,
-} from "~/server/db/manual-appointment-store";
+import { drizzleManualAppointmentStore } from "~/server/db/manual-appointment-store";
 import {
   sendSimulatedClinicDoctorInvitation,
   sendSimulatedClinicOwnerInvitation,
@@ -378,24 +376,33 @@ export const panaceaRouter = {
     ),
 
   listManualAppointmentFormData: clinicProcedure.query(({ ctx }) =>
-    listManualAppointmentFormData({
-      clinicId: ctx.clinic.clinicId,
-      identityId: ctx.clinic.identityId,
-    }),
+    listManualAppointmentFormData(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleManualAppointmentStore,
+    ),
   ),
 
   listManualAppointments: clinicProcedure.query(({ ctx }) =>
-    listManualAppointments({
-      clinicId: ctx.clinic.clinicId,
-      identityId: ctx.clinic.identityId,
-    }),
+    listManualAppointments(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleManualAppointmentStore,
+    ),
   ),
 
   listCancelledManualAppointments: clinicProcedure.query(({ ctx }) =>
-    listCancelledManualAppointments({
-      clinicId: ctx.clinic.clinicId,
-      identityId: ctx.clinic.identityId,
-    }),
+    listCancelledManualAppointments(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleManualAppointmentStore,
+    ),
   ),
 
   createManualAppointment: clinicProcedure

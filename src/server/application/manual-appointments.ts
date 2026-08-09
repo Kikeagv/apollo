@@ -4,6 +4,62 @@ export type ManualAppointment = {
   transactionalMessage?: ManualAppointmentTransactionalMessage;
 };
 
+/** Vocabulario compartido por el historial de Citas y sus consumidores. */
+export const appointmentEventTypes = [
+  "manual-created",
+  "cancelled",
+  "manual-confirmation-sent",
+  "manual-confirmation-failed",
+  "manual-cancellation-sent",
+  "manual-cancellation-failed",
+] as const;
+
+export type AppointmentEventType = (typeof appointmentEventTypes)[number];
+
+export type ManualAppointmentFormData = {
+  offers: {
+    doctorId: string;
+    doctorName: string;
+    serviceName: string;
+    serviceOfferId: string;
+  }[];
+  patients: {
+    contacts: ManualAppointmentContact[];
+    id: string;
+    name: string;
+  }[];
+};
+
+export type ManualAppointmentContact = {
+  id: string;
+  name: string;
+  phoneE164: string;
+};
+
+/** Contrato seguro para cliente de una Cita que Panacea puede consultar. */
+export type AgendaAppointment = {
+  bufferMinutes: number | null;
+  contacts: ManualAppointmentContact[];
+  doctor: { id: string; name: string };
+  durationMinutes: number | null;
+  endsAt: Date;
+  events: {
+    actorClinicUserId: string;
+    occurredAt: Date;
+    recipient: ManualAppointmentContact | null;
+    reason: string | null;
+    type: AppointmentEventType;
+  }[];
+  id: string;
+  origin: "manual" | "reservation" | null;
+  outsideSchedule: boolean;
+  patient: { id: string; name: string };
+  priceUsd: string | null;
+  service: { name: string };
+  startsAt: Date;
+  status: "confirmed" | "cancelled";
+};
+
 export type ManualAppointmentMessageType =
   "manual-confirmation" | "manual-cancellation";
 
@@ -53,6 +109,18 @@ export type ManualAppointmentCanceller = {
     | ({ id: string; status: "cancelled" } & Partial<ManualAppointment>)
     | undefined
   >;
+};
+
+export type ManualAppointmentReader = {
+  listAppointments(input: {
+    clinicId: string;
+    identityId: string;
+    status: "confirmed" | "cancelled";
+  }): Promise<AgendaAppointment[]>;
+  listFormData(input: {
+    clinicId: string;
+    identityId: string;
+  }): Promise<ManualAppointmentFormData>;
 };
 
 export class ManualAppointmentUnavailableError extends Error {
@@ -149,6 +217,30 @@ export async function cancelManualAppointment(
     messageSender,
   );
   return appointment;
+}
+
+/** Consulta los Pacientes y Ofertas disponibles para registrar una Cita manual. */
+export async function listManualAppointmentFormData(
+  input: { clinicId: string; identityId: string },
+  store: Pick<ManualAppointmentReader, "listFormData">,
+) {
+  return store.listFormData(input);
+}
+
+/** Consulta las Citas activas que el Calendario de Panacea muestra. */
+export async function listManualAppointments(
+  input: { clinicId: string; identityId: string },
+  store: Pick<ManualAppointmentReader, "listAppointments">,
+) {
+  return store.listAppointments({ ...input, status: "confirmed" });
+}
+
+/** Consulta las Citas manuales canceladas para detalle y ficha administrativa. */
+export async function listCancelledManualAppointments(
+  input: { clinicId: string; identityId: string },
+  store: Pick<ManualAppointmentReader, "listAppointments">,
+) {
+  return store.listAppointments({ ...input, status: "cancelled" });
 }
 
 async function deliverTransactionalMessage(

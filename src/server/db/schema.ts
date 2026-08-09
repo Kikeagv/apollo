@@ -16,6 +16,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { AppointmentEventType } from "~/server/application/manual-appointments";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -23,14 +24,6 @@ export type ClinicUserRole = "owner" | "doctor" | "secretary";
 export type ClinicInvitationRole = "owner" | "doctor";
 export type AppointmentOrigin = "manual" | "reservation";
 export type AppointmentStatus = "confirmed" | "cancelled";
-export type AppointmentEventType =
-  | "manual-created"
-  | "cancelled"
-  | "manual-confirmation-sent"
-  | "manual-confirmation-failed"
-  | "manual-cancellation-sent"
-  | "manual-cancellation-failed";
-
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

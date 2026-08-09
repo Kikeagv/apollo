@@ -3,37 +3,14 @@
 import { type FormEvent, useMemo, useState } from "react";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
+import type {
+  AgendaAppointment,
+  AppointmentEventType,
+} from "~/server/application/manual-appointments";
 import { api } from "~/trpc/react";
 
 type CalendarView = "day" | "week";
-type AppointmentEventType =
-  | "manual-created"
-  | "cancelled"
-  | "manual-confirmation-sent"
-  | "manual-confirmation-failed"
-  | "manual-cancellation-sent"
-  | "manual-cancellation-failed";
-type CalendarAppointment = {
-  bufferMinutes: number | null;
-  contacts: { id: string; name: string; phoneE164: string }[];
-  doctor: { id: string; name: string };
-  durationMinutes: number | null;
-  endsAt: Date;
-  events: {
-    actorClinicUserId: string;
-    occurredAt: Date;
-    recipient: { id: string; name: string; phoneE164: string } | null;
-    reason: string | null;
-    type: AppointmentEventType;
-  }[];
-  id: string;
-  patient: { id: string; name: string };
-  priceUsd: string | null;
-  outsideSchedule: boolean;
-  service: { name: string };
-  startsAt: Date;
-  status: "confirmed" | "cancelled";
-};
+type CalendarAppointment = AgendaAppointment;
 
 type ManualAppointmentRequest = {
   doctorId: string;
