@@ -571,9 +571,7 @@ describe("Citas manuales persistentes", () => {
             drizzleManualAppointmentStore,
             new Date("2026-08-08T00:00:00.000Z"),
           ),
-        ).rejects.toThrow(
-          "La Cita manual ya no es una Opción de atención autorizada",
-        );
+        ).rejects.toThrow("La Agenda ya no autoriza esta Cita manual");
         await expect(
           listManualAppointments(
             {
@@ -761,9 +759,7 @@ describe("Citas manuales persistentes", () => {
             drizzleManualAppointmentStore,
             now,
           ),
-        ).rejects.toThrow(
-          "La Cita manual ya no es una Opción de atención autorizada",
-        );
+        ).rejects.toThrow("La Agenda ya no autoriza esta Cita manual");
         await expect(
           listManualAppointments(
             {
@@ -974,9 +970,7 @@ describe("Citas manuales persistentes", () => {
             drizzleManualAppointmentStore,
             new Date("2026-08-08T00:00:00.000Z"),
           ),
-        ).rejects.toThrow(
-          "La Cita manual ya no es una Opción de atención autorizada",
-        );
+        ).rejects.toThrow("La Agenda ya no autoriza esta Cita manual");
         await inClinicTransaction(
           { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
           (transaction) =>
@@ -1001,9 +995,7 @@ describe("Citas manuales persistentes", () => {
             drizzleManualAppointmentStore,
             new Date("2026-08-08T00:00:00.000Z"),
           ),
-        ).rejects.toThrow(
-          "La Cita manual ya no es una Opción de atención autorizada",
-        );
+        ).rejects.toThrow("La Agenda ya no autoriza esta Cita manual");
         await expect(
           listManualAppointments(
             {

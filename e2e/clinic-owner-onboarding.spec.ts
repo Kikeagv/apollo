@@ -416,14 +416,12 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
       await registerInlinePatient(calendar, appointment);
       await expect(calendar.getByLabel("Paciente")).toHaveValue(/.+/);
 
-      await calendar.locator('input[type="date"]').fill(careDate);
-      await calendar
-        .locator('input[name="startsAt"]')
-        .fill(`${careDate}T${appointment.startsAt}`);
-      await calendar.locator('select[name="serviceOfferId"]').selectOption({
-        label: `${doctorName} · ${serviceName}`,
+      await createManualAppointmentInCalendar(calendar, {
+        careDate,
+        doctorName,
+        serviceName,
+        startsAt: appointment.startsAt,
       });
-      await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
       await expect(
         calendar.getByRole("heading", { name: "Detalle de la Cita" }),
       ).toBeVisible();
@@ -435,6 +433,136 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
       ).toBeVisible();
       expect(navigationsDuringAppointmentCreation).toEqual([]);
     }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("el Calendario cancela una Cita activa y conserva su historial", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+  const doctorName = "Dra. Camila Cancelación";
+  const serviceName = "Consulta cancelable";
+  const patientName = "Paciente con historial";
+  const careDate = nextClinicMonday();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    await configureCalendarScenario({
+      careDate,
+      doctorName,
+      page,
+      serviceDescription: "Consulta para cancelar desde el Calendario",
+      serviceName,
+    });
+
+    const calendar = section(page, "Calendario");
+    await registerInlinePatient(calendar, {
+      contactName: "Contacto con historial",
+      patientName,
+    });
+    await createManualAppointmentInCalendar(calendar, {
+      careDate,
+      doctorName,
+      serviceName,
+      startsAt: "08:00",
+    });
+
+    const activeAppointment = calendar.getByRole("button", {
+      name: new RegExp(`8:00.*${patientName}`),
+    });
+    await calendar.getByRole("button", { name: "Semana" }).click();
+    await calendar.getByLabel("Médico").selectOption({ label: doctorName });
+    await expect(activeAppointment).toBeVisible();
+    await calendar.getByRole("button", { name: "Día" }).click();
+    const activeDayAppointment = calendar
+      .locator('div[class="grid gap-2"]')
+      .getByRole("button", {
+        name: new RegExp(`8:00.*${patientName}`),
+      });
+    await expect(activeDayAppointment).toBeVisible();
+
+    await activeDayAppointment.click();
+    const appointmentDetail = calendar
+      .getByRole("heading", { name: "Detalle de la Cita" })
+      .locator("..");
+    await appointmentDetail
+      .getByRole("button", { name: "Cancelar Cita" })
+      .click();
+    await expect(activeDayAppointment).not.toBeVisible();
+
+    const cancelledAppointment = calendar
+      .getByRole("heading", { name: "Citas canceladas" })
+      .locator("..")
+      .getByRole("button", { name: new RegExp(patientName) });
+    await cancelledAppointment.click();
+    await expect(appointmentDetail).toContainText("Cancelada");
+    await expect(appointmentDetail).toContainText("Cita manual creada");
+    await expect(appointmentDetail).toContainText("Cita cancelada");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("el Calendario rechaza una Cita que se traslapa con capacidad ocupada", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+  const doctorName = "Dr. Tomás Capacidad";
+  const serviceName = "Consulta sin traslape";
+  const patientName = "Paciente sin traslape";
+  const careDate = nextClinicMonday();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    await configureCalendarScenario({
+      careDate,
+      doctorName,
+      page,
+      serviceDescription: "Consulta para proteger la capacidad del Médico",
+      serviceName,
+    });
+
+    const calendar = section(page, "Calendario");
+    await registerInlinePatient(calendar, {
+      contactName: "Contacto sin traslape",
+      patientName,
+    });
+    await createManualAppointmentInCalendar(calendar, {
+      careDate,
+      doctorName,
+      serviceName,
+      startsAt: "08:00",
+    });
+    await expect(
+      calendar.getByRole("button", {
+        name: new RegExp(`8:00.*${patientName}`),
+      }),
+    ).toBeVisible();
+
+    await createManualAppointmentInCalendar(calendar, {
+      careDate,
+      doctorName,
+      serviceName,
+      startsAt: "08:15",
+    });
+    await expect(
+      calendar.getByText("La Agenda ya no autoriza esta Cita manual"),
+    ).toBeVisible();
+    await expect(
+      calendar.getByRole("button", {
+        name: new RegExp(`8:15.*${patientName}`),
+      }),
+    ).not.toBeVisible();
   } finally {
     await fixture.cleanup();
   }
@@ -608,6 +736,25 @@ async function registerInlinePatient(
       `Paciente ${input.patientName} seleccionado para la nueva Cita.`,
     ),
   ).toBeVisible();
+}
+
+async function createManualAppointmentInCalendar(
+  calendar: Locator,
+  input: {
+    careDate: string;
+    doctorName: string;
+    serviceName: string;
+    startsAt: string;
+  },
+) {
+  await calendar.locator('input[type="date"]').fill(input.careDate);
+  await calendar
+    .locator('input[name="startsAt"]')
+    .fill(`${input.careDate}T${input.startsAt}`);
+  await calendar.locator('select[name="serviceOfferId"]').selectOption({
+    label: `${input.doctorName} · ${input.serviceName}`,
+  });
+  await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
 }
 
 function section(page: Page, heading: string) {

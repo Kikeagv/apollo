@@ -149,7 +149,7 @@ export type PanaceaCalendarReader = {
 
 export class ManualAppointmentUnavailableError extends Error {
   constructor() {
-    super("La Cita manual ya no es una Opción de atención autorizada");
+    super("La Agenda ya no autoriza esta Cita manual");
     this.name = "ManualAppointmentUnavailableError";
   }
 }

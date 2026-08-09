@@ -191,9 +191,7 @@ describe("crear una Cita manual", () => {
         { create },
         new Date("2026-08-01T00:00:00.000Z"),
       ),
-    ).rejects.toThrow(
-      "La Cita manual ya no es una Opción de atención autorizada",
-    );
+    ).rejects.toThrow("La Agenda ya no autoriza esta Cita manual");
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ startsAt }));
   });
 
