@@ -3,6 +3,7 @@ import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import {
   calculateCareOptions,
+  isIntervalAvailable,
   type CareOptionInputs,
 } from "~/server/application/care-options";
 import {
@@ -49,12 +50,18 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator = {
         },
         { find: async () => appointmentInput.capacity },
       );
+      const fitsSchedule = options.some(
+        (option) => option.startsAt.valueOf() === input.startsAt.valueOf(),
+      );
+      const outsideSchedule = !fitsSchedule;
       if (
-        !options.some(
-          (option) => option.startsAt.valueOf() === input.startsAt.valueOf(),
-        )
+        outsideSchedule &&
+        !hasFreeCapacity(input, appointmentInput.capacity)
       ) {
         return undefined;
+      }
+      if (outsideSchedule && !input.outsideScheduleConfirmed) {
+        return { requiresOutsideScheduleConfirmation: true };
       }
 
       const endsAt = addMinutes(
@@ -73,6 +80,7 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator = {
           endsAt,
           occupiedUntil,
           origin: "manual",
+          outsideSchedule,
           patientId: input.patientId,
           priceUsd: appointmentInput.priceUsd,
           serviceOfferId: input.serviceOfferId,
@@ -94,6 +102,7 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator = {
         endsAt,
         occupiedUntil,
         origin: "manual" as const,
+        outsideSchedule,
         patientId: input.patientId,
         priceUsd: appointmentInput.priceUsd,
       };
@@ -191,6 +200,7 @@ export async function listManualAppointments(input: {
         endsAt: appointments.endsAt,
         id: appointments.id,
         origin: appointments.origin,
+        outsideSchedule: appointments.outsideSchedule,
         patientId: patients.id,
         patientName: patients.name,
         priceUsd: appointments.priceUsd,
@@ -296,12 +306,28 @@ export async function listManualAppointments(input: {
         .map(({ appointmentId: _, ...event }) => event),
       id: appointment.id,
       origin: appointment.origin,
+      outsideSchedule: appointment.outsideSchedule,
       patient: { id: appointment.patientId, name: appointment.patientName },
       priceUsd: appointment.priceUsd,
       service: { name: appointment.serviceName },
       startsAt: appointment.startsAt,
     }));
   });
+}
+
+function hasFreeCapacity(
+  input: Pick<CreateManualAppointmentInput, "startsAt">,
+  capacity: CareOptionInputs,
+) {
+  const occupiedUntil = addMinutes(
+    input.startsAt,
+    capacity.offer.durationMinutes + capacity.offer.bufferMinutes,
+  );
+  return isIntervalAvailable(input.startsAt, occupiedUntil, [
+    ...capacity.appointments,
+    ...capacity.blocks,
+    ...capacity.temporaryReservations,
+  ]);
 }
 
 async function appointmentInputs(

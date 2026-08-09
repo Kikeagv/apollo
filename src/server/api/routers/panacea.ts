@@ -393,6 +393,7 @@ export const panaceaRouter = {
         patientId: z.string().uuid(),
         serviceOfferId: z.string().uuid(),
         startsAt: z.coerce.date(),
+        outsideScheduleConfirmed: z.boolean().optional(),
       }),
     )
     .mutation(({ ctx, input }) =>

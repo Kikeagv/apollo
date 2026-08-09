@@ -77,11 +77,7 @@ export async function calculateCareOptions(
         const blockedUntil = new Date(
           startsAt.valueOf() + totalMinutes * 60_000,
         );
-        if (
-          !occupied.some((interval) =>
-            overlaps(startsAt, blockedUntil, interval),
-          )
-        ) {
+        if (isIntervalAvailable(startsAt, blockedUntil, occupied)) {
           options.push({ startsAt });
         }
       }
@@ -110,8 +106,14 @@ function effectivePeriods(
   return periods.length === 0 ? [] : normalizeWeeklyPeriods(periods);
 }
 
-function overlaps(start: Date, end: Date, interval: OccupiedInterval) {
-  return start < interval.endsAt && end > interval.startsAt;
+export function isIntervalAvailable(
+  startsAt: Date,
+  endsAt: Date,
+  occupied: OccupiedInterval[],
+) {
+  return !occupied.some(
+    (interval) => startsAt < interval.endsAt && endsAt > interval.startsAt,
+  );
 }
 
 function requiredLocalDate(value: string) {

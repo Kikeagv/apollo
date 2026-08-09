@@ -1,0 +1,1 @@
+ALTER TABLE "pg-drizzle_appointment" ADD COLUMN "outside_schedule" boolean DEFAULT false NOT NULL;

@@ -307,6 +307,7 @@ export const appointments = createTable(
     priceUsd: numeric("price_usd", { precision: 12, scale: 2 }),
     durationMinutes: integer("duration_minutes"),
     bufferMinutes: integer("buffer_minutes"),
+    outsideSchedule: boolean("outside_schedule").default(false).notNull(),
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
     occupiedUntil: timestamp("occupied_until", { withTimezone: true }),

@@ -3,16 +3,31 @@ export type ManualAppointment = {
   startsAt: Date;
 };
 
+export type ManualAppointmentOutsideScheduleConfirmation = {
+  requiresOutsideScheduleConfirmation: true;
+};
+
 export type ManualAppointmentCreator = {
   create(
     input: CreateManualAppointmentInput,
-  ): Promise<ManualAppointment | undefined>;
+  ): Promise<
+    ManualAppointment | ManualAppointmentOutsideScheduleConfirmation | undefined
+  >;
 };
 
 export class ManualAppointmentUnavailableError extends Error {
   constructor() {
     super("La Cita manual ya no es una Opción de atención autorizada");
     this.name = "ManualAppointmentUnavailableError";
+  }
+}
+
+export class ManualAppointmentOutsideScheduleConfirmationRequiredError extends Error {
+  constructor() {
+    super(
+      "La Cita manual no cabe en el Horario vigente; confirme crearla fuera de horario",
+    );
+    this.name = "ManualAppointmentOutsideScheduleConfirmationRequiredError";
   }
 }
 
@@ -23,6 +38,7 @@ export type CreateManualAppointmentInput = {
   patientId: string;
   serviceOfferId: string;
   startsAt: Date;
+  outsideScheduleConfirmed?: boolean;
 };
 
 /** Registra una Cita manual después de que la Agenda autoriza su capacidad. */
@@ -41,5 +57,8 @@ export async function createManualAppointment(
   }
   const appointment = await store.create(input);
   if (appointment === undefined) throw new ManualAppointmentUnavailableError();
+  if ("requiresOutsideScheduleConfirmation" in appointment) {
+    throw new ManualAppointmentOutsideScheduleConfirmationRequiredError();
+  }
   return appointment;
 }

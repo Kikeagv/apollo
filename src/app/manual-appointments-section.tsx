@@ -20,7 +20,16 @@ type CalendarAppointment = {
   id: string;
   patient: { id: string; name: string };
   priceUsd: string | null;
+  outsideSchedule: boolean;
   service: { name: string };
+  startsAt: Date;
+};
+
+type ManualAppointmentRequest = {
+  doctorId: string;
+  outsideScheduleConfirmed?: boolean;
+  patientId: string;
+  serviceOfferId: string;
   startsAt: Date;
 };
 
@@ -28,12 +37,20 @@ type CalendarAppointment = {
 export function ManualAppointmentsSection() {
   const [calendarDate, setCalendarDate] = useState(today());
   const [doctorId, setDoctorId] = useState("");
+  const [outsideScheduleConfirmation, setOutsideScheduleConfirmation] =
+    useState<ManualAppointmentRequest>();
   const [selectedId, setSelectedId] = useState<string>();
   const [view, setView] = useState<CalendarView>("week");
   const formData = api.panacea.listManualAppointmentFormData.useQuery();
   const appointments = api.panacea.listManualAppointments.useQuery();
   const create = api.panacea.createManualAppointment.useMutation({
+    onError: (error, input) => {
+      if (error.data?.outsideScheduleConfirmationRequired) {
+        setOutsideScheduleConfirmation(input);
+      }
+    },
     onSuccess: async (appointment) => {
+      setOutsideScheduleConfirmation(undefined);
       setSelectedId(appointment.id);
       await appointments.refetch();
     },
@@ -68,6 +85,7 @@ export function ManualAppointmentsSection() {
       (item) => item.serviceOfferId === value(data, "serviceOfferId"),
     );
     if (offer === undefined) return;
+    setOutsideScheduleConfirmation(undefined);
     create.mutate({
       doctorId: offer.doctorId,
       patientId: value(data, "patientId"),
@@ -145,6 +163,28 @@ export function ManualAppointmentsSection() {
       ) : null}
       {create.error ? (
         <p className="text-sm text-rose-300">{create.error.message}</p>
+      ) : null}
+      {outsideScheduleConfirmation ? (
+        <div className="space-y-2 rounded border border-amber-500/70 p-3 text-sm text-amber-100">
+          <p>
+            La Cita no cabe por completo en el Horario vigente. Confirme la
+            excepción para crearla sin modificar los demás controles de
+            capacidad.
+          </p>
+          <button
+            className={secondaryButtonClass}
+            disabled={create.isPending}
+            onClick={() =>
+              create.mutate({
+                ...outsideScheduleConfirmation,
+                outsideScheduleConfirmed: true,
+              })
+            }
+            type="button"
+          >
+            Confirmar Cita fuera de horario
+          </button>
+        </div>
       ) : null}
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="space-y-3">
@@ -226,6 +266,11 @@ export function ManualAppointmentsSection() {
                           <span className="block text-slate-300">
                             {appointment.service.name}
                           </span>
+                          {appointment.outsideSchedule ? (
+                            <span className="block text-amber-300">
+                              Fuera de horario
+                            </span>
+                          ) : null}
                           {doctorId === "" ? (
                             <span className="block text-slate-400">
                               {appointment.doctor.name}
@@ -275,6 +320,9 @@ function AppointmentDetail({
           value={`${formatClinicDate(appointment.startsAt)} a ${formatTime(appointment.endsAt)}`}
         />
         <Detail label="Precio cotizado" value={`US$ ${appointment.priceUsd}`} />
+        {appointment.outsideSchedule ? (
+          <Detail label="Capacidad" value="Cita fuera de horario" />
+        ) : null}
       </dl>
       <div>
         <h4 className="font-medium">Eventos de Cita</h4>

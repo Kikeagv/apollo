@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { createManualAppointment } from "./manual-appointments";
+import {
+  createManualAppointment,
+  ManualAppointmentOutsideScheduleConfirmationRequiredError,
+} from "./manual-appointments";
 import { db } from "../db";
 import {
   inClinicTransaction,
@@ -36,6 +39,112 @@ const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("Citas manuales persistentes", () => {
+  databaseTest(
+    "requiere confirmación cuando la duración y el buffer rebasan el Horario vigente",
+    async () => {
+      const fixture = await createFixture();
+      const input = {
+        clinicId: fixture.clinicId,
+        doctorId: fixture.doctorId,
+        identityId: fixture.doctorIdentityId,
+        patientId: fixture.patientId,
+        serviceOfferId: fixture.serviceOfferId,
+        startsAt: new Date("2026-08-10T15:30:00.000Z"),
+      };
+      try {
+        await expect(
+          createManualAppointment(
+            input,
+            drizzleManualAppointmentStore,
+            new Date("2026-08-08T00:00:00.000Z"),
+          ),
+        ).rejects.toBeInstanceOf(
+          ManualAppointmentOutsideScheduleConfirmationRequiredError,
+        );
+        const created = await createManualAppointment(
+          { ...input, outsideScheduleConfirmed: true },
+          drizzleManualAppointmentStore,
+          new Date("2026-08-08T00:00:00.000Z"),
+        );
+        await expect(
+          listManualAppointments({
+            clinicId: fixture.clinicId,
+            identityId: fixture.doctorIdentityId,
+          }),
+        ).resolves.toMatchObject([{ id: created.id, outsideSchedule: true }]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "advierte y conserva la marca de una Cita manual fuera de horario sin abrir capacidad ocupada ni otra Clínica",
+    async () => {
+      const fixture = await createFixture();
+      const input = {
+        clinicId: fixture.clinicId,
+        doctorId: fixture.doctorId,
+        identityId: fixture.secretaryIdentityId,
+        patientId: fixture.patientId,
+        serviceOfferId: fixture.serviceOfferId,
+        startsAt: new Date("2026-08-10T16:00:00.000Z"),
+      };
+      try {
+        await expect(
+          createManualAppointment(
+            input,
+            drizzleManualAppointmentStore,
+            new Date("2026-08-08T00:00:00.000Z"),
+          ),
+        ).rejects.toBeInstanceOf(
+          ManualAppointmentOutsideScheduleConfirmationRequiredError,
+        );
+
+        const created = await createManualAppointment(
+          { ...input, outsideScheduleConfirmed: true },
+          drizzleManualAppointmentStore,
+          new Date("2026-08-08T00:00:00.000Z"),
+        );
+        await expect(
+          createManualAppointment(
+            {
+              ...input,
+              outsideScheduleConfirmed: true,
+              startsAt: new Date("2026-08-10T16:05:00.000Z"),
+            },
+            drizzleManualAppointmentStore,
+            new Date("2026-08-08T00:00:00.000Z"),
+          ),
+        ).rejects.toThrow(
+          "La Cita manual ya no es una Opción de atención autorizada",
+        );
+        await expect(
+          listManualAppointments({
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          }),
+        ).resolves.toMatchObject([{ id: created.id, outsideSchedule: true }]);
+        await inClinicTransaction(
+          {
+            clinicId: fixture.otherClinicId,
+            identityId: fixture.otherOwnerIdentityId,
+          },
+          async (transaction) => {
+            await expect(
+              transaction
+                .select({ outsideSchedule: appointments.outsideSchedule })
+                .from(appointments)
+                .where(eq(appointments.id, created.id)),
+            ).resolves.toEqual([]);
+          },
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "crea una Cita elegible con snapshots, evento y detalle operativo para una Secretaria",
     async () => {
@@ -108,11 +217,11 @@ describe("Citas manuales persistentes", () => {
   );
 
   databaseTest(
-    "autoriza al propietario, Médico y Secretaria a operar Citas, sin permitir a la Secretaria configurar Ofertas",
+    "autoriza al propietario, Médico y Secretaria a confirmar Citas fuera de horario, sin permitir a la Secretaria configurar Ofertas",
     async () => {
       const fixture = await createFixture();
       try {
-        const startsAt = ["14:00", "14:40", "15:20"];
+        const startsAt = ["16:00", "16:40", "17:20"];
         const identities = [
           fixture.ownerIdentityId,
           fixture.doctorIdentityId,
@@ -127,6 +236,7 @@ describe("Citas manuales persistentes", () => {
                 identityId,
                 patientId: fixture.patientId,
                 serviceOfferId: fixture.serviceOfferId,
+                outsideScheduleConfirmed: true,
                 startsAt: new Date(
                   `2026-08-10T${startsAt[index] ?? "14:00"}:00.000Z`,
                 ),
@@ -261,7 +371,8 @@ describe("Citas manuales persistentes", () => {
         identityId: fixture.secretaryIdentityId,
         patientId: fixture.patientId,
         serviceOfferId: fixture.serviceOfferId,
-        startsAt: new Date("2026-08-10T14:00:00.000Z"),
+        startsAt: new Date("2026-08-10T16:00:00.000Z"),
+        outsideScheduleConfirmed: true,
       };
       try {
         await inClinicTransaction(
@@ -270,8 +381,8 @@ describe("Citas manuales persistentes", () => {
             transaction.insert(availabilityBlocks).values({
               clinicId: fixture.clinicId,
               doctorId: fixture.doctorId,
-              endsAt: new Date("2026-08-10T14:30:00.000Z"),
-              startsAt: new Date("2026-08-10T14:00:00.000Z"),
+              endsAt: new Date("2026-08-10T16:30:00.000Z"),
+              startsAt: new Date("2026-08-10T16:00:00.000Z"),
             }),
         );
         await expect(
@@ -296,9 +407,9 @@ describe("Citas manuales persistentes", () => {
             transaction.insert(temporaryReservations).values({
               clinicId: fixture.clinicId,
               doctorId: fixture.doctorId,
-              endsAt: new Date("2026-08-10T14:30:00.000Z"),
+              endsAt: new Date("2026-08-10T16:30:00.000Z"),
               expiresAt: new Date(Date.now() + 10 * 60_000),
-              startsAt: new Date("2026-08-10T14:00:00.000Z"),
+              startsAt: new Date("2026-08-10T16:00:00.000Z"),
             }),
         );
         await expect(

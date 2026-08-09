@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createManualAppointment } from "./manual-appointments";
+import {
+  createManualAppointment,
+  ManualAppointmentOutsideScheduleConfirmationRequiredError,
+} from "./manual-appointments";
 
 describe("crear una Cita manual", () => {
   it("solicita a la Agenda crear una Cita futura para el Paciente, Médico y Oferta seleccionados", async () => {
@@ -89,5 +92,37 @@ describe("crear una Cita manual", () => {
       "La Cita manual ya no es una Opción de atención autorizada",
     );
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ startsAt }));
+  });
+
+  it("exige una confirmación explícita antes de crear una Cita fuera del Horario vigente", async () => {
+    const input = {
+      clinicId: "clinic-1",
+      doctorId: "doctor-1",
+      identityId: "operator-1",
+      patientId: "patient-1",
+      serviceOfferId: "offer-1",
+      startsAt: new Date("2026-08-10T20:00:00.000Z"),
+    };
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce({ requiresOutsideScheduleConfirmation: true })
+      .mockResolvedValueOnce({ id: "appointment-1", startsAt: input.startsAt });
+
+    await expect(
+      createManualAppointment(
+        input,
+        { create },
+        new Date("2026-08-01T00:00:00.000Z"),
+      ),
+    ).rejects.toBeInstanceOf(
+      ManualAppointmentOutsideScheduleConfirmationRequiredError,
+    );
+    await expect(
+      createManualAppointment(
+        { ...input, outsideScheduleConfirmed: true },
+        { create },
+        new Date("2026-08-01T00:00:00.000Z"),
+      ),
+    ).resolves.toEqual({ id: "appointment-1", startsAt: input.startsAt });
   });
 });
