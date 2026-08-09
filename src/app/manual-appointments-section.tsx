@@ -520,7 +520,9 @@ function AppointmentDetail({
     });
   }
   const canCancel =
-    appointment.status === "confirmed" && appointment.startsAt > new Date();
+    appointment.origin === "manual" &&
+    appointment.status === "confirmed" &&
+    appointment.startsAt > new Date();
   return (
     <aside className="space-y-3 rounded border border-slate-700 p-3 text-sm">
       <h3 className="font-semibold">Detalle de la Cita</h3>
