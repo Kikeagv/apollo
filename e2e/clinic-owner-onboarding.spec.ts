@@ -43,6 +43,7 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
 
   try {
     await page.goto(`/activar-invitacion?token=${fixture.invitationToken}`);
+    await waitForPanaceaInteractivity(page);
     await expect(
       page.getByRole("heading", { name: "Activar invitación" }),
     ).toBeVisible();
@@ -57,6 +58,7 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     ).toBeVisible();
 
     await page.goto("/");
+    await waitForPanaceaInteractivity(page);
     await page.getByLabel("Correo").fill(fixture.ownerEmail);
     await page.getByLabel("Contraseña", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
@@ -64,6 +66,7 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await expect(
       page.getByText("Enviamos un código de un solo uso a su correo."),
     ).toBeVisible();
+    await waitForPanaceaInteractivity(page);
 
     await page.getByLabel("Código de verificación").fill(e2eOtp);
     await page
@@ -72,6 +75,7 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByText(fixture.clinicName)).toBeVisible();
     await expect(page.getByText("Esta es su Panacea vacía.")).toBeVisible();
+    await waitForPanaceaInteractivity(page);
 
     await page
       .getByRole("button", { name: "Registrar acción sintética" })
@@ -144,7 +148,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       .fill("Medicina familiar");
     await profile.getByRole("button", { name: "Guardar perfil" }).click();
     await expect(profile.getByText("Perfil de Médico guardado.")).toBeVisible();
-    await page.reload();
+    await reloadPanacea(page);
 
     const catalog = section(page, "Catálogo de Servicios");
     const createServiceForm = catalog
@@ -189,14 +193,14 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
         invitation.token,
         fixture.invitedDoctorEmail,
       );
-      await page.reload();
+      await reloadPanacea(page);
       await configureInvitedDoctor({
         clinicId: fixture.clinicId(),
         date: careDate,
         ownerIdentityId,
         serviceName: consultationName,
       });
-      await page.reload();
+      await reloadPanacea(page);
       await expectCareOptions(
         page,
         "Médico sin nombre público",
@@ -220,7 +224,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       await invitedContext.close();
     }
 
-    await page.reload();
+    await reloadPanacea(page);
     await expectCareOptions(
       page,
       invitedDoctorName,
@@ -267,7 +271,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
         drizzleAvailabilityStore,
       ),
     ]);
-    await page.reload();
+    await reloadPanacea(page);
     const calendar = section(page, "Calendario");
     await calendar.locator('input[type="date"]').fill(careDate);
     const anaBlock = calendar.getByRole("button", {
@@ -290,7 +294,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       ownerIdentityId,
       publicName: invitedDoctorName,
     });
-    await page.reload();
+    await reloadPanacea(page);
     const catalogAfterAppointment = section(page, "Catálogo de Servicios");
     const service = catalogAfterAppointment
       .locator("article")
@@ -366,9 +370,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
   }
 });
 
-test("Panacea registra fichas dentro de una nueva Cita y las deja seleccionadas", async ({
-  page,
-}) => {
+test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => {
   const fixture = await createFixture();
   const doctorName = "Dra. Inés Inline";
   const serviceName = "Consulta inline";
@@ -390,27 +392,49 @@ test("Panacea registra fichas dentro de una nueva Cita y las deja seleccionadas"
     });
 
     const calendar = section(page, "Calendario");
-    await registerInlinePatient(calendar, {
-      contactName: "Ana Inline",
-      patientName: "Lucía Inline",
+    const navigationsDuringAppointmentCreation: string[] = [];
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) {
+        navigationsDuringAppointmentCreation.push(frame.url());
+      }
     });
-    await expect(calendar.getByLabel("Paciente")).toHaveValue(/.+/);
 
-    await calendar.locator('input[type="date"]').fill(careDate);
-    await calendar.locator('input[name="startsAt"]').fill(`${careDate}T08:00`);
-    await calendar.locator('select[name="serviceOfferId"]').selectOption({
-      label: `${doctorName} · ${serviceName}`,
-    });
-    await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
-    await expect(
-      calendar.getByRole("heading", { name: "Detalle de la Cita" }),
-    ).toBeVisible();
-    await expect(
-      calendar.getByRole("link", { name: "Abrir ficha del Paciente" }),
-    ).toBeVisible();
-    await expect(
-      calendar.getByRole("link", { name: "Abrir ficha del Contacto" }),
-    ).toBeVisible();
+    for (const appointment of [
+      {
+        contactName: "Ana Inline",
+        patientName: "Lucía Inline",
+        phone: "+50371234567",
+        startsAt: "08:00",
+      },
+      {
+        contactName: "Beatriz Inline",
+        patientName: "Mateo Inline",
+        phone: "+50371234568",
+        startsAt: "08:30",
+      },
+    ]) {
+      await registerInlinePatient(calendar, appointment);
+      await expect(calendar.getByLabel("Paciente")).toHaveValue(/.+/);
+
+      await calendar.locator('input[type="date"]').fill(careDate);
+      await calendar
+        .locator('input[name="startsAt"]')
+        .fill(`${careDate}T${appointment.startsAt}`);
+      await calendar.locator('select[name="serviceOfferId"]').selectOption({
+        label: `${doctorName} · ${serviceName}`,
+      });
+      await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
+      await expect(
+        calendar.getByRole("heading", { name: "Detalle de la Cita" }),
+      ).toBeVisible();
+      await expect(
+        calendar.getByRole("link", { name: "Abrir ficha del Paciente" }),
+      ).toBeVisible();
+      await expect(
+        calendar.getByRole("link", { name: "Abrir ficha del Contacto" }),
+      ).toBeVisible();
+      expect(navigationsDuringAppointmentCreation).toEqual([]);
+    }
   } finally {
     await fixture.cleanup();
   }
@@ -539,7 +563,7 @@ async function configureCalendarScenario(input: {
   await profile.getByLabel("Especialidad principal").fill("Medicina general");
   await profile.getByRole("button", { name: "Guardar perfil" }).click();
   await expect(profile.getByText("Perfil de Médico guardado.")).toBeVisible();
-  await input.page.reload();
+  await reloadPanacea(input.page);
 
   const catalog = section(input.page, "Catálogo de Servicios");
   const createServiceForm = catalog
@@ -563,13 +587,15 @@ async function configureCalendarScenario(input: {
 
 async function registerInlinePatient(
   calendar: Locator,
-  input: { contactName: string; patientName: string },
+  input: { contactName: string; patientName: string; phone?: string },
 ) {
   await calendar
     .getByRole("button", { name: "Registrar Paciente nuevo" })
     .click();
   await calendar.getByLabel("Nombre del Contacto").fill(input.contactName);
-  await calendar.getByLabel("Teléfono E.164 del Contacto").fill("+50371234567");
+  await calendar
+    .getByLabel("Teléfono E.164 del Contacto")
+    .fill(input.phone ?? "+50371234567");
   await calendar.getByLabel("Nombre del Paciente").fill(input.patientName);
   await calendar
     .getByLabel("Fecha de nacimiento del Paciente")
@@ -596,6 +622,7 @@ async function activateAndOpenPanacea(
   email: string,
 ) {
   await page.goto(`/activar-invitacion?token=${invitationToken}`);
+  await waitForPanaceaInteractivity(page);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByLabel("Confirmar contraseña").fill(password);
   await page.getByRole("button", { name: "Activar cuenta" }).click();
@@ -610,12 +637,28 @@ async function activateAndOpenPanacea(
 
 async function signInAndOpenPanacea(page: Page, email: string) {
   await page.goto("/");
+  await waitForPanaceaInteractivity(page);
   await page.getByLabel("Correo").fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Iniciar sesión" }).click();
+  await expect(page.getByLabel("Código de verificación")).toBeVisible();
+  await waitForPanaceaInteractivity(page);
   await page.getByLabel("Código de verificación").fill(e2eOtp);
   await page.getByRole("button", { name: "Verificar y abrir Panacea" }).click();
   await expect(page).toHaveURL(/\/$/);
+  await waitForPanaceaInteractivity(page);
+}
+
+async function waitForPanaceaInteractivity(page: Page) {
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-panacea-interactive",
+    "true",
+  );
+}
+
+async function reloadPanacea(page: Page) {
+  await page.reload();
+  await waitForPanaceaInteractivity(page);
 }
 
 async function saveSchedule(

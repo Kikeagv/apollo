@@ -5,6 +5,8 @@ import { Geist } from "next/font/google";
 
 import { TRPCReactProvider } from "~/trpc/react";
 
+import { PanaceaInteractivity } from "./panacea-interactivity";
+
 export const metadata: Metadata = {
   title: "Panacea | Praxia",
   description: "Panel operativo de Panacea",
@@ -22,7 +24,10 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geist.variable}`}>
       <body>
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        <TRPCReactProvider>
+          <PanaceaInteractivity />
+          {children}
+        </TRPCReactProvider>
       </body>
     </html>
   );

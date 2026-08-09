@@ -22,7 +22,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `npm run dev -- --port ${port}`,
+    command: `./node_modules/.bin/next dev --turbo --port ${port}`,
     env: {
       ...process.env,
       BETTER_AUTH_URL: baseURL,
