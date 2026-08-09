@@ -15,7 +15,10 @@ import {
   createAvailabilityBlocks,
 } from "~/server/application/availability";
 import { calculateCareOptions } from "~/server/application/care-options";
-import { createManualAppointment } from "~/server/application/manual-appointments";
+import {
+  cancelManualAppointment,
+  createManualAppointment,
+} from "~/server/application/manual-appointments";
 import {
   createContact,
   createContactPatientLink,
@@ -52,6 +55,7 @@ import {
 import { drizzleAdministrativeRecordsStore } from "~/server/db/administrative-records-store";
 import {
   drizzleManualAppointmentStore,
+  listCancelledManualAppointments,
   listManualAppointmentFormData,
   listManualAppointments,
 } from "~/server/db/manual-appointment-store";
@@ -386,6 +390,13 @@ export const panaceaRouter = {
     }),
   ),
 
+  listCancelledManualAppointments: clinicProcedure.query(({ ctx }) =>
+    listCancelledManualAppointments({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    }),
+  ),
+
   createManualAppointment: clinicProcedure
     .input(
       z.object({
@@ -398,6 +409,24 @@ export const panaceaRouter = {
     )
     .mutation(({ ctx, input }) =>
       createManualAppointment(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleManualAppointmentStore,
+      ),
+    ),
+
+  cancelManualAppointment: clinicProcedure
+    .input(
+      z.object({
+        appointmentId: z.string().uuid(),
+        reason: z.string().max(500).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      cancelManualAppointment(
         {
           ...input,
           clinicId: ctx.clinic.clinicId,

@@ -15,6 +15,16 @@ export type ManualAppointmentCreator = {
   >;
 };
 
+export type ManualAppointmentCanceller = {
+  cancel(input: {
+    appointmentId: string;
+    clinicId: string;
+    identityId: string;
+    now: Date;
+    reason: string | null;
+  }): Promise<{ id: string; status: "cancelled" } | undefined>;
+};
+
 export class ManualAppointmentUnavailableError extends Error {
   constructor() {
     super("La Cita manual ya no es una Opción de atención autorizada");
@@ -28,6 +38,15 @@ export class ManualAppointmentOutsideScheduleConfirmationRequiredError extends E
       "La Cita manual no cabe en el Horario vigente; confirme crearla fuera de horario",
     );
     this.name = "ManualAppointmentOutsideScheduleConfirmationRequiredError";
+  }
+}
+
+export class ManualAppointmentNotCancellableError extends Error {
+  constructor() {
+    super(
+      "La Cita manual no puede cancelarse porque ya inició, pasó o no existe",
+    );
+    this.name = "ManualAppointmentNotCancellableError";
   }
 }
 
@@ -61,4 +80,34 @@ export async function createManualAppointment(
     throw new ManualAppointmentOutsideScheduleConfirmationRequiredError();
   }
   return appointment;
+}
+
+/** Cancela una Cita manual futura, conserva su historial y libera su capacidad. */
+export async function cancelManualAppointment(
+  input: {
+    appointmentId: string;
+    clinicId: string;
+    identityId: string;
+    reason?: string;
+  },
+  store: ManualAppointmentCanceller,
+  now = new Date(),
+) {
+  const appointment = await store.cancel({
+    ...input,
+    now,
+    reason: optionalReason(input.reason),
+  });
+  if (appointment === undefined)
+    throw new ManualAppointmentNotCancellableError();
+  return appointment;
+}
+
+function optionalReason(value: string | undefined) {
+  const normalized = value?.trim().replace(/\s+/g, " ");
+  if (normalized === undefined || normalized.length === 0) return null;
+  if (normalized.length > 500) {
+    throw new Error("La razón de cancelación no puede exceder 500 caracteres");
+  }
+  return normalized;
 }

@@ -15,7 +15,8 @@ type CalendarAppointment = {
   events: {
     actorClinicUserId: string;
     occurredAt: Date;
-    type: "manual-created";
+    reason: string | null;
+    type: "manual-created" | "cancelled";
   }[];
   id: string;
   patient: { id: string; name: string };
@@ -23,6 +24,7 @@ type CalendarAppointment = {
   outsideSchedule: boolean;
   service: { name: string };
   startsAt: Date;
+  status: "confirmed" | "cancelled";
 };
 
 type ManualAppointmentRequest = {
@@ -43,6 +45,8 @@ export function ManualAppointmentsSection() {
   const [view, setView] = useState<CalendarView>("week");
   const formData = api.panacea.listManualAppointmentFormData.useQuery();
   const appointments = api.panacea.listManualAppointments.useQuery();
+  const cancelledAppointments =
+    api.panacea.listCancelledManualAppointments.useQuery();
   const create = api.panacea.createManualAppointment.useMutation({
     onError: (error, input) => {
       if (error.data?.outsideScheduleConfirmationRequired) {
@@ -55,9 +59,18 @@ export function ManualAppointmentsSection() {
       await appointments.refetch();
     },
   });
-  const selected = appointments.data?.find(
-    (appointment) => appointment.id === selectedId,
-  );
+  const cancel = api.panacea.cancelManualAppointment.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        appointments.refetch(),
+        cancelledAppointments.refetch(),
+      ]);
+    },
+  });
+  const selected = [
+    ...(appointments.data ?? []),
+    ...(cancelledAppointments.data ?? []),
+  ].find((appointment) => appointment.id === selectedId);
   const doctors = useMemo(
     () => [
       ...new Map(
@@ -186,6 +199,25 @@ export function ManualAppointmentsSection() {
           </button>
         </div>
       ) : null}
+      {cancelledAppointments.data?.length ? (
+        <div className="space-y-2 rounded border border-slate-800 p-3 text-sm">
+          <h3 className="font-medium">Citas canceladas</h3>
+          <ul className="space-y-1">
+            {cancelledAppointments.data.map((appointment) => (
+              <li key={appointment.id}>
+                <button
+                  className="text-left text-amber-300 underline-offset-2 hover:underline"
+                  onClick={() => setSelectedId(appointment.id)}
+                  type="button"
+                >
+                  {formatClinicDate(appointment.startsAt)} ·{" "}
+                  {appointment.patient.name} · {appointment.service.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="space-y-3">
           <div className="flex flex-wrap items-end gap-2">
@@ -284,7 +316,19 @@ export function ManualAppointmentsSection() {
             ))}
           </div>
         </div>
-        <AppointmentDetail appointment={selected} />
+        <AppointmentDetail
+          appointment={selected}
+          cancelError={cancel.error?.message}
+          cancelling={cancel.isPending}
+          onCancel={(reason) => {
+            if (selected !== undefined) {
+              cancel.mutate({
+                appointmentId: selected.id,
+                reason: reason || undefined,
+              });
+            }
+          }}
+        />
       </div>
     </section>
   );
@@ -292,8 +336,14 @@ export function ManualAppointmentsSection() {
 
 function AppointmentDetail({
   appointment,
+  cancelError,
+  cancelling,
+  onCancel,
 }: {
   appointment: CalendarAppointment | undefined;
+  cancelError: string | undefined;
+  cancelling: boolean;
+  onCancel: (reason: string) => void;
 }) {
   if (appointment === undefined) {
     return (
@@ -302,6 +352,12 @@ function AppointmentDetail({
       </aside>
     );
   }
+  function cancelAppointment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onCancel(value(new FormData(event.currentTarget), "reason"));
+  }
+  const canCancel =
+    appointment.status === "confirmed" && appointment.startsAt > new Date();
   return (
     <aside className="space-y-3 rounded border border-slate-700 p-3 text-sm">
       <h3 className="font-semibold">Detalle de la Cita</h3>
@@ -320,6 +376,12 @@ function AppointmentDetail({
           value={`${formatClinicDate(appointment.startsAt)} a ${formatTime(appointment.endsAt)}`}
         />
         <Detail label="Precio cotizado" value={`US$ ${appointment.priceUsd}`} />
+        <Detail
+          label="Estado"
+          value={
+            appointment.status === "cancelled" ? "Cancelada" : "Confirmada"
+          }
+        />
         {appointment.outsideSchedule ? (
           <Detail label="Capacidad" value="Cita fuera de horario" />
         ) : null}
@@ -331,12 +393,34 @@ function AppointmentDetail({
             <li key={`${event.type}-${event.occurredAt.toString()}`}>
               {event.type === "manual-created"
                 ? "Cita manual creada"
-                : event.type}{" "}
-              · {formatClinicDate(event.occurredAt)}
+                : "Cita cancelada"}
+              {event.reason ? ` · ${event.reason}` : ""} · Usuario de clínica{" "}
+              {event.actorClinicUserId} · {formatClinicDate(event.occurredAt)}
             </li>
           ))}
         </ul>
       </div>
+      {canCancel ? (
+        <form className="grid gap-2" onSubmit={cancelAppointment}>
+          <label className="text-sm">
+            Razón de cancelación (opcional)
+            <input className={inputClass} maxLength={500} name="reason" />
+          </label>
+          <button
+            className="w-fit rounded bg-rose-300 px-3 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={cancelling}
+            type="submit"
+          >
+            {cancelling ? "Cancelando…" : "Cancelar Cita"}
+          </button>
+        </form>
+      ) : null}
+      {appointment.status === "confirmed" && !canCancel ? (
+        <p className="text-slate-400">
+          Esta Cita ya inició o pasó y no puede cancelarse.
+        </p>
+      ) : null}
+      {cancelError ? <p className="text-rose-300">{cancelError}</p> : null}
     </aside>
   );
 }

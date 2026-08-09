@@ -8,6 +8,7 @@ import {
 } from "~/server/application/care-options";
 import {
   type CreateManualAppointmentInput,
+  type ManualAppointmentCanceller,
   type ManualAppointmentCreator,
 } from "~/server/application/manual-appointments";
 import { inClinicTransaction } from "~/server/db/clinic-context";
@@ -30,7 +31,8 @@ import {
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-export const drizzleManualAppointmentStore: ManualAppointmentCreator = {
+export const drizzleManualAppointmentStore: ManualAppointmentCreator &
+  ManualAppointmentCanceller = {
   async create(input) {
     return inClinicTransaction(input, async (transaction) => {
       await setCalendarOperation(transaction);
@@ -106,6 +108,43 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator = {
         patientId: input.patientId,
         priceUsd: appointmentInput.priceUsd,
       };
+    });
+  },
+
+  async cancel(input) {
+    return inClinicTransaction(input, async (transaction) => {
+      await setCalendarOperation(transaction);
+      const actor = await transaction.query.clinicUsers.findFirst({
+        columns: { id: true },
+        where: and(
+          eq(clinicUsers.clinicId, input.clinicId),
+          eq(clinicUsers.identityId, input.identityId),
+          eq(clinicUsers.active, true),
+        ),
+      });
+      if (actor === undefined) return undefined;
+      const [appointment] = await transaction
+        .update(appointments)
+        .set({ status: "cancelled" })
+        .where(
+          and(
+            eq(appointments.id, input.appointmentId),
+            eq(appointments.clinicId, input.clinicId),
+            eq(appointments.origin, "manual"),
+            eq(appointments.status, "confirmed"),
+            gt(appointments.startsAt, input.now),
+          ),
+        )
+        .returning({ id: appointments.id });
+      if (appointment === undefined) return undefined;
+      await transaction.insert(appointmentEvents).values({
+        actorClinicUserId: actor.id,
+        appointmentId: appointment.id,
+        clinicId: input.clinicId,
+        reason: input.reason,
+        type: "cancelled",
+      });
+      return { ...appointment, status: "cancelled" as const };
     });
   },
 };
@@ -189,6 +228,21 @@ export async function listManualAppointments(input: {
   clinicId: string;
   identityId: string;
 }) {
+  return listAppointments(input, "confirmed");
+}
+
+/** Lista las Citas manuales canceladas para su detalle y ficha administrativa. */
+export async function listCancelledManualAppointments(input: {
+  clinicId: string;
+  identityId: string;
+}) {
+  return listAppointments(input, "cancelled");
+}
+
+async function listAppointments(
+  input: { clinicId: string; identityId: string },
+  status: "confirmed" | "cancelled",
+) {
   return inClinicTransaction(input, async (transaction) => {
     await setCalendarOperation(transaction);
     const appointmentRows = await transaction
@@ -206,6 +260,7 @@ export async function listManualAppointments(input: {
         priceUsd: appointments.priceUsd,
         serviceName: services.name,
         startsAt: appointments.startsAt,
+        status: appointments.status,
       })
       .from(appointments)
       .innerJoin(
@@ -239,7 +294,10 @@ export async function listManualAppointments(input: {
       .where(
         and(
           eq(appointments.clinicId, input.clinicId),
-          eq(appointments.status, "confirmed"),
+          eq(appointments.status, status),
+          status === "cancelled"
+            ? eq(appointments.origin, "manual")
+            : undefined,
         ),
       )
       .orderBy(asc(appointments.startsAt));
@@ -276,6 +334,7 @@ export async function listManualAppointments(input: {
           actorClinicUserId: appointmentEvents.actorClinicUserId,
           appointmentId: appointmentEvents.appointmentId,
           occurredAt: appointmentEvents.occurredAt,
+          reason: appointmentEvents.reason,
           type: appointmentEvents.type,
         })
         .from(appointmentEvents)
@@ -311,6 +370,7 @@ export async function listManualAppointments(input: {
       priceUsd: appointment.priceUsd,
       service: { name: appointment.serviceName },
       startsAt: appointment.startsAt,
+      status: appointment.status,
     }));
   });
 }

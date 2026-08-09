@@ -22,7 +22,8 @@ export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 export type ClinicUserRole = "owner" | "doctor" | "secretary";
 export type ClinicInvitationRole = "owner" | "doctor";
 export type AppointmentOrigin = "manual" | "reservation";
-export type AppointmentEventType = "manual-created";
+export type AppointmentStatus = "confirmed" | "cancelled";
+export type AppointmentEventType = "manual-created" | "cancelled";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -311,7 +312,10 @@ export const appointments = createTable(
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
     occupiedUntil: timestamp("occupied_until", { withTimezone: true }),
-    status: text("status").$type<"confirmed">().default("confirmed").notNull(),
+    status: text("status")
+      .$type<AppointmentStatus>()
+      .default("confirmed")
+      .notNull(),
   },
   (table) => [
     unique("appointment_clinic_id_unique").on(table.clinicId, table.id),
@@ -355,6 +359,7 @@ export const appointmentEvents = createTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    reason: text("reason"),
   },
   (table) => [
     index("appointment_event_appointment_idx").on(table.appointmentId),

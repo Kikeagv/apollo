@@ -7,6 +7,8 @@ import { api } from "~/trpc/react";
 export function AdministrativeRecordsSection() {
   const [result, setResult] = useState<string>();
   const records = api.panacea.listAdministrativeRecords.useQuery();
+  const cancelledAppointments =
+    api.panacea.listCancelledManualAppointments.useQuery();
   const createContact = api.panacea.createContact.useMutation({
     onSuccess: (contact) => {
       setResult(`Contacto ${contact.name} creado.`);
@@ -213,6 +215,41 @@ export function AdministrativeRecordsSection() {
               <p className="text-xs text-slate-400">
                 Vinculado con {patient.contactIds.length} Contacto(s).
               </p>
+              {cancelledAppointments.data
+                ?.filter((appointment) => appointment.patient.id === patient.id)
+                .map((appointment) => {
+                  const cancellation = appointment.events.find(
+                    (event) => event.type === "cancelled",
+                  );
+                  return (
+                    <div
+                      className="text-xs text-amber-300"
+                      key={appointment.id}
+                    >
+                      <p>
+                        Cita cancelada: {appointment.service.name} ·{" "}
+                        {new Date(appointment.startsAt).toLocaleString("es-SV")}
+                        {cancellation?.reason
+                          ? ` · ${cancellation.reason}`
+                          : ""}
+                      </p>
+                      <ul className="ml-4 list-disc text-slate-300">
+                        {appointment.events.map((event) => (
+                          <li
+                            key={`${event.type}-${event.occurredAt.toISOString()}`}
+                          >
+                            {event.type === "manual-created"
+                              ? "Cita manual creada"
+                              : "Cita cancelada"}{" "}
+                            Usuario de clínica {event.actorClinicUserId} ·{" "}
+                            {new Date(event.occurredAt).toLocaleString("es-SV")}
+                            {event.reason ? ` · ${event.reason}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
               <button className={buttonClass} disabled={pending} type="submit">
                 Guardar Paciente
               </button>

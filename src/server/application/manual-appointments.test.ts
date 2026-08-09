@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  cancelManualAppointment,
   createManualAppointment,
+  ManualAppointmentNotCancellableError,
   ManualAppointmentOutsideScheduleConfirmationRequiredError,
 } from "./manual-appointments";
 
@@ -124,5 +126,51 @@ describe("crear una Cita manual", () => {
         new Date("2026-08-01T00:00:00.000Z"),
       ),
     ).resolves.toEqual({ id: "appointment-1", startsAt: input.startsAt });
+  });
+});
+
+describe("cancelar una Cita manual", () => {
+  it("registra la cancelación futura con la razón normalizada", async () => {
+    const cancel = vi.fn().mockResolvedValue({
+      id: "appointment-1",
+      status: "cancelled",
+    });
+
+    await expect(
+      cancelManualAppointment(
+        {
+          appointmentId: "appointment-1",
+          clinicId: "clinic-1",
+          identityId: "operator-1",
+          reason: "  Paciente  solicitó cancelar ",
+        },
+        { cancel },
+        new Date("2026-08-01T00:00:00.000Z"),
+      ),
+    ).resolves.toEqual({ id: "appointment-1", status: "cancelled" });
+
+    expect(cancel).toHaveBeenCalledWith({
+      appointmentId: "appointment-1",
+      clinicId: "clinic-1",
+      identityId: "operator-1",
+      now: new Date("2026-08-01T00:00:00.000Z"),
+      reason: "Paciente solicitó cancelar",
+    });
+  });
+
+  it("rechaza una Cita iniciada, pasada o ajena que el almacén no puede cancelar", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      cancelManualAppointment(
+        {
+          appointmentId: "appointment-1",
+          clinicId: "clinic-1",
+          identityId: "operator-1",
+        },
+        { cancel },
+        new Date("2026-08-01T00:00:00.000Z"),
+      ),
+    ).rejects.toBeInstanceOf(ManualAppointmentNotCancellableError);
   });
 });

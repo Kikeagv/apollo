@@ -4,7 +4,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
+  cancelManualAppointment,
   createManualAppointment,
+  ManualAppointmentNotCancellableError,
   ManualAppointmentOutsideScheduleConfirmationRequiredError,
 } from "./manual-appointments";
 import { db } from "../db";
@@ -14,6 +16,7 @@ import {
 } from "../db/clinic-context";
 import {
   drizzleManualAppointmentStore,
+  listCancelledManualAppointments,
   listManualAppointments,
 } from "../db/manual-appointment-store";
 import {
@@ -39,6 +42,174 @@ const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("Citas manuales persistentes", () => {
+  databaseTest(
+    "cancela Citas manuales para todos los roles, conserva el historial y libera la capacidad sin cruzar Clínicas",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-08T00:00:00.000Z");
+      try {
+        const identities = [
+          fixture.ownerIdentityId,
+          fixture.doctorIdentityId,
+          fixture.secretaryIdentityId,
+        ];
+        const appointmentsToCancel = await Promise.all(
+          identities.map((identityId, index) =>
+            createManualAppointment(
+              {
+                clinicId: fixture.clinicId,
+                doctorId: fixture.doctorId,
+                identityId,
+                patientId: fixture.patientId,
+                serviceOfferId: fixture.serviceOfferId,
+                startsAt: new Date(
+                  `2026-08-10T${["14:00", "14:40", "15:20"][index] ?? "14:00"}:00.000Z`,
+                ),
+              },
+              drizzleManualAppointmentStore,
+              now,
+            ),
+          ),
+        );
+
+        await Promise.all(
+          appointmentsToCancel.map((appointment, index) =>
+            cancelManualAppointment(
+              {
+                appointmentId: appointment.id,
+                clinicId: fixture.clinicId,
+                identityId: identities[index] ?? fixture.ownerIdentityId,
+                reason: index === 0 ? "Paciente no podrá asistir" : undefined,
+              },
+              drizzleManualAppointmentStore,
+              now,
+            ),
+          ),
+        );
+
+        await expect(
+          listManualAppointments({
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          }),
+        ).resolves.toEqual([]);
+        const cancelled = await listCancelledManualAppointments({
+          clinicId: fixture.clinicId,
+          identityId: fixture.secretaryIdentityId,
+        });
+        const firstCancelled = cancelled.find(
+          (appointment) => appointment.id === appointmentsToCancel[0]?.id,
+        );
+        if (firstCancelled === undefined)
+          throw new Error("No se listó la Cita cancelada");
+        expect(firstCancelled.status).toBe("cancelled");
+        expect(firstCancelled.patient.id).toBe(fixture.patientId);
+        expect(firstCancelled.events.map((event) => event.type)).toEqual([
+          "manual-created",
+          "cancelled",
+        ]);
+        expect(
+          firstCancelled.events.find((event) => event.type === "cancelled"),
+        ).toMatchObject({
+          actorClinicUserId: fixture.ownerClinicUserId,
+          reason: "Paciente no podrá asistir",
+        });
+        const replacement = await createManualAppointment(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.doctorId,
+            identityId: fixture.secretaryIdentityId,
+            patientId: fixture.patientId,
+            serviceOfferId: fixture.serviceOfferId,
+            startsAt: new Date("2026-08-10T14:00:00.000Z"),
+          },
+          drizzleManualAppointmentStore,
+          now,
+        );
+        expect(replacement.startsAt).toEqual(
+          new Date("2026-08-10T14:00:00.000Z"),
+        );
+        await expect(
+          cancelManualAppointment(
+            {
+              appointmentId: replacement.id,
+              clinicId: fixture.otherClinicId,
+              identityId: fixture.otherOwnerIdentityId,
+            },
+            drizzleManualAppointmentStore,
+            now,
+          ),
+        ).rejects.toBeInstanceOf(ManualAppointmentNotCancellableError);
+        await expect(
+          listManualAppointments({
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          }),
+        ).resolves.toMatchObject([{ id: replacement.id }]);
+
+        await inClinicTransaction(
+          {
+            clinicId: fixture.otherClinicId,
+            identityId: fixture.otherOwnerIdentityId,
+          },
+          async (transaction) => {
+            await expect(
+              transaction
+                .select({ id: appointments.id })
+                .from(appointments)
+                .where(eq(appointments.id, appointmentsToCancel[0]?.id ?? "")),
+            ).resolves.toEqual([]);
+            await expect(
+              transaction
+                .select({ id: appointmentEvents.id })
+                .from(appointmentEvents)
+                .where(
+                  eq(
+                    appointmentEvents.appointmentId,
+                    appointmentsToCancel[0]?.id ?? "",
+                  ),
+                ),
+            ).resolves.toEqual([]);
+          },
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest("no cancela una Cita manual que ya inició", async () => {
+    const fixture = await createFixture();
+    try {
+      const appointment = await createManualAppointment(
+        {
+          clinicId: fixture.clinicId,
+          doctorId: fixture.doctorId,
+          identityId: fixture.ownerIdentityId,
+          patientId: fixture.patientId,
+          serviceOfferId: fixture.serviceOfferId,
+          startsAt: new Date("2026-08-10T14:00:00.000Z"),
+        },
+        drizzleManualAppointmentStore,
+        new Date("2026-08-08T00:00:00.000Z"),
+      );
+
+      await expect(
+        cancelManualAppointment(
+          {
+            appointmentId: appointment.id,
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+          },
+          drizzleManualAppointmentStore,
+          new Date("2026-08-10T14:00:00.000Z"),
+        ),
+      ).rejects.toBeInstanceOf(ManualAppointmentNotCancellableError);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   databaseTest(
     "requiere confirmación cuando la duración y el buffer rebasan el Horario vigente",
     async () => {
