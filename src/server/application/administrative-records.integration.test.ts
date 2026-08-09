@@ -269,17 +269,18 @@ describe("fichas administrativas persistentes", () => {
     async () => {
       const fixture = await createFixture();
       try {
-        const registered = await registerAdministrativeRecordsForManualAppointment(
-          {
-            birthDate: "2018-04-02",
-            clinicId: fixture.primary.clinicId,
-            contactName: " Ana Inline ",
-            identityId: fixture.secretary.identityId,
-            patientName: " Lucía Inline ",
-            phone: "+503 7123-4567",
-          },
-          drizzleAdministrativeRecordsStore,
-        );
+        const registered =
+          await registerAdministrativeRecordsForManualAppointment(
+            {
+              birthDate: "2018-04-02",
+              clinicId: fixture.primary.clinicId,
+              contactName: " Ana Inline ",
+              identityId: fixture.secretary.identityId,
+              patientName: " Lucía Inline ",
+              phone: "+503 7123-4567",
+            },
+            drizzleAdministrativeRecordsStore,
+          );
 
         await expect(
           listAdministrativeRecords(

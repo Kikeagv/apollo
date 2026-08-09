@@ -267,61 +267,61 @@ export function ServiceCatalogSection({
                     key={offer.id}
                     onSubmit={updateOffer}
                   >
-                  <input name="offerId" type="hidden" value={offer.id} />
-                  <label className="text-sm">
-                    Precio (USD)
-                    <input
-                      className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
-                      defaultValue={offer.priceUsd}
-                      disabled={!offer.active}
-                      name="priceUsd"
-                      pattern="[0-9]+\.[0-9]{2}"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm">
-                    Duración
-                    <input
-                      className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
-                      defaultValue={offer.durationMinutes}
-                      disabled={!offer.active}
-                      min="5"
-                      name="durationMinutes"
-                      required
-                      step="5"
-                      type="number"
-                    />
-                  </label>
-                  <label className="text-sm">
-                    Buffer
-                    <input
-                      className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
-                      defaultValue={offer.bufferMinutes}
-                      disabled={!offer.active}
-                      min="0"
-                      name="bufferMinutes"
-                      required
-                      step="5"
-                      type="number"
-                    />
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      className="rounded border border-teal-300 px-3 py-1 text-sm text-teal-300 disabled:opacity-50"
-                      disabled={!offer.active || update.isPending}
-                      type="submit"
-                    >
-                      Guardar
-                    </button>
-                    <button
-                      className="rounded border border-rose-300 px-3 py-1 text-sm text-rose-300 disabled:opacity-50"
-                      disabled={!offer.active || deactivate.isPending}
-                      onClick={() => deactivate.mutate({ offerId: offer.id })}
-                      type="button"
-                    >
-                      {offer.active ? "Desactivar" : "Desactivada"}
-                    </button>
-                  </div>
+                    <input name="offerId" type="hidden" value={offer.id} />
+                    <label className="text-sm">
+                      Precio (USD)
+                      <input
+                        className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                        defaultValue={offer.priceUsd}
+                        disabled={!offer.active}
+                        name="priceUsd"
+                        pattern="[0-9]+\.[0-9]{2}"
+                        required
+                      />
+                    </label>
+                    <label className="text-sm">
+                      Duración
+                      <input
+                        className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                        defaultValue={offer.durationMinutes}
+                        disabled={!offer.active}
+                        min="5"
+                        name="durationMinutes"
+                        required
+                        step="5"
+                        type="number"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      Buffer
+                      <input
+                        className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                        defaultValue={offer.bufferMinutes}
+                        disabled={!offer.active}
+                        min="0"
+                        name="bufferMinutes"
+                        required
+                        step="5"
+                        type="number"
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className="rounded border border-teal-300 px-3 py-1 text-sm text-teal-300 disabled:opacity-50"
+                        disabled={!offer.active || update.isPending}
+                        type="submit"
+                      >
+                        Guardar
+                      </button>
+                      <button
+                        className="rounded border border-rose-300 px-3 py-1 text-sm text-rose-300 disabled:opacity-50"
+                        disabled={!offer.active || deactivate.isPending}
+                        onClick={() => deactivate.mutate({ offerId: offer.id })}
+                        type="button"
+                      >
+                        {offer.active ? "Desactivar" : "Desactivada"}
+                      </button>
+                    </div>
                   </form>
                 );
               })}

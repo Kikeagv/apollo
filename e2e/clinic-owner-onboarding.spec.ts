@@ -401,10 +401,10 @@ test("Panacea registra fichas dentro de una nueva Cita y las deja seleccionadas"
     await calendar.locator('select[name="serviceOfferId"]').selectOption({
       label: `${doctorName} · ${serviceName}`,
     });
-    await calendar
-      .getByRole("button", { name: "Crear Cita manual" })
-      .click();
-    await expect(calendar.getByRole("heading", { name: "Detalle de la Cita" })).toBeVisible();
+    await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
+    await expect(
+      calendar.getByRole("heading", { name: "Detalle de la Cita" }),
+    ).toBeVisible();
     await expect(
       calendar.getByRole("link", { name: "Abrir ficha del Paciente" }),
     ).toBeVisible();
@@ -479,9 +479,7 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
       name: /Bloqueo.*Capacitación Calendario/,
     });
     await calendar.getByRole("button", { name: "Semana" }).click();
-    await expect(
-      calendar.locator('[class*="xl:grid-cols-7"]'),
-    ).toBeVisible();
+    await expect(calendar.locator('[class*="xl:grid-cols-7"]')).toBeVisible();
     await expect(scheduledAppointment).toContainText(serviceName);
     await expect(scheduledAppointment).toContainText(doctorName);
     await expect(calendarBlock).toContainText(doctorName);
@@ -567,11 +565,11 @@ async function registerInlinePatient(
   calendar: Locator,
   input: { contactName: string; patientName: string },
 ) {
-  await calendar.getByRole("button", { name: "Registrar Paciente nuevo" }).click();
-  await calendar.getByLabel("Nombre del Contacto").fill(input.contactName);
   await calendar
-    .getByLabel("Teléfono E.164 del Contacto")
-    .fill("+50371234567");
+    .getByRole("button", { name: "Registrar Paciente nuevo" })
+    .click();
+  await calendar.getByLabel("Nombre del Contacto").fill(input.contactName);
+  await calendar.getByLabel("Teléfono E.164 del Contacto").fill("+50371234567");
   await calendar.getByLabel("Nombre del Paciente").fill(input.patientName);
   await calendar
     .getByLabel("Fecha de nacimiento del Paciente")
@@ -964,16 +962,16 @@ async function createFixture() {
         await transaction
           .delete(identityAuditEvents)
           .where(eq(identityAuditEvents.clinicId, createdClinicId));
-          await transaction
-            .delete(configurationAuditEvents)
-            .where(eq(configurationAuditEvents.clinicId, createdClinicId));
-          await transaction
-            .delete(appointmentEvents)
-            .where(eq(appointmentEvents.clinicId, createdClinicId));
-          await transaction
-            .delete(appointments)
-            .where(eq(appointments.clinicId, createdClinicId));
-          await transaction
+        await transaction
+          .delete(configurationAuditEvents)
+          .where(eq(configurationAuditEvents.clinicId, createdClinicId));
+        await transaction
+          .delete(appointmentEvents)
+          .where(eq(appointmentEvents.clinicId, createdClinicId));
+        await transaction
+          .delete(appointments)
+          .where(eq(appointments.clinicId, createdClinicId));
+        await transaction
           .delete(clinics)
           .where(eq(clinics.id, createdClinicId));
       });
