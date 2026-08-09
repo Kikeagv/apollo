@@ -5,7 +5,10 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { createSyntheticClinic } from "../src/server/application/create-synthetic-clinic";
 import { inviteAdditionalDoctor } from "../src/server/application/doctor-invitations";
-import { configureEffectiveSchedule } from "../src/server/application/availability";
+import {
+  configureEffectiveSchedule,
+  createAvailabilityBlock,
+} from "../src/server/application/availability";
 import { addServiceOffer } from "../src/server/application/service-catalog";
 import { db } from "../src/server/db";
 import {
@@ -188,6 +191,61 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       careDate,
       true,
     );
+
+    const [ownerDoctor, invitedDoctor] = await inClinicTransaction(
+      { clinicId: fixture.clinicId(), identityId: ownerIdentityId },
+      async (transaction) =>
+        Promise.all([
+          findDoctor(transaction, {
+            clinicId: fixture.clinicId(),
+            publicName: ownerName,
+          }),
+          findDoctor(transaction, {
+            clinicId: fixture.clinicId(),
+            publicName: invitedDoctorName,
+          }),
+        ]),
+    );
+    await Promise.all([
+      createAvailabilityBlock(
+        {
+          clinicId: fixture.clinicId(),
+          doctorId: ownerDoctor.id,
+          endsAt: new Date(`${careDate}T08:45:00-06:00`),
+          identityId: ownerIdentityId,
+          privateLabel: "Capacitación de Ana",
+          startsAt: new Date(`${careDate}T08:15:00-06:00`),
+        },
+        drizzleAvailabilityStore,
+      ),
+      createAvailabilityBlock(
+        {
+          clinicId: fixture.clinicId(),
+          doctorId: invitedDoctor.id,
+          endsAt: new Date(`${careDate}T09:45:00-06:00`),
+          identityId: ownerIdentityId,
+          privateLabel: "Capacitación de Bruno",
+          startsAt: new Date(`${careDate}T09:15:00-06:00`),
+        },
+        drizzleAvailabilityStore,
+      ),
+    ]);
+    await page.reload();
+    const calendar = section(page, "Calendario");
+    await calendar.locator('input[type="date"]').fill(careDate);
+    const anaBlock = calendar.getByRole("button", {
+      name: /Bloqueo.*Capacitación de Ana/,
+    });
+    const brunoBlock = calendar.getByRole("button", {
+      name: /Bloqueo.*Capacitación de Bruno/,
+    });
+    await expect(anaBlock).toBeVisible();
+    await expect(brunoBlock).toBeVisible();
+    await calendar.getByLabel("Médico").selectOption({ label: ownerName });
+    await expect(anaBlock).toBeVisible();
+    await expect(brunoBlock).not.toBeVisible();
+    await calendar.getByRole("button", { name: "Día" }).click();
+    await expect(anaBlock).toBeVisible();
 
     await createConfirmedAppointment({
       clinicId: fixture.clinicId(),
@@ -437,9 +495,11 @@ type DoctorFixture = {
   publicName: string;
 };
 
-async function createConfirmedAppointment(input: DoctorFixture & {
-  date: string;
-}) {
+async function createConfirmedAppointment(
+  input: DoctorFixture & {
+    date: string;
+  },
+) {
   await inClinicTransaction(
     { clinicId: input.clinicId, identityId: input.ownerIdentityId },
     async (transaction) => {
@@ -471,9 +531,11 @@ async function clearConfirmedAppointments(input: DoctorFixture) {
   );
 }
 
-async function createTemporaryReservation(input: DoctorFixture & {
-  date: string;
-}) {
+async function createTemporaryReservation(
+  input: DoctorFixture & {
+    date: string;
+  },
+) {
   await inClinicTransaction(
     { clinicId: input.clinicId, identityId: input.ownerIdentityId },
     async (transaction) => {

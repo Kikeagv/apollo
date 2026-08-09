@@ -60,6 +60,25 @@ export type AgendaAppointment = {
   status: "confirmed" | "cancelled";
 };
 
+/** Bloqueo que solo el Calendario de Panacea puede representar con su etiqueta privada. */
+export type CalendarBlock = {
+  doctor: { id: string; name: string };
+  endsAt: Date;
+  id: string;
+  privateLabel: string | null;
+  startsAt: Date;
+};
+
+export type CalendarEntry = AgendaAppointment | CalendarBlock;
+
+export type PanaceaCalendarInput = {
+  clinicId: string;
+  doctorId?: string;
+  from: Date;
+  identityId: string;
+  to: Date;
+};
+
 export type ManualAppointmentMessageType =
   "manual-confirmation" | "manual-cancellation";
 
@@ -121,6 +140,11 @@ export type ManualAppointmentReader = {
     clinicId: string;
     identityId: string;
   }): Promise<ManualAppointmentFormData>;
+};
+
+/** Separa el Calendario de Panacea de los contratos públicos de Asclepio. */
+export type PanaceaCalendarReader = {
+  listCalendar(input: PanaceaCalendarInput): Promise<CalendarEntry[]>;
 };
 
 export class ManualAppointmentUnavailableError extends Error {
@@ -233,6 +257,19 @@ export async function listManualAppointments(
   store: Pick<ManualAppointmentReader, "listAppointments">,
 ) {
   return store.listAppointments({ ...input, status: "confirmed" });
+}
+
+/** Consulta el Calendario de Panacea dentro de un período local visible. */
+export async function listPanaceaCalendar(
+  input: PanaceaCalendarInput,
+  store: PanaceaCalendarReader,
+) {
+  if (input.from >= input.to) {
+    throw new Error(
+      "El período del Calendario debe terminar después de iniciar",
+    );
+  }
+  return store.listCalendar(input);
 }
 
 /** Consulta las Citas manuales canceladas para detalle y ficha administrativa. */

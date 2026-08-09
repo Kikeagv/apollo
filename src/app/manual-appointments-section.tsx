@@ -6,6 +6,8 @@ import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import type {
   AgendaAppointment,
   AppointmentEventType,
+  CalendarBlock,
+  CalendarEntry,
 } from "~/server/application/manual-appointments";
 import { api } from "~/trpc/react";
 
@@ -32,9 +34,15 @@ export function ManualAppointmentsSection() {
   const [sendConfirmation, setSendConfirmation] = useState(false);
   const [view, setView] = useState<CalendarView>("week");
   const formData = api.panacea.listManualAppointmentFormData.useQuery();
-  const appointments = api.panacea.listManualAppointments.useQuery();
   const cancelledAppointments =
     api.panacea.listCancelledManualAppointments.useQuery();
+  const visibleDates =
+    view === "week" ? calendarWeek(calendarDate) : [calendarDate];
+  const calendarPeriod = calendarPeriodFor(visibleDates);
+  const calendarAgenda = api.panacea.listPanaceaCalendar.useQuery({
+    doctorId: doctorId || undefined,
+    ...calendarPeriod,
+  });
   const create = api.panacea.createManualAppointment.useMutation({
     onError: (error, input) => {
       if (error.data?.outsideScheduleConfirmationRequired) {
@@ -44,40 +52,35 @@ export function ManualAppointmentsSection() {
     onSuccess: async (appointment) => {
       setOutsideScheduleConfirmation(undefined);
       setSelectedId(appointment.id);
-      await appointments.refetch();
+      await calendarAgenda.refetch();
     },
   });
   const cancel = api.panacea.cancelManualAppointment.useMutation({
     onSuccess: async () => {
       await Promise.all([
-        appointments.refetch(),
         cancelledAppointments.refetch(),
+        calendarAgenda.refetch(),
       ]);
     },
   });
   const selected = [
-    ...(appointments.data ?? []),
+    ...(calendarAgenda.data ?? []),
     ...(cancelledAppointments.data ?? []),
   ].find((appointment) => appointment.id === selectedId);
-  const doctors = useMemo(
-    () => [
-      ...new Map(
-        formData.data?.offers.map((offer) => [
-          offer.doctorId,
-          { id: offer.doctorId, name: offer.doctorName },
-        ]) ?? [],
-      ).values(),
-    ],
-    [formData.data],
-  );
-  const visibleDates =
-    view === "week" ? calendarWeek(calendarDate) : [calendarDate];
-  const calendarAppointments =
-    appointments.data?.filter(
-      (appointment) =>
-        visibleDates.includes(localDate(appointment.startsAt)) &&
-        (doctorId === "" || appointment.doctor.id === doctorId),
-    ) ?? [];
+  const doctors = useMemo(() => {
+    const doctorsById = new Map<string, { id: string; name: string }>();
+    for (const offer of formData.data?.offers ?? []) {
+      doctorsById.set(offer.doctorId, {
+        id: offer.doctorId,
+        name: offer.doctorName,
+      });
+    }
+    for (const entry of calendarAgenda.data ?? []) {
+      doctorsById.set(entry.doctor.id, entry.doctor);
+    }
+    return [...doctorsById.values()];
+  }, [calendarAgenda.data, formData.data]);
+  const calendarEntries = calendarAgenda.data ?? [];
   const selectedPatient = formData.data?.patients.find(
     (patient) => patient.id === patientId,
   );
@@ -302,57 +305,99 @@ export function ManualAppointmentsSection() {
               >
                 <h3 className="mb-2 text-sm font-medium">{formatDay(date)}</h3>
                 <ul className="space-y-2">
-                  {calendarAppointments
-                    .filter(
-                      (appointment) => localDate(appointment.startsAt) === date,
-                    )
-                    .map((appointment) => (
-                      <li key={appointment.id}>
-                        <button
-                          className="w-full rounded border border-teal-800 p-2 text-left text-sm hover:border-teal-300"
-                          onClick={() => setSelectedId(appointment.id)}
-                          type="button"
-                        >
-                          <span className="block font-medium">
-                            {formatTime(appointment.startsAt)} ·{" "}
-                            {appointment.patient.name}
-                          </span>
-                          <span className="block text-slate-300">
-                            {appointment.service.name}
-                          </span>
-                          {appointment.outsideSchedule ? (
-                            <span className="block text-amber-300">
-                              Fuera de horario
+                  {calendarEntries
+                    .filter((entry) => localDate(entry.startsAt) === date)
+                    .map((entry) =>
+                      isCalendarBlock(entry) ? (
+                        <li key={`block-${entry.id}`}>
+                          <button
+                            className="w-full rounded border border-amber-800 p-2 text-left text-sm hover:border-amber-300"
+                            onClick={() => setSelectedId(entry.id)}
+                            type="button"
+                          >
+                            <span className="block font-medium">
+                              {formatTime(entry.startsAt)} · Bloqueo
                             </span>
-                          ) : null}
-                          {doctorId === "" ? (
-                            <span className="block text-slate-400">
-                              {appointment.doctor.name}
+                            {entry.privateLabel ? (
+                              <span className="block text-amber-200">
+                                {entry.privateLabel}
+                              </span>
+                            ) : null}
+                            {doctorId === "" ? (
+                              <span className="block text-slate-400">
+                                {entry.doctor.name}
+                              </span>
+                            ) : null}
+                          </button>
+                        </li>
+                      ) : (
+                        <li key={`appointment-${entry.id}`}>
+                          <button
+                            className="w-full rounded border border-teal-800 p-2 text-left text-sm hover:border-teal-300"
+                            onClick={() => setSelectedId(entry.id)}
+                            type="button"
+                          >
+                            <span className="block font-medium">
+                              {formatTime(entry.startsAt)} ·{" "}
+                              {entry.patient.name}
                             </span>
-                          ) : null}
-                        </button>
-                      </li>
-                    ))}
+                            <span className="block text-slate-300">
+                              {entry.service.name}
+                            </span>
+                            {entry.outsideSchedule ? (
+                              <span className="block text-amber-300">
+                                Fuera de horario
+                              </span>
+                            ) : null}
+                            {doctorId === "" ? (
+                              <span className="block text-slate-400">
+                                {entry.doctor.name}
+                              </span>
+                            ) : null}
+                          </button>
+                        </li>
+                      ),
+                    )}
                 </ul>
               </div>
             ))}
           </div>
         </div>
-        <AppointmentDetail
-          appointment={selected}
-          cancelError={cancel.error?.message}
-          cancelling={cancel.isPending}
-          onCancel={(input) => {
-            if (selected !== undefined) {
-              cancel.mutate({
-                appointmentId: selected.id,
-                ...input,
-              });
-            }
-          }}
-        />
+        {isCalendarBlock(selected) ? (
+          <AvailabilityBlockDetail block={selected} />
+        ) : (
+          <AppointmentDetail
+            appointment={selected}
+            cancelError={cancel.error?.message}
+            cancelling={cancel.isPending}
+            onCancel={(input) => {
+              if (selected !== undefined) {
+                cancel.mutate({
+                  appointmentId: selected.id,
+                  ...input,
+                });
+              }
+            }}
+          />
+        )}
       </div>
     </section>
+  );
+}
+
+function AvailabilityBlockDetail({ block }: { block: CalendarBlock }) {
+  return (
+    <aside className="space-y-3 rounded border border-amber-800 p-3 text-sm">
+      <h3 className="font-semibold">Detalle del Bloqueo</h3>
+      <dl className="space-y-1">
+        <Detail label="Médico" value={block.doctor.name} />
+        <Detail
+          label="Horario"
+          value={`${formatClinicDate(block.startsAt)} a ${formatTime(block.endsAt)}`}
+        />
+        <Detail label="Etiqueta privada" value={block.privateLabel ?? ""} />
+      </dl>
+    </aside>
   );
 }
 
@@ -517,6 +562,34 @@ function calendarWeek(date: string) {
     day.setUTCDate(day.getUTCDate() + index);
     return day.toISOString().slice(0, 10);
   });
+}
+
+function calendarPeriodFor(dates: string[]) {
+  const firstDate = dates[0];
+  const lastDate = dates.at(-1);
+  if (firstDate === undefined || lastDate === undefined) {
+    throw new Error("El Calendario requiere al menos un día visible");
+  }
+  return {
+    from: clinicMidnight(firstDate),
+    to: clinicMidnight(nextLocalDate(lastDate)),
+  };
+}
+
+function clinicMidnight(date: string) {
+  return new Date(`${date}T00:00:00${CLINIC_UTC_OFFSET}`);
+}
+
+function nextLocalDate(date: string) {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + 1);
+  return value.toISOString().slice(0, 10);
+}
+
+function isCalendarBlock(
+  entry: CalendarEntry | undefined,
+): entry is CalendarBlock {
+  return entry !== undefined && "privateLabel" in entry;
 }
 
 function clinicDateTime(value: string) {

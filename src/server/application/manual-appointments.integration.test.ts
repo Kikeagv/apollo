@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   cancelManualAppointment,
   createManualAppointment,
+  listPanaceaCalendar,
   listCancelledManualAppointments,
   listManualAppointmentFormData,
   listManualAppointments,
@@ -828,6 +829,103 @@ describe("Citas manuales persistentes", () => {
   );
 
   databaseTest(
+    "consulta Citas activas y Bloqueos que intersectan el período, filtra por Médico y aísla Clínicas",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const appointment = await createManualAppointment(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.doctorId,
+            identityId: fixture.ownerIdentityId,
+            patientId: fixture.patientId,
+            serviceOfferId: fixture.serviceOfferId,
+            startsAt: new Date("2026-08-10T14:00:00.000Z"),
+          },
+          drizzleManualAppointmentStore,
+          new Date("2026-08-08T00:00:00.000Z"),
+        );
+        const [block] = await inClinicTransaction(
+          { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
+          (transaction) =>
+            transaction
+              .insert(availabilityBlocks)
+              .values({
+                clinicId: fixture.clinicId,
+                doctorId: fixture.doctorId,
+                endsAt: new Date("2026-08-10T15:45:00.000Z"),
+                privateLabel: "Capacitación interna",
+                startsAt: new Date("2026-08-10T14:45:00.000Z"),
+              })
+              .returning({ id: availabilityBlocks.id }),
+        );
+        if (block === undefined) throw new Error("No se creó el Bloqueo");
+
+        await expect(
+          listPanaceaCalendar(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.doctorId,
+              from: new Date("2026-08-10T13:45:00.000Z"),
+              identityId: fixture.secretaryIdentityId,
+              to: new Date("2026-08-10T16:00:00.000Z"),
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([
+          expect.objectContaining({ id: appointment.id }),
+          expect.objectContaining({
+            id: block.id,
+            privateLabel: "Capacitación interna",
+          }),
+        ]);
+        await expect(
+          listPanaceaCalendar(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: "00000000-0000-0000-0000-000000000000",
+              from: new Date("2026-08-10T13:45:00.000Z"),
+              identityId: fixture.secretaryIdentityId,
+              to: new Date("2026-08-10T16:00:00.000Z"),
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([]);
+        await expect(
+          listPanaceaCalendar(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.doctorId,
+              from: new Date("2026-08-10T14:30:00.000Z"),
+              identityId: fixture.secretaryIdentityId,
+              to: new Date("2026-08-10T16:00:00.000Z"),
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([
+          expect.objectContaining({
+            id: block.id,
+            privateLabel: "Capacitación interna",
+          }),
+        ]);
+        await expect(
+          listPanaceaCalendar(
+            {
+              clinicId: fixture.otherClinicId,
+              from: new Date("2026-08-10T13:45:00.000Z"),
+              identityId: fixture.otherOwnerIdentityId,
+              to: new Date("2026-08-10T16:00:00.000Z"),
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
     "rechaza Bloqueos y Reservas temporales activas sin crear una Cita",
     async () => {
       const fixture = await createFixture();
@@ -1084,13 +1182,9 @@ async function createFixture() {
           await transaction.execute(
             sql`select set_config('app.clinic_id', ${clinicId}, true)`,
           );
-          await transaction.execute(
-            sql`set local role panacea_clinical_access`,
-          );
           await transaction
             .delete(appointmentEvents)
             .where(eq(appointmentEvents.clinicId, clinicId));
-          await transaction.execute(sql`set local role none`);
           await transaction
             .delete(appointments)
             .where(eq(appointments.clinicId, clinicId));

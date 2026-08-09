@@ -18,6 +18,7 @@ import { calculateCareOptions } from "~/server/application/care-options";
 import {
   cancelManualAppointment,
   createManualAppointment,
+  listPanaceaCalendar,
   listCancelledManualAppointments,
   listManualAppointmentFormData,
   listManualAppointments,
@@ -384,6 +385,25 @@ export const panaceaRouter = {
       drizzleManualAppointmentStore,
     ),
   ),
+
+  listPanaceaCalendar: clinicProcedure
+    .input(
+      z.object({
+        doctorId: z.string().uuid().optional(),
+        from: z.coerce.date(),
+        to: z.coerce.date(),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      listPanaceaCalendar(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleManualAppointmentStore,
+      ),
+    ),
 
   listManualAppointments: clinicProcedure.query(({ ctx }) =>
     listManualAppointments(

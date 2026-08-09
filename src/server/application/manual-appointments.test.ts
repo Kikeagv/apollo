@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cancelManualAppointment,
   createManualAppointment,
+  listPanaceaCalendar,
   listCancelledManualAppointments,
   listManualAppointmentFormData,
   listManualAppointments,
@@ -273,6 +274,34 @@ describe("consultar la Agenda", () => {
       ...input,
       status: "cancelled",
     });
+  });
+});
+
+describe("consultar el Calendario de Panacea", () => {
+  it("pide al almacén Citas activas y Bloqueos que intersectan el período y el Médico elegido", async () => {
+    const input = {
+      clinicId: "clinic-1",
+      doctorId: "doctor-1",
+      from: new Date("2026-08-10T06:00:00.000Z"),
+      identityId: "operator-1",
+      to: new Date("2026-08-17T06:00:00.000Z"),
+    };
+    const entries = [
+      {
+        doctor: { id: "doctor-1", name: "Dra. Sol" },
+        endsAt: new Date("2026-08-10T16:00:00.000Z"),
+        id: "block-1",
+        privateLabel: "Capacitación",
+        startsAt: new Date("2026-08-10T15:00:00.000Z"),
+      },
+    ];
+    const listCalendar = vi.fn().mockResolvedValue(entries);
+
+    await expect(listPanaceaCalendar(input, { listCalendar })).resolves.toEqual(
+      entries,
+    );
+
+    expect(listCalendar).toHaveBeenCalledWith(input);
   });
 });
 

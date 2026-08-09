@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import {
@@ -8,6 +8,8 @@ import {
 } from "~/server/application/care-options";
 import {
   type CreateManualAppointmentInput,
+  type PanaceaCalendarInput,
+  type PanaceaCalendarReader,
   type ManualAppointmentCanceller,
   type ManualAppointmentCreator,
   type ManualAppointmentMessageDeliveryRecorder,
@@ -37,7 +39,8 @@ type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   ManualAppointmentCanceller &
   ManualAppointmentMessageDeliveryRecorder &
-  ManualAppointmentReader = {
+  ManualAppointmentReader &
+  PanaceaCalendarReader = {
   async create(input) {
     return inClinicTransaction(input, async (transaction) => {
       await setCalendarOperation(transaction);
@@ -226,6 +229,10 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   async listAppointments(input) {
     return readAppointments(input, input.status);
   },
+
+  async listCalendar(input) {
+    return readPanaceaCalendar(input);
+  },
 };
 
 async function readManualAppointmentFormData(input: {
@@ -334,6 +341,7 @@ async function readManualAppointmentFormData(input: {
 async function readAppointments(
   input: { clinicId: string; identityId: string },
   status: "confirmed" | "cancelled",
+  period?: { doctorId?: string; from: Date; to: Date },
 ) {
   return inClinicTransaction(input, async (transaction) => {
     await setCalendarOperation(transaction);
@@ -390,6 +398,15 @@ async function readAppointments(
           status === "cancelled"
             ? eq(appointments.origin, "manual")
             : undefined,
+          period === undefined
+            ? undefined
+            : gt(appointments.endsAt, period.from),
+          period === undefined
+            ? undefined
+            : lt(appointments.startsAt, period.to),
+          period?.doctorId === undefined
+            ? undefined
+            : eq(appointments.doctorId, period.doctorId),
         ),
       )
       .orderBy(asc(appointments.startsAt));
@@ -479,6 +496,60 @@ async function readAppointments(
       service: { name: appointment.serviceName },
       startsAt: appointment.startsAt,
       status: appointment.status,
+    }));
+  });
+}
+
+async function readPanaceaCalendar(input: PanaceaCalendarInput) {
+  const [activeAppointments, blocks] = await Promise.all([
+    readAppointments(input, "confirmed", input),
+    readAvailabilityBlocks(input),
+  ]);
+  return [...activeAppointments, ...blocks].sort(
+    (left, right) => left.startsAt.valueOf() - right.startsAt.valueOf(),
+  );
+}
+
+async function readAvailabilityBlocks(input: PanaceaCalendarInput) {
+  return inClinicTransaction(input, async (transaction) => {
+    await setCalendarOperation(transaction);
+    const blocks = await transaction
+      .select({
+        doctorId: doctors.id,
+        doctorName: doctors.publicName,
+        endsAt: availabilityBlocks.endsAt,
+        id: availabilityBlocks.id,
+        privateLabel: availabilityBlocks.privateLabel,
+        startsAt: availabilityBlocks.startsAt,
+      })
+      .from(availabilityBlocks)
+      .innerJoin(
+        doctors,
+        and(
+          eq(availabilityBlocks.clinicId, doctors.clinicId),
+          eq(availabilityBlocks.doctorId, doctors.id),
+        ),
+      )
+      .where(
+        and(
+          eq(availabilityBlocks.clinicId, input.clinicId),
+          gt(availabilityBlocks.endsAt, input.from),
+          lt(availabilityBlocks.startsAt, input.to),
+          input.doctorId === undefined
+            ? undefined
+            : eq(availabilityBlocks.doctorId, input.doctorId),
+        ),
+      )
+      .orderBy(asc(availabilityBlocks.startsAt));
+    return blocks.map((block) => ({
+      doctor: {
+        id: block.doctorId,
+        name: block.doctorName ?? "Médico sin nombre público",
+      },
+      endsAt: block.endsAt,
+      id: block.id,
+      privateLabel: block.privateLabel,
+      startsAt: block.startsAt,
     }));
   });
 }
