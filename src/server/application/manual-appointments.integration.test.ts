@@ -829,7 +829,7 @@ describe("Citas manuales persistentes", () => {
   );
 
   databaseTest(
-    "consulta Citas activas y Bloqueos que intersectan el período, filtra por Médico y aísla Clínicas",
+    "el seam de Agenda consulta Citas y Bloqueos, filtra por Médico y no permite leer ni mutar otra Clínica",
     async () => {
       const fixture = await createFixture();
       try {
@@ -919,6 +919,25 @@ describe("Citas manuales persistentes", () => {
             drizzleManualAppointmentStore,
           ),
         ).resolves.toEqual([]);
+        await expect(
+          cancelManualAppointment(
+            {
+              appointmentId: appointment.id,
+              clinicId: fixture.otherClinicId,
+              identityId: fixture.otherOwnerIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).rejects.toBeInstanceOf(ManualAppointmentNotCancellableError);
+        await expect(
+          listManualAppointments(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toMatchObject([{ id: appointment.id, status: "confirmed" }]);
       } finally {
         await fixture.cleanup();
       }

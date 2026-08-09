@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { createSyntheticClinic } from "../src/server/application/create-synthetic-clinic";
@@ -345,50 +345,19 @@ test("Panacea registra fichas dentro de una nueva Cita y las deja seleccionadas"
       fixture.ownerEmail,
     );
 
-    const profile = section(page, "Configuración inicial");
-    await profile.getByLabel("Nombre público").fill(doctorName);
-    await profile.getByLabel("Especialidad principal").fill("Medicina general");
-    await profile.getByRole("button", { name: "Guardar perfil" }).click();
-    await expect(profile.getByText("Perfil de Médico guardado.")).toBeVisible();
-    await page.reload();
-
-    const catalog = section(page, "Catálogo de Servicios");
-    const createServiceForm = catalog
-      .getByRole("button", { name: "Crear Servicio" })
-      .locator("..");
-    await createServiceForm.locator('input[name="name"]').fill(serviceName);
-    await createServiceForm
-      .locator('textarea[name="description"]')
-      .fill("Consulta creada en el recorrido E2E");
-    await createServiceForm.locator('select[name="doctorId"]').selectOption({
-      label: doctorName,
+    await configureCalendarScenario({
+      careDate,
+      doctorName,
+      page,
+      serviceDescription: "Consulta creada en el recorrido E2E",
+      serviceName,
     });
-    await createServiceForm.locator('input[name="priceUsd"]').fill("35.00");
-    await createServiceForm
-      .locator('input[name="durationMinutes"]')
-      .fill("30");
-    await createServiceForm.locator('input[name="bufferMinutes"]').fill("0");
-    await createServiceForm
-      .getByRole("button", { name: "Crear Servicio" })
-      .click();
-    await saveSchedule(page, careDate, doctorName);
 
     const calendar = section(page, "Calendario");
-    await calendar.getByRole("button", { name: "Registrar Paciente nuevo" }).click();
-    await calendar.getByLabel("Nombre del Contacto").fill("Ana Inline");
-    await calendar
-      .getByLabel("Teléfono E.164 del Contacto")
-      .fill("+50371234567");
-    await calendar.getByLabel("Nombre del Paciente").fill("Lucía Inline");
-    await calendar
-      .getByLabel("Fecha de nacimiento del Paciente")
-      .fill("2018-04-02");
-    await calendar
-      .getByRole("button", { name: "Registrar Contacto y Paciente" })
-      .click();
-    await expect(
-      calendar.getByText("Paciente Lucía Inline seleccionado para la nueva Cita."),
-    ).toBeVisible();
+    await registerInlinePatient(calendar, {
+      contactName: "Ana Inline",
+      patientName: "Lucía Inline",
+    });
     await expect(calendar.getByLabel("Paciente")).toHaveValue(/.+/);
 
     await calendar.locator('input[type="date"]').fill(careDate);
@@ -410,6 +379,176 @@ test("Panacea registra fichas dentro de una nueva Cita y las deja seleccionadas"
     await fixture.cleanup();
   }
 });
+
+test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horario", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+  const doctorName = "Dra. Marina Calendario";
+  const serviceName = "Consulta Calendario";
+  const contactName = "Contacto Calendario";
+  const patientName = "Paciente Calendario";
+  const careDate = nextClinicMonday();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+
+    await configureCalendarScenario({
+      careDate,
+      doctorName,
+      page,
+      serviceDescription: "Consulta para validar el Calendario operativo",
+      serviceName,
+    });
+
+    const ownerIdentityId = await fixture.ownerIdentityId();
+    const doctor = await inClinicTransaction(
+      { clinicId: fixture.clinicId(), identityId: ownerIdentityId },
+      (transaction) =>
+        findDoctor(transaction, {
+          clinicId: fixture.clinicId(),
+          publicName: doctorName,
+        }),
+    );
+    await createAvailabilityBlock(
+      {
+        clinicId: fixture.clinicId(),
+        doctorId: doctor.id,
+        endsAt: new Date(`${careDate}T08:50:00-06:00`),
+        identityId: ownerIdentityId,
+        privateLabel: "Capacitación Calendario",
+        startsAt: new Date(`${careDate}T08:40:00-06:00`),
+      },
+      drizzleAvailabilityStore,
+    );
+
+    const calendar = section(page, "Calendario");
+    await registerInlinePatient(calendar, { contactName, patientName });
+
+    await calendar.locator('input[type="date"]').fill(careDate);
+    await calendar.locator('input[name="startsAt"]').fill(`${careDate}T08:00`);
+    await calendar.locator('select[name="serviceOfferId"]').selectOption({
+      label: `${doctorName} · ${serviceName}`,
+    });
+    await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
+
+    const scheduledAppointment = calendar.getByRole("button", {
+      name: new RegExp(`8:00.*${patientName}`),
+    });
+    const calendarBlock = calendar.getByRole("button", {
+      name: /Bloqueo.*Capacitación Calendario/,
+    });
+    await calendar.getByRole("button", { name: "Semana" }).click();
+    await expect(
+      calendar.locator('[class*="xl:grid-cols-7"]'),
+    ).toBeVisible();
+    await expect(scheduledAppointment).toContainText(serviceName);
+    await expect(scheduledAppointment).toContainText(doctorName);
+    await expect(calendarBlock).toContainText(doctorName);
+
+    await calendar.getByLabel("Médico").selectOption({ label: doctorName });
+    await expect(scheduledAppointment).toBeVisible();
+    await expect(calendarBlock).toBeVisible();
+    await calendar.getByRole("button", { name: "Día" }).click();
+    await expect(
+      calendar.locator('[class*="xl:grid-cols-7"]'),
+    ).not.toBeVisible();
+    await expect(scheduledAppointment).toBeVisible();
+    await expect(calendarBlock).toBeVisible();
+
+    await scheduledAppointment.click();
+    const appointmentDetail = calendar
+      .getByRole("heading", {
+        name: "Detalle de la Cita",
+      })
+      .locator("..");
+    await expect(appointmentDetail).toContainText(patientName);
+    await expect(appointmentDetail).toContainText(contactName);
+    await expect(appointmentDetail).toContainText(serviceName);
+
+    await calendar.locator('input[name="startsAt"]').fill(`${careDate}T09:35`);
+    await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
+    await expect(
+      calendar.getByText(
+        "La Cita no cabe por completo en el Horario vigente. Confirme la excepción para crearla sin modificar los demás controles de capacidad.",
+      ),
+    ).toBeVisible();
+    const outsideScheduleAppointment = calendar.getByRole("button", {
+      name: new RegExp(`9:35.*${patientName}`),
+    });
+    await expect(outsideScheduleAppointment).not.toBeVisible();
+    await calendar
+      .getByRole("button", { name: "Confirmar Cita fuera de horario" })
+      .click();
+
+    await expect(outsideScheduleAppointment).toContainText("Fuera de horario");
+    await outsideScheduleAppointment.click();
+    await expect(appointmentDetail).toContainText("Cita fuera de horario");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+async function configureCalendarScenario(input: {
+  careDate: string;
+  doctorName: string;
+  page: Page;
+  serviceDescription: string;
+  serviceName: string;
+}) {
+  const profile = section(input.page, "Configuración inicial");
+  await profile.getByLabel("Nombre público").fill(input.doctorName);
+  await profile.getByLabel("Especialidad principal").fill("Medicina general");
+  await profile.getByRole("button", { name: "Guardar perfil" }).click();
+  await expect(profile.getByText("Perfil de Médico guardado.")).toBeVisible();
+  await input.page.reload();
+
+  const catalog = section(input.page, "Catálogo de Servicios");
+  const createServiceForm = catalog
+    .getByRole("button", { name: "Crear Servicio" })
+    .locator("..");
+  await createServiceForm.locator('input[name="name"]').fill(input.serviceName);
+  await createServiceForm
+    .locator('textarea[name="description"]')
+    .fill(input.serviceDescription);
+  await createServiceForm.locator('select[name="doctorId"]').selectOption({
+    label: input.doctorName,
+  });
+  await createServiceForm.locator('input[name="priceUsd"]').fill("35.00");
+  await createServiceForm.locator('input[name="durationMinutes"]').fill("30");
+  await createServiceForm.locator('input[name="bufferMinutes"]').fill("0");
+  await createServiceForm
+    .getByRole("button", { name: "Crear Servicio" })
+    .click();
+  await saveSchedule(input.page, input.careDate, input.doctorName);
+}
+
+async function registerInlinePatient(
+  calendar: Locator,
+  input: { contactName: string; patientName: string },
+) {
+  await calendar.getByRole("button", { name: "Registrar Paciente nuevo" }).click();
+  await calendar.getByLabel("Nombre del Contacto").fill(input.contactName);
+  await calendar
+    .getByLabel("Teléfono E.164 del Contacto")
+    .fill("+50371234567");
+  await calendar.getByLabel("Nombre del Paciente").fill(input.patientName);
+  await calendar
+    .getByLabel("Fecha de nacimiento del Paciente")
+    .fill("2018-04-02");
+  await calendar
+    .getByRole("button", { name: "Registrar Contacto y Paciente" })
+    .click();
+  await expect(
+    calendar.getByText(
+      `Paciente ${input.patientName} seleccionado para la nueva Cita.`,
+    ),
+  ).toBeVisible();
+}
 
 function section(page: Page, heading: string) {
   return page
