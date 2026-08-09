@@ -204,6 +204,13 @@
       "when": 1786235774540,
       "tag": "0028_quick_stepford_cuckoos",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786235784540,
+      "tag": "0029_preserve_appointment_event_history",
+      "breakpoints": true
     }
   ]
 }

@@ -44,13 +44,6 @@ CREATE POLICY "appointment_event_append" ON "pg-drizzle_appointment_event"
   FOR INSERT
   WITH CHECK ("clinic_id" = NULLIF(current_setting('app.clinic_id', true), '')::uuid);
 --> statement-breakpoint
-CREATE POLICY "appointment_event_superadmin_delete" ON "pg-drizzle_appointment_event"
-  FOR DELETE
-  USING (
-    "clinic_id" = NULLIF(current_setting('app.clinic_id', true), '')::uuid
-    AND NULLIF(current_setting('app.superadmin_id', true), '') IS NOT NULL
-  );
---> statement-breakpoint
 DROP POLICY "temporary_reservation_capacity_access" ON "pg-drizzle_temporary_reservation";
 --> statement-breakpoint
 CREATE POLICY "temporary_reservation_operating_read" ON "pg-drizzle_temporary_reservation"
@@ -174,5 +167,5 @@ CREATE POLICY "service_offer_configuration_write" ON "pg-drizzle_service_offer"
     )
   );
 --> statement-breakpoint
-GRANT SELECT, INSERT, DELETE ON TABLE "pg-drizzle_appointment_event"
+GRANT SELECT, INSERT ON TABLE "pg-drizzle_appointment_event"
 TO panacea_clinical_access;
