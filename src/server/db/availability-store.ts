@@ -7,7 +7,6 @@ import {
   inArray,
   isNotNull,
   isNull,
-  lt,
   lte,
   or,
   sql,
@@ -25,6 +24,7 @@ import {
   type WeeklyPeriod,
 } from "~/server/application/availability";
 import type { CareOptionsStore } from "~/server/application/care-options";
+import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import {
@@ -232,72 +232,17 @@ export const drizzleCareOptionsStore: CareOptionsStore = {
           ),
         );
       if (offer === undefined) return undefined;
-
-      const [schedules, periods, blocks, appointmentsForRange, reservations] =
-        await Promise.all([
-          transaction.query.effectiveSchedules.findMany({
-            columns: { effectiveFrom: true, effectiveUntil: true, id: true },
-            where: and(
-              eq(effectiveSchedules.clinicId, input.clinicId),
-              eq(effectiveSchedules.doctorId, input.doctorId),
-            ),
-          }),
-          transaction.query.effectiveSchedulePeriods.findMany({
-            columns: {
-              dayOfWeek: true,
-              endTime: true,
-              scheduleId: true,
-              startTime: true,
-            },
-            where: and(
-              eq(effectiveSchedulePeriods.clinicId, input.clinicId),
-              eq(effectiveSchedulePeriods.doctorId, input.doctorId),
-            ),
-          }),
-          transaction
-            .select({
-              endsAt: availabilityBlocks.endsAt,
-              startsAt: availabilityBlocks.startsAt,
-            })
-            .from(availabilityBlocks)
-            .where(overlapsRange(availabilityBlocks, input)),
-          transaction
-            .select({
-              endsAt: appointments.endsAt,
-              occupiedUntil: appointments.occupiedUntil,
-              startsAt: appointments.startsAt,
-            })
-            .from(appointments)
-            .where(overlapsRange(appointments, input)),
-          transaction
-            .select({
-              endsAt: temporaryReservations.endsAt,
-              expiresAt: temporaryReservations.expiresAt,
-              startsAt: temporaryReservations.startsAt,
-            })
-            .from(temporaryReservations)
-            .where(overlapsRange(temporaryReservations, input)),
-        ]);
-
       return {
-        appointments: appointmentsForRange.map((appointment) => ({
-          endsAt: appointment.occupiedUntil ?? appointment.endsAt,
-          startsAt: appointment.startsAt,
+        ...(await readAgendaCapacity(transaction, {
+          clinicId: input.clinicId,
+          doctorId: input.doctorId,
+          endsAt: addMinutes(
+            localMidnight(nextLocalDate(input.to)),
+            offer.durationMinutes + offer.bufferMinutes,
+          ),
+          startsAt: localMidnight(input.from),
         })),
-        blocks,
         offer,
-        schedules: schedules.map((schedule) => ({
-          effectiveFrom: schedule.effectiveFrom,
-          effectiveUntil: schedule.effectiveUntil,
-          periods: periods
-            .filter((period) => period.scheduleId === schedule.id)
-            .map(({ dayOfWeek, endTime, startTime }) => ({
-              dayOfWeek,
-              endTime: clockTime(endTime),
-              startTime: clockTime(startTime),
-            })),
-        })),
-        temporaryReservations: reservations,
       };
     });
   },
@@ -389,34 +334,6 @@ async function insertBlock(
   return block;
 }
 
-function overlapsRange(
-  table:
-    | typeof availabilityBlocks
-    | typeof appointments
-    | typeof temporaryReservations,
-  input: { clinicId: string; doctorId: string; from: string; to: string },
-) {
-  const startsAt = localMidnight(input.from);
-  const endsAt = localMidnight(nextLocalDate(input.to));
-  if (table === appointments) {
-    return and(
-      eq(appointments.clinicId, input.clinicId),
-      eq(appointments.doctorId, input.doctorId),
-      lt(appointments.startsAt, endsAt),
-      or(
-        gt(appointments.endsAt, startsAt),
-        gt(appointments.occupiedUntil, startsAt),
-      ),
-    );
-  }
-  return and(
-    eq(table.clinicId, input.clinicId),
-    eq(table.doctorId, input.doctorId),
-    lt(table.startsAt, endsAt),
-    gt(table.endsAt, startsAt),
-  );
-}
-
 function localMidnight(date: string) {
   return new Date(`${date}T00:00:00${CLINIC_UTC_OFFSET}`);
 }
@@ -427,8 +344,8 @@ function nextLocalDate(date: string) {
   return next.toISOString().slice(0, 10);
 }
 
-function clockTime(value: string) {
-  return value.slice(0, 5);
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.valueOf() + minutes * 60_000);
 }
 
 async function scheduleConflicts(

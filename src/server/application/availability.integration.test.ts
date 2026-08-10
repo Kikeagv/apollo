@@ -100,8 +100,8 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             await transaction.insert(appointments).values({
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              endsAt: new Date("2026-08-10T15:00:00.000Z"),
-              startsAt: new Date("2026-08-10T14:00:00.000Z"),
+              endsAt: new Date("2026-08-10T14:30:00.000Z"),
+              startsAt: new Date("2026-08-10T05:50:00.000Z"),
             });
             await transaction.insert(temporaryReservations).values([
               {
@@ -153,6 +153,32 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
         ]);
         expect(options.every((option) => !("privateLabel" in option))).toBe(
           true,
+        );
+        await inClinicTransaction(
+          { clinicId: fixture.clinicId, identityId: fixture.ownerIdentityId },
+          (transaction) =>
+            transaction
+              .update(appointments)
+              .set({ status: "cancelled" })
+              .where(eq(appointments.clinicId, fixture.clinicId)),
+        );
+        await expect(
+          calculateCareOptions(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.ownerDoctorId,
+              from: "2026-08-10",
+              identityId: fixture.ownerIdentityId,
+              serviceId: service.id,
+              to: "2026-08-10",
+            },
+            drizzleCareOptionsStore,
+            new Date("2026-08-10T13:00:00.000Z"),
+          ),
+        ).resolves.toEqual(
+          expect.arrayContaining([
+            { startsAt: new Date("2026-08-10T14:00:00.000Z") },
+          ]),
         );
         await expect(
           calculateCareOptions(

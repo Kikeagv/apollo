@@ -199,15 +199,15 @@ describe("catálogo y Ofertas de servicio persistentes", () => {
           await transaction.insert(appointments).values({
             clinicId: fixture.aurora.clinicId,
             doctorId: ownerDoctorId,
-            endsAt: new Date("2026-08-10T15:00:00.000Z"),
-            startsAt: new Date("2026-08-10T14:00:00.000Z"),
+            endsAt: new Date("2030-08-10T15:00:00.000Z"),
+            startsAt: new Date("2030-08-10T14:00:00.000Z"),
           });
           await transaction.insert(temporaryReservations).values({
             clinicId: fixture.aurora.clinicId,
             doctorId: ownerDoctorId,
-            endsAt: new Date("2026-08-10T17:00:00.000Z"),
-            expiresAt: new Date("2030-01-01T00:00:00.000Z"),
-            startsAt: new Date("2026-08-10T16:00:00.000Z"),
+            endsAt: new Date("2030-08-10T17:00:00.000Z"),
+            expiresAt: new Date("2031-01-01T00:00:00.000Z"),
+            startsAt: new Date("2030-08-10T16:00:00.000Z"),
           });
         });
 

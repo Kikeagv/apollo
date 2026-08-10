@@ -6,6 +6,7 @@ import {
   isIntervalAvailable,
   type CareOptionInputs,
 } from "~/server/application/care-options";
+import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import {
   type CreateManualAppointmentInput,
   type PanaceaCalendarInput,
@@ -26,12 +27,9 @@ import {
   contactPatientLinks,
   contacts,
   doctors,
-  effectiveSchedulePeriods,
-  effectiveSchedules,
   patients,
   serviceOffers,
   services,
-  temporaryReservations,
 } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -47,6 +45,18 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
       await lockDoctor(transaction, input.doctorId);
       const appointmentInput = await appointmentInputs(transaction, input);
       if (appointmentInput === undefined) return undefined;
+      const capacity: CareOptionInputs = {
+        ...(await readAgendaCapacity(transaction, {
+          clinicId: input.clinicId,
+          doctorId: input.doctorId,
+          endsAt: addMinutes(
+            input.startsAt,
+            appointmentInput.durationMinutes + appointmentInput.bufferMinutes,
+          ),
+          startsAt: input.startsAt,
+        })),
+        offer: appointmentInput,
+      };
 
       const localDate = clinicDate(input.startsAt);
       const options = await calculateCareOptions(
@@ -58,16 +68,13 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
           serviceId: appointmentInput.serviceId,
           to: localDate,
         },
-        { find: async () => appointmentInput.capacity },
+        { find: async () => capacity },
       );
       const fitsSchedule = options.some(
         (option) => option.startsAt.valueOf() === input.startsAt.valueOf(),
       );
       const outsideSchedule = !fitsSchedule;
-      if (
-        outsideSchedule &&
-        !hasFreeCapacity(input, appointmentInput.capacity)
-      ) {
+      if (outsideSchedule && !hasFreeCapacity(input, capacity)) {
         return undefined;
       }
       if (outsideSchedule && !input.outsideScheduleConfirmed) {
@@ -660,11 +667,9 @@ async function appointmentInputs(
     return undefined;
   }
 
-  const capacity = await capacityInputs(transaction, input);
   return {
     ...selectedOffer,
     actorClinicUserId: actor.id,
-    capacity,
     notificationRecipient,
   };
 }
@@ -712,111 +717,6 @@ function messageEventType(
   result: "sent" | "failed",
 ) {
   return `${type}-${result}` as const;
-}
-
-async function capacityInputs(
-  transaction: ClinicTransaction,
-  input: CreateManualAppointmentInput,
-): Promise<CareOptionInputs> {
-  const [
-    offer,
-    schedules,
-    periods,
-    blocks,
-    confirmedAppointments,
-    reservations,
-  ] = await Promise.all([
-    transaction
-      .select({
-        bufferMinutes: serviceOffers.bufferMinutes,
-        durationMinutes: serviceOffers.durationMinutes,
-      })
-      .from(serviceOffers)
-      .where(eq(serviceOffers.id, input.serviceOfferId)),
-    transaction.query.effectiveSchedules.findMany({
-      columns: { effectiveFrom: true, effectiveUntil: true, id: true },
-      where: and(
-        eq(effectiveSchedules.clinicId, input.clinicId),
-        eq(effectiveSchedules.doctorId, input.doctorId),
-      ),
-    }),
-    transaction.query.effectiveSchedulePeriods.findMany({
-      columns: {
-        dayOfWeek: true,
-        endTime: true,
-        scheduleId: true,
-        startTime: true,
-      },
-      where: and(
-        eq(effectiveSchedulePeriods.clinicId, input.clinicId),
-        eq(effectiveSchedulePeriods.doctorId, input.doctorId),
-      ),
-    }),
-    transaction
-      .select({
-        endsAt: availabilityBlocks.endsAt,
-        startsAt: availabilityBlocks.startsAt,
-      })
-      .from(availabilityBlocks)
-      .where(
-        and(
-          eq(availabilityBlocks.clinicId, input.clinicId),
-          eq(availabilityBlocks.doctorId, input.doctorId),
-        ),
-      ),
-    transaction
-      .select({
-        endsAt: appointments.endsAt,
-        occupiedUntil: appointments.occupiedUntil,
-        startsAt: appointments.startsAt,
-      })
-      .from(appointments)
-      .where(
-        and(
-          eq(appointments.clinicId, input.clinicId),
-          eq(appointments.doctorId, input.doctorId),
-          eq(appointments.status, "confirmed"),
-        ),
-      ),
-    transaction
-      .select({
-        endsAt: temporaryReservations.endsAt,
-        expiresAt: temporaryReservations.expiresAt,
-        startsAt: temporaryReservations.startsAt,
-      })
-      .from(temporaryReservations)
-      .where(
-        and(
-          eq(temporaryReservations.clinicId, input.clinicId),
-          eq(temporaryReservations.doctorId, input.doctorId),
-          gt(temporaryReservations.expiresAt, new Date()),
-        ),
-      ),
-  ]);
-  const selectedOffer = offer[0];
-  if (selectedOffer === undefined) {
-    throw new Error("No se encontró la Oferta de servicio");
-  }
-  return {
-    appointments: confirmedAppointments.map((appointment) => ({
-      endsAt: appointment.occupiedUntil ?? appointment.endsAt,
-      startsAt: appointment.startsAt,
-    })),
-    blocks,
-    offer: selectedOffer,
-    schedules: schedules.map((schedule) => ({
-      effectiveFrom: schedule.effectiveFrom,
-      effectiveUntil: schedule.effectiveUntil,
-      periods: periods
-        .filter((period) => period.scheduleId === schedule.id)
-        .map((period) => ({
-          dayOfWeek: period.dayOfWeek,
-          endTime: period.endTime.slice(0, 5),
-          startTime: period.startTime.slice(0, 5),
-        })),
-    })),
-    temporaryReservations: reservations,
-  };
 }
 
 function addMinutes(date: Date, minutes: number) {

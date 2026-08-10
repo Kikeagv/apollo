@@ -941,6 +941,39 @@ describe("Citas manuales persistentes", () => {
   );
 
   databaseTest(
+    "rechaza una Cita fuera de horario cuando el buffer de una Cita confirmada previa aún se traslapa",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-08T00:00:00.000Z");
+      const input = {
+        clinicId: fixture.clinicId,
+        doctorId: fixture.doctorId,
+        identityId: fixture.secretaryIdentityId,
+        outsideScheduleConfirmed: true,
+        patientId: fixture.patientId,
+        serviceOfferId: fixture.serviceOfferId,
+      };
+      try {
+        await createManualAppointment(
+          { ...input, startsAt: new Date("2026-08-10T15:30:00.000Z") },
+          drizzleManualAppointmentStore,
+          now,
+        );
+
+        await expect(
+          createManualAppointment(
+            { ...input, startsAt: new Date("2026-08-10T16:00:00.000Z") },
+            drizzleManualAppointmentStore,
+            now,
+          ),
+        ).rejects.toThrow("La Agenda ya no autoriza esta Cita manual");
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
     "rechaza Bloqueos y Reservas temporales activas sin crear una Cita",
     async () => {
       const fixture = await createFixture();
