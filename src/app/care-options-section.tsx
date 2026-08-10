@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import type { CareOptionsRequest } from "~/server/application/care-options";
 import { api } from "~/trpc/react";
+import { formValue } from "./form-values";
 
 type CareOptionsSearch = Omit<CareOptionsRequest, "clinicId" | "identityId">;
 
@@ -29,10 +30,10 @@ export function CareOptionsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     setRequest({
-      doctorId: value(data, "doctorId"),
-      from: value(data, "from"),
-      serviceId: value(data, "serviceId"),
-      to: value(data, "to"),
+      doctorId: formValue(data, "doctorId"),
+      from: formValue(data, "from"),
+      serviceId: formValue(data, "serviceId"),
+      to: formValue(data, "to"),
     });
   }
 
@@ -152,9 +153,4 @@ function today() {
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((item) => item.type === type)?.value;
   return `${part("year")}-${part("month")}-${part("day")}`;
-}
-
-function value(data: FormData, field: string) {
-  const formValue = data.get(field);
-  return typeof formValue === "string" ? formValue : "";
 }

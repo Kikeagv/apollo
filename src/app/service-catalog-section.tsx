@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 
 import { api } from "~/trpc/react";
 import { CapacityConflicts } from "./capacity-conflicts";
+import { formNumberValue, formValue } from "./form-values";
 
 export function ServiceCatalogSection({
   canCreateServices,
@@ -41,14 +42,14 @@ export function ServiceCatalogSection({
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     create.mutate({
-      description: value(data, "description"),
-      name: value(data, "name"),
+      description: formValue(data, "description"),
+      name: formValue(data, "name"),
       offers: [
         {
-          bufferMinutes: numberValue(data, "bufferMinutes"),
-          doctorId: value(data, "doctorId"),
-          durationMinutes: numberValue(data, "durationMinutes"),
-          priceUsd: value(data, "priceUsd"),
+          bufferMinutes: formNumberValue(data, "bufferMinutes"),
+          doctorId: formValue(data, "doctorId"),
+          durationMinutes: formNumberValue(data, "durationMinutes"),
+          priceUsd: formValue(data, "priceUsd"),
         },
       ],
     });
@@ -58,10 +59,10 @@ export function ServiceCatalogSection({
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     update.mutate({
-      bufferMinutes: numberValue(data, "bufferMinutes"),
-      durationMinutes: numberValue(data, "durationMinutes"),
-      offerId: value(data, "offerId"),
-      priceUsd: value(data, "priceUsd"),
+      bufferMinutes: formNumberValue(data, "bufferMinutes"),
+      durationMinutes: formNumberValue(data, "durationMinutes"),
+      offerId: formValue(data, "offerId"),
+      priceUsd: formValue(data, "priceUsd"),
     });
   }
 
@@ -69,11 +70,11 @@ export function ServiceCatalogSection({
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     add.mutate({
-      bufferMinutes: numberValue(data, "bufferMinutes"),
-      doctorId: value(data, "doctorId"),
-      durationMinutes: numberValue(data, "durationMinutes"),
-      priceUsd: value(data, "priceUsd"),
-      serviceId: value(data, "serviceId"),
+      bufferMinutes: formNumberValue(data, "bufferMinutes"),
+      doctorId: formValue(data, "doctorId"),
+      durationMinutes: formNumberValue(data, "durationMinutes"),
+      priceUsd: formValue(data, "priceUsd"),
+      serviceId: formValue(data, "serviceId"),
     });
   }
 
@@ -331,13 +332,4 @@ export function ServiceCatalogSection({
       </div>
     </section>
   );
-}
-
-function numberValue(data: FormData, field: string) {
-  return Number(value(data, field));
-}
-
-function value(data: FormData, field: string) {
-  const formValue = data.get(field);
-  return typeof formValue === "string" ? formValue : "";
 }

@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import { api } from "~/trpc/react";
+import { formValue, formValues } from "./form-values";
 
 const weekdays = [
   "Domingo",
@@ -58,8 +59,8 @@ export function AvailabilitySection({
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     schedule.mutate({
-      doctorId: value(data, "doctorId"),
-      effectiveFrom: value(data, "effectiveFrom"),
+      doctorId: formValue(data, "doctorId"),
+      effectiveFrom: formValue(data, "effectiveFrom"),
       periods,
     });
   }
@@ -68,10 +69,10 @@ export function AvailabilitySection({
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     block.mutate({
-      doctorId: value(data, "doctorId"),
-      endsAt: clinicLocalDate(value(data, "endsAt")),
-      privateLabel: value(data, "privateLabel") || undefined,
-      startsAt: clinicLocalDate(value(data, "startsAt")),
+      doctorId: formValue(data, "doctorId"),
+      endsAt: clinicLocalDate(formValue(data, "endsAt")),
+      privateLabel: formValue(data, "privateLabel") || undefined,
+      startsAt: clinicLocalDate(formValue(data, "startsAt")),
     });
   }
 
@@ -79,12 +80,10 @@ export function AvailabilitySection({
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     bulkBlock.mutate({
-      doctorIds: data
-        .getAll("doctorIds")
-        .filter((id): id is string => typeof id === "string"),
-      endsAt: clinicLocalDate(value(data, "endsAt")),
-      privateLabel: value(data, "privateLabel") || undefined,
-      startsAt: clinicLocalDate(value(data, "startsAt")),
+      doctorIds: formValues(data, "doctorIds"),
+      endsAt: clinicLocalDate(formValue(data, "endsAt")),
+      privateLabel: formValue(data, "privateLabel") || undefined,
+      startsAt: clinicLocalDate(formValue(data, "startsAt")),
     });
   }
 
@@ -347,9 +346,4 @@ function formatClinicDate(value: Date | string) {
     timeStyle: "short",
     timeZone: CLINIC_TIMEZONE,
   }).format(new Date(value));
-}
-
-function value(data: FormData, field: string) {
-  const formValue = data.get(field);
-  return typeof formValue === "string" ? formValue : "";
 }

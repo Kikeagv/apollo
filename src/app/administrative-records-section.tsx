@@ -3,6 +3,7 @@
 import { type FormEvent, useState } from "react";
 
 import { api } from "~/trpc/react";
+import { formValue } from "./form-values";
 
 export function AdministrativeRecordsSection() {
   const [result, setResult] = useState<string>();
@@ -44,8 +45,8 @@ export function AdministrativeRecordsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     createContact.mutate({
-      name: value(data, "name"),
-      phone: value(data, "phone"),
+      name: formValue(data, "name"),
+      phone: formValue(data, "phone"),
     });
   }
 
@@ -53,9 +54,9 @@ export function AdministrativeRecordsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     updateContact.mutate({
-      id: value(data, "id"),
-      name: value(data, "name"),
-      phone: value(data, "phone"),
+      id: formValue(data, "id"),
+      name: formValue(data, "name"),
+      phone: formValue(data, "phone"),
     });
   }
 
@@ -63,8 +64,8 @@ export function AdministrativeRecordsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     createPatient.mutate({
-      birthDate: value(data, "birthDate"),
-      name: value(data, "name"),
+      birthDate: formValue(data, "birthDate"),
+      name: formValue(data, "name"),
     });
   }
 
@@ -72,9 +73,9 @@ export function AdministrativeRecordsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     updatePatient.mutate({
-      birthDate: value(data, "birthDate"),
-      id: value(data, "id"),
-      name: value(data, "name"),
+      birthDate: formValue(data, "birthDate"),
+      id: formValue(data, "id"),
+      name: formValue(data, "name"),
     });
   }
 
@@ -82,8 +83,8 @@ export function AdministrativeRecordsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     createLink.mutate({
-      contactId: value(data, "contactId"),
-      patientId: value(data, "patientId"),
+      contactId: formValue(data, "contactId"),
+      patientId: formValue(data, "patientId"),
     });
   }
 
@@ -305,11 +306,6 @@ function RecordList({
       {children}
     </div>
   );
-}
-
-function value(data: FormData, field: string) {
-  const formValue = data.get(field);
-  return typeof formValue === "string" ? formValue : "";
 }
 
 const inputClass =

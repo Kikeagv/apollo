@@ -553,22 +553,23 @@ test("el Calendario solo ofrece cancelar Citas manuales futuras", async ({
     await inClinicTransaction(
       { clinicId: fixture.clinicId(), identityId: ownerIdentityId },
       async (transaction) => {
-        const manualAppointment = await transaction.query.appointments.findFirst({
-          columns: {
-            actorClinicUserId: true,
-            bufferMinutes: true,
-            clinicId: true,
-            doctorId: true,
-            durationMinutes: true,
-            patientId: true,
-            priceUsd: true,
-            serviceOfferId: true,
-          },
-          where: and(
-            eq(appointments.clinicId, fixture.clinicId()),
-            eq(appointments.startsAt, new Date(`${careDate}T08:00:00-06:00`)),
-          ),
-        });
+        const manualAppointment =
+          await transaction.query.appointments.findFirst({
+            columns: {
+              actorClinicUserId: true,
+              bufferMinutes: true,
+              clinicId: true,
+              doctorId: true,
+              durationMinutes: true,
+              patientId: true,
+              priceUsd: true,
+              serviceOfferId: true,
+            },
+            where: and(
+              eq(appointments.clinicId, fixture.clinicId()),
+              eq(appointments.startsAt, new Date(`${careDate}T08:00:00-06:00`)),
+            ),
+          });
         if (manualAppointment === undefined) {
           throw new Error("Falta la Cita manual E2E");
         }

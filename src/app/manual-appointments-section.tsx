@@ -10,6 +10,7 @@ import type {
   CalendarEntry,
 } from "~/server/application/manual-appointments";
 import { api } from "~/trpc/react";
+import { formValue } from "./form-values";
 
 type CalendarView = "day" | "week";
 type CalendarAppointment = AgendaAppointment;
@@ -103,18 +104,18 @@ export function ManualAppointmentsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const offer = formData.data?.offers.find(
-      (item) => item.serviceOfferId === value(data, "serviceOfferId"),
+      (item) => item.serviceOfferId === formValue(data, "serviceOfferId"),
     );
     if (offer === undefined) return;
     setOutsideScheduleConfirmation(undefined);
     create.mutate({
       doctorId: offer.doctorId,
       notificationRecipientContactId: sendConfirmation
-        ? value(data, "notificationRecipientContactId")
+        ? formValue(data, "notificationRecipientContactId")
         : undefined,
       patientId,
       serviceOfferId: offer.serviceOfferId,
-      startsAt: clinicDateTime(value(data, "startsAt")),
+      startsAt: clinicDateTime(formValue(data, "startsAt")),
     });
   }
 
@@ -123,10 +124,10 @@ export function ManualAppointmentsSection() {
     const data = new FormData(event.currentTarget);
     setRecordRegistrationResult(undefined);
     registerAdministrativeRecords.mutate({
-      birthDate: value(data, "birthDate"),
-      contactName: value(data, "contactName"),
-      patientName: value(data, "patientName"),
-      phone: value(data, "phone"),
+      birthDate: formValue(data, "birthDate"),
+      contactName: formValue(data, "contactName"),
+      patientName: formValue(data, "patientName"),
+      phone: formValue(data, "phone"),
     });
   }
 
@@ -514,9 +515,9 @@ function AppointmentDetail({
     const data = new FormData(event.currentTarget);
     onCancel({
       notificationRecipientContactId: sendCancellation
-        ? value(data, "notificationRecipientContactId")
+        ? formValue(data, "notificationRecipientContactId")
         : undefined,
-      reason: value(data, "reason") || undefined,
+      reason: formValue(data, "reason") || undefined,
     });
   }
   const canCancel =
@@ -740,11 +741,6 @@ function localDate(value: Date | string) {
 
 function today() {
   return localDate(new Date());
-}
-
-function value(data: FormData, field: string) {
-  const formValue = data.get(field);
-  return typeof formValue === "string" ? formValue : "";
 }
 
 const inputClass =

@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 
 import { api } from "~/trpc/react";
 import { CapacityConflicts } from "./capacity-conflicts";
+import { formValue } from "./form-values";
 
 export function DoctorsSection() {
   const [result, setResult] = useState<string>();
@@ -27,11 +28,9 @@ export function DoctorsSection() {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const email = data.get("email");
-    const name = data.get("name");
     invite.mutate({
-      email: typeof email === "string" ? email : "",
-      name: typeof name === "string" ? name : "",
+      email: formValue(data, "email"),
+      name: formValue(data, "name"),
     });
   }
 

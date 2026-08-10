@@ -3,6 +3,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 
 import { api } from "~/trpc/react";
+import { formValue } from "./form-values";
 
 export function DoctorProfileSetup({
   initialProfile,
@@ -28,12 +29,9 @@ export function DoctorProfileSetup({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const primarySpecialty = data.get("primarySpecialty");
-    const publicName = data.get("publicName");
     completion.mutate({
-      primarySpecialty:
-        typeof primarySpecialty === "string" ? primarySpecialty : "",
-      publicName: typeof publicName === "string" ? publicName : "",
+      primarySpecialty: formValue(data, "primarySpecialty"),
+      publicName: formValue(data, "publicName"),
     });
   }
 
