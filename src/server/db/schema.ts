@@ -17,6 +17,10 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { AppointmentEventType } from "~/server/application/manual-appointments";
+import type {
+  BookingConversation,
+  WhatsAppBookingResponse,
+} from "~/server/application/simulated-whatsapp-booking";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -87,6 +91,7 @@ export const verification = pgTable("verification", {
 export const clinics = createTable("clinic", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
+  whatsappNumberE164: text("whatsapp_number_e164"),
   isSynthetic: boolean("is_synthetic").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
@@ -303,6 +308,7 @@ export const appointments = createTable(
     patientId: uuid("patient_id"),
     serviceOfferId: uuid("service_offer_id"),
     actorClinicUserId: uuid("actor_clinic_user_id"),
+    authorContactId: uuid("author_contact_id"),
     origin: text("origin").$type<AppointmentOrigin>(),
     priceUsd: numeric("price_usd", { precision: 12, scale: 2 }),
     durationMinutes: integer("duration_minutes"),
@@ -334,6 +340,11 @@ export const appointments = createTable(
       name: "appointment_patient_same_clinic_fk",
     }).onDelete("restrict"),
     foreignKey({
+      columns: [table.clinicId, table.authorContactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "appointment_author_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
       columns: [table.clinicId, table.serviceOfferId],
       foreignColumns: [serviceOffers.clinicId, serviceOffers.id],
       name: "appointment_service_offer_same_clinic_fk",
@@ -354,7 +365,8 @@ export const appointmentEvents = createTable(
     clinicId: uuid("clinic_id").notNull(),
     appointmentId: uuid("appointment_id").notNull(),
     type: text("type").$type<AppointmentEventType>().notNull(),
-    actorClinicUserId: uuid("actor_clinic_user_id").notNull(),
+    actorClinicUserId: uuid("actor_clinic_user_id"),
+    actorContactId: uuid("actor_contact_id"),
     recipientContactId: uuid("recipient_contact_id"),
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .defaultNow()
@@ -375,6 +387,11 @@ export const appointmentEvents = createTable(
       name: "appointment_event_actor_same_clinic_fk",
     }).onDelete("restrict"),
     foreignKey({
+      columns: [table.clinicId, table.actorContactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "appointment_event_actor_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
       columns: [table.clinicId, table.recipientContactId],
       foreignColumns: [contacts.clinicId, contacts.id],
       name: "appointment_event_recipient_contact_same_clinic_fk",
@@ -389,6 +406,9 @@ export const temporaryReservations = createTable(
     id: uuid("id").defaultRandom().primaryKey(),
     clinicId: uuid("clinic_id").notNull(),
     doctorId: uuid("doctor_id").notNull(),
+    contactId: uuid("contact_id"),
+    patientId: uuid("patient_id"),
+    serviceOfferId: uuid("service_offer_id"),
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -404,6 +424,21 @@ export const temporaryReservations = createTable(
       foreignColumns: [doctors.clinicId, doctors.id],
       name: "temporary_reservation_doctor_same_clinic_fk",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "temporary_reservation_contact_same_clinic_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.patientId],
+      foreignColumns: [patients.clinicId, patients.id],
+      name: "temporary_reservation_patient_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.serviceOfferId],
+      foreignColumns: [serviceOffers.clinicId, serviceOffers.id],
+      name: "temporary_reservation_service_offer_same_clinic_fk",
+    }).onDelete("restrict"),
   ],
 );
 
@@ -489,6 +524,7 @@ export const patients = createTable(
     name: text("name").notNull(),
     /** Las fichas previas a APO-38 no tenían fecha; al editarlas se completa. */
     birthDate: date("birth_date", { mode: "string" }),
+    dui: text("dui"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -527,6 +563,53 @@ export const contactPatientLinks = createTable(
       columns: [table.clinicId, table.patientId],
       foreignColumns: [patients.clinicId, patients.id],
       name: "contact_patient_link_patient_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Estado administrativo, no clínico, del diálogo de Asclepio. */
+export const whatsappConversations = createTable(
+  "whatsapp_conversation",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    state: jsonb("state").$type<BookingConversation>().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_conversation_contact_unique").on(
+      table.clinicId,
+      table.contactId,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "whatsapp_conversation_contact_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Cada entrega del adaptador simulado conserva su respuesta para idempotencia. */
+export const simulatedWhatsAppMessages = createTable(
+  "simulated_whatsapp_message",
+  {
+    id: text("id").primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    response: jsonb("response").$type<WhatsAppBookingResponse>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("simulated_whatsapp_message_clinic_idx").on(table.clinicId),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "simulated_whatsapp_message_contact_same_clinic_fk",
     }).onDelete("cascade"),
   ],
 );

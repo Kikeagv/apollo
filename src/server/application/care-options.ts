@@ -52,6 +52,23 @@ export async function calculateCareOptions(
 
   const available = await store.find(input);
   if (available === undefined) return [];
+  return calculateCareOptionsFromInputs(
+    { from: input.from, to: input.to },
+    available,
+    now,
+  );
+}
+
+/** Operación de Agenda para adaptadores que ya obtuvieron insumos autorizados. */
+export function calculateCareOptionsFromInputs(
+  input: { from: string; to: string },
+  available: CareOptionInputs,
+  now = new Date(),
+): CareOption[] {
+  const from = requiredLocalDate(input.from);
+  const to = requiredLocalDate(input.to);
+  if (from > to)
+    throw new Error("El rango de Opciones debe respetar el calendario local");
 
   const occupied = [
     ...available.blocks,

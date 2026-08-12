@@ -1,7 +1,12 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "~/server/db";
-import { apoloSuperadmins, clinicUsers, doctors } from "~/server/db/schema";
+import {
+  apoloSuperadmins,
+  clinicUsers,
+  clinics,
+  doctors,
+} from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -70,4 +75,57 @@ export async function inSuperadminTransaction<T>(
     );
     return operation(transaction);
   });
+}
+
+/**
+ * Resuelve el destino del adaptador de WhatsApp bajo RLS y después fija el
+ * contexto de la Clínica. No crea una identidad ni concede un rol clínico.
+ */
+export async function inSimulatedWhatsAppInboundTransaction<T>(
+  whatsappNumberE164: string,
+  operation: (
+    context: { clinicId: string },
+    transaction: ClinicTransaction,
+  ) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_inbound', 'true', true)`,
+    );
+    const clinic = await transaction.query.clinics.findFirst({
+      columns: { id: true },
+      where: eq(clinics.whatsappNumberE164, whatsappNumberE164),
+    });
+    if (clinic === undefined) return undefined;
+    await configureSimulatedWhatsAppClinic(transaction, clinic.id);
+    return operation({ clinicId: clinic.id }, transaction);
+  });
+}
+
+/** Continúa un flujo de WhatsApp ya resuelto, sin evitar RLS. */
+export async function inSimulatedWhatsAppClinicTransaction<T>(
+  clinicId: string,
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_inbound', 'true', true)`,
+    );
+    await configureSimulatedWhatsAppClinic(transaction, clinicId);
+    return operation(transaction);
+  });
+}
+
+async function configureSimulatedWhatsAppClinic(
+  transaction: ClinicTransaction,
+  clinicId: string,
+) {
+  await transaction.execute(
+    sql`select set_config('app.clinic_id', ${clinicId}, true)`,
+  );
+  await transaction.execute(
+    sql`select set_config('app.panacea_operation', 'appointments', true)`,
+  );
 }

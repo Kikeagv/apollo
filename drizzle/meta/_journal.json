@@ -211,6 +211,20 @@
       "when": 1786235784540,
       "tag": "0029_preserve_appointment_event_history",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786235794540,
+      "tag": "0030_simulated_whatsapp_booking",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786235804540,
+      "tag": "0031_appointment_event_actor",
+      "breakpoints": true
     }
   ]
 }

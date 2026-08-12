@@ -27,6 +27,7 @@ export type AgendaCapacityWindow = {
 export async function readAgendaCapacity(
   transaction: ClinicTransaction,
   input: AgendaCapacityWindow,
+  now = new Date(),
 ): Promise<Omit<CareOptionInputs, "offer">> {
   const firstLocalDate = clinicDate(input.startsAt);
   const lastLocalDate = clinicDate(input.endsAt);
@@ -90,7 +91,7 @@ export async function readAgendaCapacity(
         .where(
           and(
             overlapsWindow(temporaryReservations, input),
-            gt(temporaryReservations.expiresAt, new Date()),
+            gt(temporaryReservations.expiresAt, now),
           ),
         ),
     ]);

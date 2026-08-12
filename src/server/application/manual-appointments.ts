@@ -12,6 +12,7 @@ export const appointmentEventTypes = [
   "manual-confirmation-failed",
   "manual-cancellation-sent",
   "manual-cancellation-failed",
+  "reservation-confirmed",
 ] as const;
 
 export type AppointmentEventType = (typeof appointmentEventTypes)[number];
@@ -44,7 +45,8 @@ export type AgendaAppointment = {
   durationMinutes: number | null;
   endsAt: Date;
   events: {
-    actorClinicUserId: string;
+    actorClinicUserId: string | null;
+    actorContactId: string | null;
     occurredAt: Date;
     recipient: ManualAppointmentContact | null;
     reason: string | null;

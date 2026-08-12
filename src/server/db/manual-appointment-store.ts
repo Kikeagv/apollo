@@ -447,6 +447,7 @@ async function readAppointments(
         ),
       transaction
         .select({
+          actorContactId: appointmentEvents.actorContactId,
           actorClinicUserId: appointmentEvents.actorClinicUserId,
           appointmentId: appointmentEvents.appointmentId,
           occurredAt: appointmentEvents.occurredAt,
