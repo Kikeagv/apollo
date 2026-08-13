@@ -118,6 +118,22 @@ export async function inSimulatedWhatsAppClinicTransaction<T>(
   });
 }
 
+/**
+ * Contexto limitado del job de Agenda. Conserva RLS: solo las políticas del
+ * planificador permiten procesar vencimientos y mensajes transaccionales.
+ */
+export async function inAppointmentSchedulerTransaction<T>(
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.appointment_scheduler', 'true', true)`,
+    );
+    return operation(transaction);
+  });
+}
+
 async function configureSimulatedWhatsAppClinic(
   transaction: ClinicTransaction,
   clinicId: string,

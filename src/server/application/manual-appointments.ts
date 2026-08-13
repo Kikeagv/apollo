@@ -15,8 +15,13 @@ export const appointmentEventTypes = [
   "reservation-confirmed",
   "rescheduled",
   "self-management-escalated",
+  "reminder-claimed",
   "reminder-sent",
   "reminder-failed",
+  "reminder-delivered",
+  "reminder-delivery-failed",
+  "no-show-alerted",
+  "no-show-auto-cancelled",
 ] as const;
 
 export type AppointmentEventType = (typeof appointmentEventTypes)[number];

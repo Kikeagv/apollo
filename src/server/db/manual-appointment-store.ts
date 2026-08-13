@@ -141,6 +141,7 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         columns: {
           authorContactId: true,
           id: true,
+          origin: true,
           patientId: true,
           startsAt: true,
         },
@@ -156,14 +157,22 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
       const expectedStart = new Date(
         input.now.valueOf() + reminderHours[input.checkpoint] * 60 * 60_000,
       );
-      if (appointment.startsAt.valueOf() !== expectedStart.valueOf()) return [];
+      if (
+        Math.abs(appointment.startsAt.valueOf() - expectedStart.valueOf()) >
+        15 * 60_000
+      ) {
+        return [];
+      }
       const [confirmation, alreadySent] = await Promise.all([
         transaction.query.appointmentEvents.findFirst({
           columns: { occurredAt: true },
           where: and(
             eq(appointmentEvents.clinicId, input.clinicId),
             eq(appointmentEvents.appointmentId, input.appointmentId),
-            eq(appointmentEvents.type, "reservation-confirmed"),
+            inArray(appointmentEvents.type, [
+              "manual-created",
+              "reservation-confirmed",
+            ]),
           ),
         }),
         transaction.query.appointmentEvents.findFirst({
@@ -177,19 +186,31 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         }),
       ]);
       if (confirmation === undefined || alreadySent !== undefined) return [];
-      if (appointment.authorContactId === null) return [];
-      const replied =
-        await transaction.query.simulatedWhatsAppMessages.findFirst({
-          columns: { id: true },
-          where: and(
-            eq(simulatedWhatsAppMessages.clinicId, input.clinicId),
+      const replied = await transaction
+        .select({ id: simulatedWhatsAppMessages.id })
+        .from(simulatedWhatsAppMessages)
+        .innerJoin(
+          contactPatientLinks,
+          and(
+            eq(
+              simulatedWhatsAppMessages.clinicId,
+              contactPatientLinks.clinicId,
+            ),
             eq(
               simulatedWhatsAppMessages.contactId,
-              appointment.authorContactId,
+              contactPatientLinks.contactId,
             ),
+          ),
+        )
+        .where(
+          and(
+            eq(simulatedWhatsAppMessages.clinicId, input.clinicId),
+            eq(contactPatientLinks.patientId, appointment.patientId),
             gt(simulatedWhatsAppMessages.createdAt, confirmation.occurredAt),
           ),
-        });
+        )
+        .limit(1)
+        .then((messages) => messages[0]);
       if (replied !== undefined) return [];
       const recipients = await transaction
         .select({
@@ -209,15 +230,17 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
           and(
             eq(contactPatientLinks.clinicId, input.clinicId),
             eq(contactPatientLinks.patientId, appointment.patientId),
-            or(
-              eq(contactPatientLinks.relationship, "tutor"),
-              appointment.authorContactId === null
-                ? undefined
-                : eq(
-                    contactPatientLinks.contactId,
-                    appointment.authorContactId,
-                  ),
-            ),
+            appointment.origin === "manual"
+              ? undefined
+              : or(
+                  eq(contactPatientLinks.relationship, "tutor"),
+                  appointment.authorContactId === null
+                    ? undefined
+                    : eq(
+                        contactPatientLinks.contactId,
+                        appointment.authorContactId,
+                      ),
+                ),
           ),
         );
       return recipients;
@@ -243,6 +266,7 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         actorClinicUserId: actor.id,
         appointmentId: input.appointmentId,
         clinicId: input.clinicId,
+        occurredAt: input.now,
         recipientContactId: input.recipientContactId,
         reason: input.checkpoint,
         type: input.result === "sent" ? "reminder-sent" : "reminder-failed",

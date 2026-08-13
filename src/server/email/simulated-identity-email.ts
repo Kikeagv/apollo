@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { DailyAgendaEmail } from "~/server/application/appointment-reminders";
+
 type IdentityOtp = {
   email: string;
   otp: string;
@@ -32,6 +34,7 @@ type ClinicOwnerInvitationDelivery = Omit<
 const sentIdentityOtps: IdentityOtp[] = [];
 const sentClinicOwnerInvitations: ClinicOwnerInvitation[] = [];
 const sentClinicDoctorInvitations: ClinicDoctorInvitation[] = [];
+const sentDailyAgendaEmails: Array<DailyAgendaEmail & { pdf: Uint8Array }> = [];
 
 /** Adaptador de correo sintético para desarrollo y pruebas de integración. */
 export async function sendSimulatedIdentityEmail(otp: IdentityOtp) {
@@ -68,4 +71,15 @@ export async function sendSimulatedClinicDoctorInvitation(
 
 export function getSentClinicDoctorInvitations() {
   return [...sentClinicDoctorInvitations];
+}
+
+/** Adaptador de correo simulado para el PDF nocturno de la Agenda. */
+export const simulatedDailyAgendaEmailSender = {
+  async send(email: DailyAgendaEmail & { pdf: Uint8Array }) {
+    sentDailyAgendaEmails.push(email);
+  },
+};
+
+export function getSentDailyAgendaEmails() {
+  return [...sentDailyAgendaEmails];
 }

@@ -16,6 +16,7 @@ import { AppointmentSelfManagementEscalationsSection } from "./appointment-self-
 import { CareOptionsSection } from "./care-options-section";
 import { DoctorsSection } from "./doctors-section";
 import { ManualAppointmentsSection } from "./manual-appointments-section";
+import { NoShowPolicySection } from "./no-show-policy-section";
 import { ServiceCatalogSection } from "./service-catalog-section";
 import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
 import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
@@ -69,6 +70,7 @@ export default async function Home({
             <AppointmentSelfManagementEscalationsSection />
             <ManualAppointmentsSection />
             {context.role === "owner" ? <DoctorsSection /> : null}
+            {context.role === "owner" ? <NoShowPolicySection /> : null}
             {context.role === "owner" || context.role === "doctor" ? (
               <>
                 <ServiceCatalogSection

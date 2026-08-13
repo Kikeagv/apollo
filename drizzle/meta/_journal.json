@@ -246,6 +246,13 @@
       "when": 1786652324202,
       "tag": "0034_nifty_thunderbolts",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786652334202,
+      "tag": "0035_appointment_scheduler",
+      "breakpoints": true
     }
   ]
 }

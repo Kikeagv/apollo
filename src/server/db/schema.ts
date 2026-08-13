@@ -28,6 +28,7 @@ export type ClinicUserRole = "owner" | "doctor" | "secretary";
 export type ClinicInvitationRole = "owner" | "doctor";
 export type AppointmentOrigin = "manual" | "reservation";
 export type AppointmentStatus = "confirmed" | "cancelled";
+export type NoShowPolicy = "alert" | "cancel-after-third-reminder";
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -92,6 +93,10 @@ export const clinics = createTable("clinic", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
   whatsappNumberE164: text("whatsapp_number_e164"),
+  noShowPolicy: text("no_show_policy")
+    .$type<NoShowPolicy>()
+    .default("alert")
+    .notNull(),
   isSynthetic: boolean("is_synthetic").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
@@ -472,6 +477,29 @@ export const temporaryReservations = createTable(
       foreignColumns: [serviceOffers.clinicId, serviceOffers.id],
       name: "temporary_reservation_service_offer_same_clinic_fk",
     }).onDelete("restrict"),
+  ],
+);
+
+/** Entrega nocturna idempotente del respaldo operativo de cada Médico. */
+export const dailyAgendaEmails = createTable(
+  "daily_agenda_email",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    doctorId: uuid("doctor_id").notNull(),
+    agendaDate: date("agenda_date", { mode: "string" }).notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("daily_agenda_email_doctor_date_unique").on(
+      table.doctorId,
+      table.agendaDate,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.doctorId],
+      foreignColumns: [doctors.clinicId, doctors.id],
+      name: "daily_agenda_email_doctor_same_clinic_fk",
+    }).onDelete("cascade"),
   ],
 );
 

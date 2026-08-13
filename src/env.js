@@ -16,6 +16,8 @@ export const env = createEnv({
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
+    APPOINTMENT_SCHEDULER_DELIVERY: z.enum(["simulated"]).default("simulated"),
+    SCHEDULER_SECRET: z.string().min(1).optional(),
   },
 
   /**
@@ -36,6 +38,8 @@ export const env = createEnv({
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     DATABASE_URL: process.env.DATABASE_URL,
     NODE_ENV: process.env.NODE_ENV,
+    APPOINTMENT_SCHEDULER_DELIVERY: process.env.APPOINTMENT_SCHEDULER_DELIVERY,
+    SCHEDULER_SECRET: process.env.SCHEDULER_SECRET,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

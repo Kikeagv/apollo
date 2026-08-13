@@ -74,6 +74,11 @@ import {
 } from "~/server/email/simulated-identity-email";
 import { simulatedAppointmentMessageSender } from "~/server/whatsapp/simulated-appointment-messages";
 import {
+  getNoShowPolicy,
+  setNoShowPolicy,
+} from "~/server/application/no-show-policy";
+import { drizzleNoShowPolicyStore } from "~/server/db/no-show-policy-store";
+import {
   clinicProcedure,
   protectedProcedure,
   publicProcedure,
@@ -84,6 +89,28 @@ export const panaceaRouter = {
     service: "panacea",
     status: "ready" as const,
   })),
+
+  getNoShowPolicy: clinicProcedure.query(({ ctx }) =>
+    getNoShowPolicy(
+      { clinicId: ctx.clinic.clinicId, identityId: ctx.clinic.identityId },
+      drizzleNoShowPolicyStore,
+    ),
+  ),
+
+  setNoShowPolicy: clinicProcedure
+    .input(
+      z.object({ policy: z.enum(["alert", "cancel-after-third-reminder"]) }),
+    )
+    .mutation(({ ctx, input }) =>
+      setNoShowPolicy(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleNoShowPolicyStore,
+      ),
+    ),
 
   acceptClinicInvitation: publicProcedure
     .input(
