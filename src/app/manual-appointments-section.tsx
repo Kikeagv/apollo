@@ -640,6 +640,12 @@ function appointmentEventLabel(type: AppointmentEventType) {
       return "Cita manual creada";
     case "cancelled":
       return "Cita cancelada";
+    case "reservation-confirmed":
+      return "Reserva confirmada";
+    case "rescheduled":
+      return "Cita reprogramada por Asclepio";
+    case "self-management-escalated":
+      return "Solicitud de autogestión escalada a Panacea";
     case "manual-confirmation-sent":
       return "Confirmación por WhatsApp enviada";
     case "manual-confirmation-failed":

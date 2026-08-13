@@ -232,6 +232,20 @@
       "when": 1786650006442,
       "tag": "0032_needy_lily_hollister",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786651894928,
+      "tag": "0033_daily_tarantula",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786652324202,
+      "tag": "0034_nifty_thunderbolts",
+      "breakpoints": true
     }
   ]
 }

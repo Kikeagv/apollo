@@ -8,6 +8,10 @@ import {
   DoctorDeactivationAccessError,
 } from "~/server/application/doctor-status";
 import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
+import {
+  listAppointmentSelfManagementEscalations,
+  resolveAppointmentSelfManagementEscalation,
+} from "~/server/application/appointment-self-management";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import {
   configureEffectiveSchedule,
@@ -60,6 +64,10 @@ import {
 } from "~/server/db/service-catalog-store";
 import { drizzleAdministrativeRecordsStore } from "~/server/db/administrative-records-store";
 import { drizzleManualAppointmentStore } from "~/server/db/manual-appointment-store";
+import {
+  drizzleAppointmentSelfManagementEscalationReader,
+  drizzleAppointmentSelfManagementEscalationResolver,
+} from "~/server/db/simulated-whatsapp-booking-store";
 import {
   sendSimulatedClinicDoctorInvitation,
   sendSimulatedClinicOwnerInvitation,
@@ -456,6 +464,29 @@ export const panaceaRouter = {
       drizzleManualAppointmentStore,
     ),
   ),
+
+  listAppointmentSelfManagementEscalations: clinicProcedure.query(({ ctx }) =>
+    listAppointmentSelfManagementEscalations(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleAppointmentSelfManagementEscalationReader,
+    ),
+  ),
+
+  resolveAppointmentSelfManagementEscalation: clinicProcedure
+    .input(z.object({ escalationId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      resolveAppointmentSelfManagementEscalation(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAppointmentSelfManagementEscalationResolver,
+      ),
+    ),
 
   createManualAppointment: clinicProcedure
     .input(

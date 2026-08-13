@@ -12,6 +12,7 @@ import { ClinicSignInForm } from "./clinic-sign-in-form";
 import { DoctorProfileSetup } from "./doctor-profile-setup";
 import { AvailabilitySection } from "./availability-section";
 import { AdministrativeRecordsSection } from "./administrative-records-section";
+import { AppointmentSelfManagementEscalationsSection } from "./appointment-self-management-escalations-section";
 import { CareOptionsSection } from "./care-options-section";
 import { DoctorsSection } from "./doctors-section";
 import { ManualAppointmentsSection } from "./manual-appointments-section";
@@ -65,6 +66,7 @@ export default async function Home({
             </p>
             {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
             <AdministrativeRecordsSection />
+            <AppointmentSelfManagementEscalationsSection />
             <ManualAppointmentsSection />
             {context.role === "owner" ? <DoctorsSection /> : null}
             {context.role === "owner" || context.role === "doctor" ? (

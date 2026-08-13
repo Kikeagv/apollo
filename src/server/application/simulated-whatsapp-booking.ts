@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { canAuthorSelfManageAppointment } from "~/server/application/appointment-self-management";
+
 const RESERVATION_DURATION_MS = 10 * 60_000;
 
 export type SimulatedWhatsAppInboundMessage = {
@@ -17,6 +19,15 @@ export type WhatsAppBookingResponse =
       text: string;
     }
   | { id: string; kind: "appointment-cancelled"; text: string }
+  | {
+      id: string;
+      kind: "appointment-rescheduled";
+      startsAt: Date;
+      text: string;
+    }
+  | { id: string; kind: "appointment-escalated"; text: string }
+  | { kind: "appointment-unavailable"; text: string }
+  | { kind: "conversation-silenced"; text: string }
   | { kind: "patient-selected"; patientId: string; text: string }
   | { kind: "public-information"; offers: PublicOffer[]; text: string }
   | { kind: "care-options"; options: Date[]; text: string }
@@ -51,10 +62,17 @@ export type PublicOffer = {
 };
 
 export type BookingConversation = {
+  escalationId: string | null;
   reservationId: string | null;
   selectedOfferId: string | null;
   selectedPatientId: string | null;
 };
+
+type AppointmentSelfManagementResult =
+  | { id: string; kind: "cancelled" }
+  | { id: string; kind: "escalated" }
+  | { id: string; kind: "rescheduled"; startsAt: Date }
+  | { kind: "unavailable" };
 
 export type SimulatedWhatsAppBookingStore = {
   beginMessage(input: { from: string; id: string; to: string }): Promise<
@@ -84,7 +102,7 @@ export type SimulatedWhatsAppBookingStore = {
     contactId: string;
     now: Date;
     patientId: string;
-  }): Promise<{ id: string } | undefined>;
+  }): Promise<AppointmentSelfManagementResult>;
   getConversation(input: {
     clinicId: string;
     contactId: string;
@@ -131,6 +149,14 @@ export type SimulatedWhatsAppBookingStore = {
     patientId: string;
     startsAt: Date;
   }): Promise<{ expiresAt: Date; id: string } | undefined>;
+  rescheduleAppointment(input: {
+    appointmentId: string;
+    clinicId: string;
+    contactId: string;
+    now: Date;
+    patientId: string;
+    startsAt: Date;
+  }): Promise<AppointmentSelfManagementResult>;
 };
 
 /**
@@ -170,6 +196,7 @@ async function processMessage(
 ): Promise<WhatsAppBookingResponse> {
   const [command, ...arguments_] = text.trim().split(/\s+/);
   const conversation = await store.getConversation(context);
+  if (conversation.escalationId !== null) return conversationSilenced();
   switch (command?.toLowerCase()) {
     case "info":
     case "servicios": {
@@ -311,22 +338,74 @@ async function processMessage(
       }
       const appointmentId = arguments_[0];
       if (appointmentId === undefined) return invalidRequest();
-      const appointment = await store.cancelAppointment({
+      const outcome = await store.cancelAppointment({
         ...context,
         appointmentId,
         now,
         patientId: conversation.selectedPatientId,
       });
-      if (appointment === undefined) return invalidRequest();
-      return {
-        ...appointment,
-        kind: "appointment-cancelled",
-        text: "Cita cancelada.",
-      };
+      return selfManagementResponse(outcome, context, conversation, store);
+    }
+    case "reprogramar": {
+      if (conversation.selectedPatientId === null) {
+        return patientSelectionRequired(
+          await store.listLinkedPatients(context),
+        );
+      }
+      const [appointmentId, rawStartsAt] = arguments_;
+      const startsAt = parseFutureInstant(rawStartsAt, now);
+      if (appointmentId === undefined || startsAt === undefined)
+        return invalidRequest();
+      const outcome = await store.rescheduleAppointment({
+        ...context,
+        appointmentId,
+        now,
+        patientId: conversation.selectedPatientId,
+        startsAt,
+      });
+      return selfManagementResponse(outcome, context, conversation, store);
     }
     default:
       return invalidRequest();
   }
+}
+
+async function selfManagementResponse(
+  outcome: AppointmentSelfManagementResult,
+  context: { clinicId: string; contactId: string },
+  conversation: BookingConversation,
+  store: Pick<SimulatedWhatsAppBookingStore, "saveConversation">,
+): Promise<WhatsAppBookingResponse> {
+  switch (outcome.kind) {
+    case "cancelled":
+      return {
+        id: outcome.id,
+        kind: "appointment-cancelled",
+        text: "Cita cancelada.",
+      };
+    case "rescheduled":
+      return {
+        id: outcome.id,
+        kind: "appointment-rescheduled",
+        startsAt: outcome.startsAt,
+        text: "Cita reprogramada.",
+      };
+    case "escalated":
+      await store.saveConversation({
+        ...context,
+        conversation: { ...conversation, escalationId: outcome.id },
+      });
+      return { kind: "conversation-silenced", text: "" };
+    case "unavailable":
+      return {
+        kind: "appointment-unavailable",
+        text: "La Agenda ya no autoriza este cambio.",
+      };
+  }
+}
+
+function conversationSilenced(): WhatsAppBookingResponse {
+  return { kind: "conversation-silenced", text: "" };
 }
 
 function patientSelectionRequired(
@@ -465,16 +544,32 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     startsAt: Date;
   }> = [];
   const appointments: Array<{
+    authorContactId: string;
     id: string;
     origin: "reservation";
     patientId: string;
+    startsAt: Date;
+    status: "cancelled" | "confirmed";
+  }> = [];
+  const appointmentEvents: Array<{
+    appointmentId: string;
+    type: "cancelled" | "rescheduled" | "self-management-escalated";
+  }> = [];
+  const escalations: Array<{
+    action: "cancel" | "reschedule";
+    appointmentId: string;
+    contactId: string;
   }> = [];
   const store: SimulatedWhatsAppBookingStore & {
     appointments: typeof appointments;
+    appointmentEvents: typeof appointmentEvents;
+    escalations: typeof escalations;
     patients: InMemoryPatient[];
     reservations: typeof reservations;
   } = {
     appointments,
+    appointmentEvents,
+    escalations,
     patients: input.patients,
     reservations,
     async beginMessage(message) {
@@ -496,6 +591,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
       const key = `${clinicId}:${contactId}`;
       return (
         conversations.get(key) ?? {
+          escalationId: null,
           reservationId: null,
           selectedOfferId: null,
           selectedPatientId: null,
@@ -569,21 +665,66 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
       );
       if (reservation === undefined) return undefined;
       const appointment = {
+        authorContactId: contactId,
         id: randomUUID(),
         origin: "reservation" as const,
         patientId: reservation.patientId,
+        startsAt: reservation.startsAt,
+        status: "confirmed" as const,
       };
       appointments.push(appointment);
       return appointment;
     },
-    async cancelAppointment({ appointmentId, contactId, patientId }) {
+    async cancelAppointment({ appointmentId, contactId, now, patientId }) {
       const appointment = appointments.find(
         (candidate) =>
-          candidate.id === appointmentId && candidate.patientId === patientId,
+          candidate.id === appointmentId &&
+          candidate.patientId === patientId &&
+          candidate.status === "confirmed",
       );
-      return appointment === undefined || contactId !== input.contacts[0]?.id
-        ? undefined
-        : { id: appointment.id };
+      if (appointment === undefined) return { kind: "unavailable" };
+      if (!canAuthorSelfManageAppointment(appointment, contactId, now)) {
+        escalations.push({ action: "cancel", appointmentId, contactId });
+        appointmentEvents.push({
+          appointmentId,
+          type: "self-management-escalated",
+        });
+        return { id: appointmentId, kind: "escalated" };
+      }
+      appointment.status = "cancelled";
+      appointmentEvents.push({ appointmentId, type: "cancelled" });
+      return { id: appointmentId, kind: "cancelled" };
+    },
+    async rescheduleAppointment({
+      appointmentId,
+      contactId,
+      now,
+      patientId,
+      startsAt,
+    }) {
+      const appointment = appointments.find(
+        (candidate) =>
+          candidate.id === appointmentId &&
+          candidate.patientId === patientId &&
+          candidate.status === "confirmed",
+      );
+      if (appointment === undefined) return { kind: "unavailable" };
+      if (!canAuthorSelfManageAppointment(appointment, contactId, now)) {
+        escalations.push({ action: "reschedule", appointmentId, contactId });
+        appointmentEvents.push({
+          appointmentId,
+          type: "self-management-escalated",
+        });
+        return { id: appointmentId, kind: "escalated" };
+      }
+      if (
+        !input.options.some((option) => option.valueOf() === startsAt.valueOf())
+      ) {
+        return { kind: "unavailable" };
+      }
+      appointment.startsAt = startsAt;
+      appointmentEvents.push({ appointmentId, type: "rescheduled" });
+      return { id: appointmentId, kind: "rescheduled", startsAt };
     },
   };
   return store;

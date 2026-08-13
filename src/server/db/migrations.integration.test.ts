@@ -51,6 +51,29 @@ describe("migraciones de PostgreSQL", () => {
             { command: "INSERT", name: "appointment_event_append" },
             { command: "SELECT", name: "appointment_event_operating_read" },
           ]);
+          const escalationPolicies = await migrated<
+            Array<{ command: "INSERT" | "SELECT" | "UPDATE"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_appointment_self_management_escalation'
+            order by cmd, policyname
+          `;
+          expect(escalationPolicies).toEqual([
+            {
+              command: "INSERT",
+              name: "appointment_self_management_escalation_whatsapp_append",
+            },
+            {
+              command: "SELECT",
+              name: "appointment_self_management_escalation_operating_read",
+            },
+            {
+              command: "UPDATE",
+              name: "appointment_self_management_escalation_operating_resolve",
+            },
+          ]);
         } finally {
           await migrated.end();
         }

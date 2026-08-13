@@ -13,6 +13,8 @@ export const appointmentEventTypes = [
   "manual-cancellation-sent",
   "manual-cancellation-failed",
   "reservation-confirmed",
+  "rescheduled",
+  "self-management-escalated",
   "reminder-sent",
   "reminder-failed",
 ] as const;

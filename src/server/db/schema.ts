@@ -399,6 +399,39 @@ export const appointmentEvents = createTable(
   ],
 );
 
+/** Solicitud de autogestión que Asclepio deriva para resolución humana en Panacea. */
+export const appointmentSelfManagementEscalations = createTable(
+  "appointment_self_management_escalation",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    appointmentId: uuid("appointment_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    action: text("action").$type<"cancel" | "reschedule">().notNull(),
+    requestedStartsAt: timestamp("requested_starts_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("appointment_self_management_escalation_clinic_idx").on(
+      table.clinicId,
+      table.createdAt,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.appointmentId],
+      foreignColumns: [appointments.clinicId, appointments.id],
+      name: "appointment_self_management_escalation_appointment_same_clinic_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "appointment_self_management_escalation_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
 /** Ocupación temporal vigente, usada antes de confirmar una Cita. */
 export const temporaryReservations = createTable(
   "temporary_reservation",

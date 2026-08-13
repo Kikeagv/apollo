@@ -303,4 +303,239 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
       ),
     ).resolves.toMatchObject({ kind: "invalid-request" });
   });
+
+  it("permite al Autor reprogramar dentro de la Ventana y conserva el resultado ante un duplicado", async () => {
+    const now = new Date("2026-08-12T14:00:00.000Z");
+    const store = selfManagementStore([
+      new Date("2026-08-12T16:00:00.000Z"),
+      new Date("2026-08-12T17:00:00.000Z"),
+    ]);
+    const appointmentId = await confirmAppointment(
+      store,
+      now,
+      new Date("2026-08-12T16:00:00.000Z"),
+    );
+
+    const request = {
+      from: "+50370000002",
+      id: "reschedule-author",
+      text: `reprogramar ${appointmentId} 2026-08-12T17:00:00.000Z`,
+      to: "+50370000001",
+    };
+    const response = await processSimulatedWhatsAppMessage(request, store, now);
+
+    expect(response).toMatchObject({
+      id: appointmentId,
+      kind: "appointment-rescheduled",
+      startsAt: new Date("2026-08-12T17:00:00.000Z"),
+    });
+    await expect(
+      processSimulatedWhatsAppMessage(request, store, now),
+    ).resolves.toEqual(response);
+    expect(store.appointments).toMatchObject([
+      { id: appointmentId, startsAt: new Date("2026-08-12T17:00:00.000Z") },
+    ]);
+    expect(store.appointmentEvents).toContainEqual({
+      appointmentId,
+      type: "rescheduled",
+    });
+  });
+
+  it("escala a Panacea la solicitud de otro Tutor sin cambiar la Cita", async () => {
+    const now = new Date("2026-08-12T14:00:00.000Z");
+    const store = selfManagementStore(
+      [new Date("2026-08-12T16:00:00.000Z")],
+      [
+        { id: "contact-author", name: "Ana", phoneE164: "+50370000002" },
+        { id: "contact-tutor", name: "Carlos", phoneE164: "+50370000003" },
+      ],
+    );
+    const appointmentId = await confirmAppointment(
+      store,
+      now,
+      new Date("2026-08-12T16:00:00.000Z"),
+    );
+    await processSimulatedWhatsAppMessage(
+      {
+        from: "+50370000003",
+        id: "select-tutor-patient",
+        text: "paciente patient-1",
+        to: "+50370000001",
+      },
+      store,
+      now,
+    );
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000003",
+          id: "cancel-tutor-appointment",
+          text: `cancelar ${appointmentId}`,
+          to: "+50370000001",
+        },
+        store,
+        now,
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+    expect(store.appointments).toMatchObject([
+      { id: appointmentId, status: "confirmed" },
+    ]);
+    expect(store.escalations).toContainEqual({
+      action: "cancel",
+      appointmentId,
+      contactId: "contact-tutor",
+    });
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000003",
+          id: "message-after-escalation",
+          text: "info",
+          to: "+50370000001",
+        },
+        store,
+        now,
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+  });
+
+  it("incluye el límite exacto de 12 horas y rechaza una reprogramación sin capacidad", async () => {
+    const now = new Date("2026-08-12T14:00:00.000Z");
+    const initialStart = new Date("2026-08-13T02:00:00.000Z");
+    const store = selfManagementStore([initialStart]);
+    const appointmentId = await confirmAppointment(store, now, initialStart);
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "reschedule-without-capacity",
+          text: `reprogramar ${appointmentId} 2026-08-13T02:30:00.000Z`,
+          to: "+50370000001",
+        },
+        store,
+        now,
+      ),
+    ).resolves.toMatchObject({ kind: "appointment-unavailable" });
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "cancel-at-window-boundary",
+          text: `cancelar ${appointmentId}`,
+          to: "+50370000001",
+        },
+        store,
+        now,
+      ),
+    ).resolves.toMatchObject({
+      id: appointmentId,
+      kind: "appointment-cancelled",
+    });
+  });
+
+  it("escala sin modificar una Cita cuando la solicitud llega fuera de la Ventana", async () => {
+    const now = new Date("2026-08-12T14:00:00.000Z");
+    const startsAt = new Date("2026-08-13T02:05:00.000Z");
+    const store = selfManagementStore([startsAt]);
+    const appointmentId = await confirmAppointment(store, now, startsAt);
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "cancel-after-window",
+          text: `cancelar ${appointmentId}`,
+          to: "+50370000001",
+        },
+        store,
+        now,
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+    expect(store.appointments).toContainEqual(
+      expect.objectContaining({ id: appointmentId, status: "confirmed" }),
+    );
+    expect(store.escalations).toContainEqual({
+      action: "cancel",
+      appointmentId,
+      contactId: "contact-author",
+    });
+  });
 });
+
+function selfManagementStore(
+  options: Date[],
+  contacts = [{ id: "contact-author", name: "Ana", phoneE164: "+50370000002" }],
+) {
+  return createInMemorySimulatedWhatsAppBookingStore({
+    clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+    contacts,
+    links: contacts.map((contact) => ({
+      contactId: contact.id,
+      patientId: "patient-1",
+    })),
+    offers: [
+      {
+        doctorId: "doctor-1",
+        doctorName: "Dra. Sol",
+        id: "offer-1",
+        priceUsd: "25.00",
+        serviceName: "Consulta",
+      },
+    ],
+    options,
+    patients: [{ birthDate: "1990-01-01", id: "patient-1", name: "Ana" }],
+  });
+}
+
+async function confirmAppointment(
+  store: ReturnType<typeof selfManagementStore>,
+  now: Date,
+  startsAt: Date,
+) {
+  await processSimulatedWhatsAppMessage(
+    {
+      from: "+50370000002",
+      id: "select-author-patient",
+      text: "paciente patient-1",
+      to: "+50370000001",
+    },
+    store,
+    now,
+  );
+  await processSimulatedWhatsAppMessage(
+    {
+      from: "+50370000002",
+      id: "select-author-offer",
+      text: `opciones offer-1 ${startsAt.toISOString().slice(0, 10)}`,
+      to: "+50370000001",
+    },
+    store,
+    now,
+  );
+  await processSimulatedWhatsAppMessage(
+    {
+      from: "+50370000002",
+      id: "hold-author-reservation",
+      text: `reservar ${startsAt.toISOString()}`,
+      to: "+50370000001",
+    },
+    store,
+    now,
+  );
+  const response = await processSimulatedWhatsAppMessage(
+    {
+      from: "+50370000002",
+      id: "confirm-author-reservation",
+      text: "confirmar",
+      to: "+50370000001",
+    },
+    store,
+    now,
+  );
+  if (response.kind !== "appointment-confirmed") {
+    throw new Error("La prueba no pudo confirmar la Cita");
+  }
+  return response.id;
+}

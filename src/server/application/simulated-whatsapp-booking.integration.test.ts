@@ -7,6 +7,7 @@ import { processSimulatedWhatsAppMessage } from "./simulated-whatsapp-booking";
 import { listPendingGuardianshipVerifications } from "./administrative-records";
 import { sendAppointmentReminder } from "./appointment-reminders";
 import { canContactManageAppointment } from "./appointment-self-management";
+import { resolveAppointmentSelfManagementEscalation } from "./appointment-self-management";
 import { db } from "../db";
 import {
   inClinicTransaction,
@@ -14,6 +15,7 @@ import {
 } from "../db/clinic-context";
 import {
   drizzleAppointmentSelfManagementStore,
+  drizzleAppointmentSelfManagementEscalationResolver,
   drizzleSimulatedWhatsAppBookingStore,
 } from "../db/simulated-whatsapp-booking-store";
 import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-store";
@@ -24,6 +26,7 @@ import {
 } from "../whatsapp/simulated-appointment-messages";
 import {
   appointments,
+  appointmentSelfManagementEscalations,
   apoloSuperadmins,
   clinicUsers,
   clinics,
@@ -174,18 +177,82 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           drizzleSimulatedWhatsAppBookingStore,
           now,
         );
+        const escalated = await processSimulatedWhatsAppMessage(
+          {
+            from: "+50370000003",
+            id: `${fixture.clinicId}-tutor-cancels-appointment`,
+            text: `cancelar ${confirmed.id}`,
+            to: fixture.whatsappNumber,
+          },
+          drizzleSimulatedWhatsAppBookingStore,
+          now,
+        );
+        expect(escalated).toEqual({ kind: "conversation-silenced", text: "" });
+        const escalation = await inClinicTransaction(fixture, (transaction) =>
+          transaction
+            .select({ id: appointmentSelfManagementEscalations.id })
+            .from(appointmentSelfManagementEscalations)
+            .where(
+              eq(
+                appointmentSelfManagementEscalations.appointmentId,
+                confirmed.id,
+              ),
+            )
+            .then((rows) => rows[0]),
+        );
+        if (escalation === undefined) {
+          throw new Error("No se escaló la solicitud del Tutor");
+        }
+        await inClinicTransaction(fixture, async (transaction) => {
+          await expect(
+            transaction
+              .select({
+                action: appointmentSelfManagementEscalations.action,
+                contactId: appointmentSelfManagementEscalations.contactId,
+              })
+              .from(appointmentSelfManagementEscalations)
+              .where(
+                eq(
+                  appointmentSelfManagementEscalations.appointmentId,
+                  confirmed.id,
+                ),
+              ),
+          ).resolves.toEqual([{ action: "cancel", contactId: tutor.id }]);
+        });
         await expect(
           processSimulatedWhatsAppMessage(
             {
               from: "+50370000003",
-              id: `${fixture.clinicId}-tutor-cancels-appointment`,
-              text: `cancelar ${confirmed.id}`,
+              id: `${fixture.clinicId}-tutor-after-escalation`,
+              text: "info",
               to: fixture.whatsappNumber,
             },
             drizzleSimulatedWhatsAppBookingStore,
             now,
           ),
-        ).resolves.toMatchObject({ kind: "invalid-request" });
+        ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+        await expect(
+          resolveAppointmentSelfManagementEscalation(
+            {
+              clinicId: fixture.clinicId,
+              escalationId: escalation.id,
+              identityId: fixture.identityId,
+            },
+            drizzleAppointmentSelfManagementEscalationResolver,
+          ),
+        ).resolves.toBe(true);
+        await expect(
+          processSimulatedWhatsAppMessage(
+            {
+              from: "+50370000003",
+              id: `${fixture.clinicId}-tutor-after-close`,
+              text: "info",
+              to: fixture.whatsappNumber,
+            },
+            drizzleSimulatedWhatsAppBookingStore,
+            now,
+          ),
+        ).resolves.toMatchObject({ kind: "public-information" });
         await expect(
           processSimulatedWhatsAppMessage(
             message(fixture, "message-4", "reservar 2026-08-17T14:00:00.000Z"),

@@ -1,4 +1,4 @@
-import { and, eq, gt, lt, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 
 import { CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
@@ -10,15 +10,25 @@ import type {
   PublicOffer,
   SimulatedWhatsAppBookingStore,
 } from "~/server/application/simulated-whatsapp-booking";
-import type { AppointmentSelfManagementStore } from "~/server/application/appointment-self-management";
+import type {
+  AppointmentSelfManagementEscalationReader,
+  AppointmentSelfManagementEscalationResolver,
+  AppointmentSelfManagementStore,
+} from "~/server/application/appointment-self-management";
+import {
+  drizzleAgendaAppointmentCanceller,
+  drizzleAgendaAppointmentRescheduler,
+} from "~/server/db/agenda-appointment-rescheduler";
 import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import {
+  inClinicTransaction,
   inSimulatedWhatsAppClinicTransaction,
   inSimulatedWhatsAppInboundTransaction,
 } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import {
   appointmentEvents,
+  appointmentSelfManagementEscalations,
   appointments,
   clinicUsers,
   contactPatientLinks,
@@ -35,6 +45,7 @@ import {
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const EMPTY_CONVERSATION: BookingConversation = {
+  escalationId: null,
   reservationId: null,
   selectedOfferId: null,
   selectedPatientId: null,
@@ -115,7 +126,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                 eq(whatsappConversations.contactId, input.contactId),
               ),
             });
-          return conversation?.state ?? EMPTY_CONVERSATION;
+          return { ...EMPTY_CONVERSATION, ...conversation?.state };
         },
       );
     },
@@ -473,36 +484,24 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
     },
 
     async cancelAppointment(input) {
+      const outcome =
+        await drizzleAgendaAppointmentCanceller.cancelAppointment(input);
+      if (outcome.kind !== "unauthorized") return outcome;
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
-        async (transaction) => {
-          const [appointment] = await transaction
-            .update(appointments)
-            .set({ status: "cancelled" })
-            .where(
-              and(
-                eq(appointments.clinicId, input.clinicId),
-                eq(appointments.id, input.appointmentId),
-                eq(appointments.patientId, input.patientId),
-                eq(appointments.authorContactId, input.contactId),
-                eq(appointments.status, "confirmed"),
-                gt(appointments.startsAt, input.now),
-                lt(
-                  appointments.startsAt,
-                  new Date(input.now.valueOf() + 12 * 60 * 60_000),
-                ),
-              ),
-            )
-            .returning({ id: appointments.id });
-          if (appointment === undefined) return undefined;
-          await transaction.insert(appointmentEvents).values({
-            actorContactId: input.contactId,
-            appointmentId: appointment.id,
-            clinicId: input.clinicId,
-            type: "cancelled",
-          });
-          return appointment;
-        },
+        (transaction) =>
+          escalateSelfManagementRequest(transaction, input, "cancel"),
+      );
+    },
+
+    async rescheduleAppointment(input) {
+      const outcome =
+        await drizzleAgendaAppointmentRescheduler.rescheduleAppointment(input);
+      if (outcome.kind !== "unauthorized") return outcome;
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        (transaction) =>
+          escalateSelfManagementRequest(transaction, input, "reschedule"),
       );
     },
   };
@@ -526,6 +525,131 @@ export const drizzleAppointmentSelfManagementStore: AppointmentSelfManagementSto
       );
     },
   };
+
+export const drizzleAppointmentSelfManagementEscalationReader: AppointmentSelfManagementEscalationReader =
+  {
+    async listSelfManagementEscalations(input) {
+      return inClinicTransaction(input, async (transaction) =>
+        transaction
+          .select({
+            action: appointmentSelfManagementEscalations.action,
+            appointmentId: appointmentSelfManagementEscalations.appointmentId,
+            contactId: contacts.id,
+            contactName: contacts.name,
+            createdAt: appointmentSelfManagementEscalations.createdAt,
+            id: appointmentSelfManagementEscalations.id,
+            requestedStartsAt:
+              appointmentSelfManagementEscalations.requestedStartsAt,
+          })
+          .from(appointmentSelfManagementEscalations)
+          .innerJoin(
+            contacts,
+            and(
+              eq(
+                appointmentSelfManagementEscalations.clinicId,
+                contacts.clinicId,
+              ),
+              eq(appointmentSelfManagementEscalations.contactId, contacts.id),
+            ),
+          )
+          .where(
+            and(
+              eq(appointmentSelfManagementEscalations.clinicId, input.clinicId),
+              isNull(appointmentSelfManagementEscalations.resolvedAt),
+            ),
+          )
+          .orderBy(appointmentSelfManagementEscalations.createdAt)
+          .then((rows) =>
+            rows.map(({ contactId, contactName, ...escalation }) => ({
+              ...escalation,
+              contact: { id: contactId, name: contactName },
+            })),
+          ),
+      );
+    },
+  };
+
+export const drizzleAppointmentSelfManagementEscalationResolver: AppointmentSelfManagementEscalationResolver =
+  {
+    async resolveSelfManagementEscalation(input) {
+      return inClinicTransaction(input, async (transaction) => {
+        const [escalation] = await transaction
+          .update(appointmentSelfManagementEscalations)
+          .set({ resolvedAt: new Date() })
+          .where(
+            and(
+              eq(appointmentSelfManagementEscalations.clinicId, input.clinicId),
+              eq(appointmentSelfManagementEscalations.id, input.escalationId),
+              isNull(appointmentSelfManagementEscalations.resolvedAt),
+            ),
+          )
+          .returning({
+            contactId: appointmentSelfManagementEscalations.contactId,
+          });
+        if (escalation === undefined) return false;
+        const conversation =
+          await transaction.query.whatsappConversations.findFirst({
+            columns: { state: true },
+            where: and(
+              eq(whatsappConversations.clinicId, input.clinicId),
+              eq(whatsappConversations.contactId, escalation.contactId),
+            ),
+          });
+        if (conversation?.state.escalationId === input.escalationId) {
+          await transaction
+            .update(whatsappConversations)
+            .set({
+              state: {
+                ...EMPTY_CONVERSATION,
+                ...conversation.state,
+                escalationId: null,
+              },
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(whatsappConversations.clinicId, input.clinicId),
+                eq(whatsappConversations.contactId, escalation.contactId),
+              ),
+            );
+        }
+        return true;
+      });
+    },
+  };
+
+async function escalateSelfManagementRequest(
+  transaction: ClinicTransaction,
+  input: {
+    appointmentId: string;
+    clinicId: string;
+    contactId: string;
+    startsAt?: Date;
+  },
+  action: "cancel" | "reschedule",
+) {
+  const [escalation] = await transaction
+    .insert(appointmentSelfManagementEscalations)
+    .values({
+      action,
+      appointmentId: input.appointmentId,
+      clinicId: input.clinicId,
+      contactId: input.contactId,
+      requestedStartsAt: input.startsAt,
+    })
+    .returning({ id: appointmentSelfManagementEscalations.id });
+  if (escalation === undefined) {
+    throw new Error("No se pudo crear el Escalamiento de la Cita");
+  }
+  await transaction.insert(appointmentEvents).values({
+    actorContactId: input.contactId,
+    appointmentId: input.appointmentId,
+    clinicId: input.clinicId,
+    reason: action,
+    type: "self-management-escalated",
+  });
+  return { id: escalation.id, kind: "escalated" as const };
+}
 
 async function activeOffer(
   transaction: ClinicTransaction,
@@ -642,6 +766,9 @@ function hydrateStoredResponse(
   }
   if (response.kind === "reservation-held") {
     return { ...response, expiresAt: new Date(response.expiresAt) };
+  }
+  if (response.kind === "appointment-rescheduled") {
+    return { ...response, startsAt: new Date(response.startsAt) };
   }
   return response;
 }
