@@ -18,6 +18,13 @@ export type ContactPatientLink = {
   patientId: string;
 };
 
+export type PendingGuardianshipVerification = {
+  guardianDui: string;
+  id: string;
+  patient: Patient;
+  tutor: Contact;
+};
+
 export type AdministrativeRecords = {
   contacts: Array<Contact & { patientIds: string[] }>;
   patients: Array<Patient & { contactIds: string[] }>;
@@ -72,6 +79,10 @@ export type AdministrativeRecordsStore = {
     clinicId: string;
     identityId: string;
   }): Promise<AdministrativeRecords>;
+  listPendingGuardianshipVerifications(input: {
+    clinicId: string;
+    identityId: string;
+  }): Promise<PendingGuardianshipVerification[]>;
 };
 
 /** Registra un Contacto administrativo identificado por su teléfono dentro de la Clínica. */
@@ -191,6 +202,17 @@ export async function listAdministrativeRecords(
   store: Pick<AdministrativeRecordsStore, "list">,
 ) {
   return store.list(input);
+}
+
+/** Lista las tutelas que la Clínica debe verificar antes de su primera visita. */
+export async function listPendingGuardianshipVerifications(
+  input: { clinicId: string; identityId: string },
+  store: Pick<
+    AdministrativeRecordsStore,
+    "listPendingGuardianshipVerifications"
+  >,
+) {
+  return store.listPendingGuardianshipVerifications(input);
 }
 
 function requiredName(value: string) {

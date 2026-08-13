@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import {
@@ -17,6 +17,7 @@ import {
   type ManualAppointmentMessageType,
   type ManualAppointmentReader,
 } from "~/server/application/manual-appointments";
+import { type AppointmentReminderStore } from "~/server/application/appointment-reminders";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import {
@@ -30,6 +31,7 @@ import {
   patients,
   serviceOffers,
   services,
+  simulatedWhatsAppMessages,
 } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -38,6 +40,7 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   ManualAppointmentCanceller &
   ManualAppointmentMessageDeliveryRecorder &
   ManualAppointmentReader &
+  AppointmentReminderStore &
   PanaceaCalendarReader = {
   async create(input) {
     return inClinicTransaction(input, async (transaction) => {
@@ -129,6 +132,121 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
           type: "manual-confirmation" as const,
         },
       };
+    });
+  },
+
+  async listReminderRecipients(input) {
+    return inClinicTransaction(input, async (transaction) => {
+      const appointment = await transaction.query.appointments.findFirst({
+        columns: {
+          authorContactId: true,
+          id: true,
+          patientId: true,
+          startsAt: true,
+        },
+        where: and(
+          eq(appointments.clinicId, input.clinicId),
+          eq(appointments.id, input.appointmentId),
+          eq(appointments.status, "confirmed"),
+        ),
+      });
+      if (appointment === undefined) return undefined;
+      if (appointment.patientId === null) return [];
+      const reminderHours = { "20h": 20, "22h": 22, "24h": 24 } as const;
+      const expectedStart = new Date(
+        input.now.valueOf() + reminderHours[input.checkpoint] * 60 * 60_000,
+      );
+      if (appointment.startsAt.valueOf() !== expectedStart.valueOf()) return [];
+      const [confirmation, alreadySent] = await Promise.all([
+        transaction.query.appointmentEvents.findFirst({
+          columns: { occurredAt: true },
+          where: and(
+            eq(appointmentEvents.clinicId, input.clinicId),
+            eq(appointmentEvents.appointmentId, input.appointmentId),
+            eq(appointmentEvents.type, "reservation-confirmed"),
+          ),
+        }),
+        transaction.query.appointmentEvents.findFirst({
+          columns: { id: true },
+          where: and(
+            eq(appointmentEvents.clinicId, input.clinicId),
+            eq(appointmentEvents.appointmentId, input.appointmentId),
+            eq(appointmentEvents.type, "reminder-sent"),
+            eq(appointmentEvents.reason, input.checkpoint),
+          ),
+        }),
+      ]);
+      if (confirmation === undefined || alreadySent !== undefined) return [];
+      if (appointment.authorContactId === null) return [];
+      const replied =
+        await transaction.query.simulatedWhatsAppMessages.findFirst({
+          columns: { id: true },
+          where: and(
+            eq(simulatedWhatsAppMessages.clinicId, input.clinicId),
+            eq(
+              simulatedWhatsAppMessages.contactId,
+              appointment.authorContactId,
+            ),
+            gt(simulatedWhatsAppMessages.createdAt, confirmation.occurredAt),
+          ),
+        });
+      if (replied !== undefined) return [];
+      const recipients = await transaction
+        .select({
+          id: contacts.id,
+          name: contacts.name,
+          phoneE164: contacts.phoneE164,
+        })
+        .from(contactPatientLinks)
+        .innerJoin(
+          contacts,
+          and(
+            eq(contactPatientLinks.clinicId, contacts.clinicId),
+            eq(contactPatientLinks.contactId, contacts.id),
+          ),
+        )
+        .where(
+          and(
+            eq(contactPatientLinks.clinicId, input.clinicId),
+            eq(contactPatientLinks.patientId, appointment.patientId),
+            or(
+              eq(contactPatientLinks.relationship, "tutor"),
+              appointment.authorContactId === null
+                ? undefined
+                : eq(
+                    contactPatientLinks.contactId,
+                    appointment.authorContactId,
+                  ),
+            ),
+          ),
+        );
+      return recipients;
+    });
+  },
+
+  async recordReminderDelivery(input) {
+    return inClinicTransaction(input, async (transaction) => {
+      const actor = await transaction.query.clinicUsers.findFirst({
+        columns: { id: true },
+        where: and(
+          eq(clinicUsers.clinicId, input.clinicId),
+          eq(clinicUsers.identityId, input.identityId),
+          eq(clinicUsers.active, true),
+        ),
+      });
+      if (actor === undefined) {
+        throw new Error(
+          "No se encontró el Usuario de clínica para el recordatorio",
+        );
+      }
+      await transaction.insert(appointmentEvents).values({
+        actorClinicUserId: actor.id,
+        appointmentId: input.appointmentId,
+        clinicId: input.clinicId,
+        recipientContactId: input.recipientContactId,
+        reason: input.checkpoint,
+        type: input.result === "sent" ? "reminder-sent" : "reminder-failed",
+      });
     });
   },
 

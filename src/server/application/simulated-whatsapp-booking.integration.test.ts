@@ -4,12 +4,24 @@ import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { processSimulatedWhatsAppMessage } from "./simulated-whatsapp-booking";
+import { listPendingGuardianshipVerifications } from "./administrative-records";
+import { sendAppointmentReminder } from "./appointment-reminders";
+import { canContactManageAppointment } from "./appointment-self-management";
 import { db } from "../db";
 import {
   inClinicTransaction,
   inSuperadminTransaction,
 } from "../db/clinic-context";
-import { drizzleSimulatedWhatsAppBookingStore } from "../db/simulated-whatsapp-booking-store";
+import {
+  drizzleAppointmentSelfManagementStore,
+  drizzleSimulatedWhatsAppBookingStore,
+} from "../db/simulated-whatsapp-booking-store";
+import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-store";
+import { drizzleManualAppointmentStore } from "../db/manual-appointment-store";
+import {
+  getSentSimulatedAppointmentReminders,
+  simulatedAppointmentReminderSender,
+} from "../whatsapp/simulated-appointment-messages";
 import {
   appointments,
   apoloSuperadmins,
@@ -63,30 +75,117 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           now,
         );
         expect(held).toMatchObject({ kind: "reservation-held" });
-        const confirmations = await Promise.all([
-          processSimulatedWhatsAppMessage(
-            message(fixture, "message-5", "confirmar"),
-            drizzleSimulatedWhatsAppBookingStore,
-            now,
-          ),
-          processSimulatedWhatsAppMessage(
-            message(fixture, "message-6", "confirmar"),
-            drizzleSimulatedWhatsAppBookingStore,
-            now,
-          ),
-        ]);
-        expect(confirmations).toContainEqual(
-          expect.objectContaining({
-            kind: "appointment-confirmed",
-            origin: "reservation",
-            patientId: fixture.patientId,
-          }),
+        const confirmed = await processSimulatedWhatsAppMessage(
+          message(fixture, "message-5", "confirmar"),
+          drizzleSimulatedWhatsAppBookingStore,
+          now,
+        );
+        if (confirmed?.kind !== "appointment-confirmed") {
+          throw new Error("No se confirmó la Cita de reserva");
+        }
+        const tutor = await inClinicTransaction(
+          fixture,
+          async (transaction) => {
+            const [createdTutor] = await transaction
+              .insert(contacts)
+              .values({
+                clinicId: fixture.clinicId,
+                name: "Carlos Tutor",
+                phoneE164: "+50370000003",
+              })
+              .returning({ id: contacts.id });
+            if (createdTutor === undefined)
+              throw new Error("No se creó el Tutor");
+            await transaction.insert(contactPatientLinks).values({
+              clinicId: fixture.clinicId,
+              contactId: createdTutor.id,
+              guardianDui: "01234567-8",
+              guardianshipVerificationStatus: "pending",
+              patientId: fixture.patientId,
+              relationship: "tutor",
+            });
+            return createdTutor;
+          },
+        );
+        const reminder = await sendAppointmentReminder(
+          {
+            appointmentId: confirmed.id,
+            checkpoint: "24h",
+            clinicId: fixture.clinicId,
+            identityId: fixture.identityId,
+            now: new Date("2026-08-16T14:00:00.000Z"),
+          },
+          drizzleManualAppointmentStore,
+          simulatedAppointmentReminderSender,
+        );
+        expect(reminder.recipients.map((recipient) => recipient.id)).toEqual(
+          expect.arrayContaining([fixture.contactId, tutor.id]),
         );
         expect(
-          confirmations.filter(
-            (response) => response.kind === "appointment-confirmed",
+          getSentSimulatedAppointmentReminders().some(
+            (reminder) =>
+              reminder.appointmentId === confirmed.id &&
+              reminder.recipient.id === tutor.id,
           ),
-        ).toHaveLength(1);
+        ).toBe(true);
+        await processSimulatedWhatsAppMessage(
+          message(fixture, "message-reply", "info"),
+          drizzleSimulatedWhatsAppBookingStore,
+          now,
+        );
+        await expect(
+          sendAppointmentReminder(
+            {
+              appointmentId: confirmed.id,
+              checkpoint: "22h",
+              clinicId: fixture.clinicId,
+              identityId: fixture.identityId,
+              now: new Date("2026-08-16T16:00:00.000Z"),
+            },
+            drizzleManualAppointmentStore,
+            simulatedAppointmentReminderSender,
+          ),
+        ).resolves.toEqual({ recipients: [] });
+        await inClinicTransaction(fixture, async (transaction) => {
+          await expect(
+            transaction
+              .select({ authorContactId: appointments.authorContactId })
+              .from(appointments)
+              .where(eq(appointments.id, confirmed.id)),
+          ).resolves.toEqual([{ authorContactId: fixture.contactId }]);
+        });
+        await expect(
+          canContactManageAppointment(
+            {
+              appointmentId: confirmed.id,
+              clinicId: fixture.clinicId,
+              contactId: tutor.id,
+            },
+            drizzleAppointmentSelfManagementStore,
+          ),
+        ).resolves.toBe(false);
+        await processSimulatedWhatsAppMessage(
+          {
+            from: "+50370000003",
+            id: `${fixture.clinicId}-tutor-selects-patient`,
+            text: `paciente ${fixture.patientId}`,
+            to: fixture.whatsappNumber,
+          },
+          drizzleSimulatedWhatsAppBookingStore,
+          now,
+        );
+        await expect(
+          processSimulatedWhatsAppMessage(
+            {
+              from: "+50370000003",
+              id: `${fixture.clinicId}-tutor-cancels-appointment`,
+              text: `cancelar ${confirmed.id}`,
+              to: fixture.whatsappNumber,
+            },
+            drizzleSimulatedWhatsAppBookingStore,
+            now,
+          ),
+        ).resolves.toMatchObject({ kind: "invalid-request" });
         await expect(
           processSimulatedWhatsAppMessage(
             message(fixture, "message-4", "reservar 2026-08-17T14:00:00.000Z"),
@@ -109,6 +208,70 @@ describe("Reserva simulada de WhatsApp persistente", () => {
               .where(eq(simulatedWhatsAppMessages.clinicId, fixture.clinicId)),
           ).resolves.toEqual([]);
         });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "registra la tutela pendiente, la expone a Panacea y oculta al menor de Contactos no vinculados",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-12T14:00:00.000Z");
+      try {
+        const registered = await processSimulatedWhatsAppMessage(
+          message(
+            fixture,
+            "minor-1",
+            "registrar menor|Lucía Pérez|01234567-8|2018-04-02",
+          ),
+          drizzleSimulatedWhatsAppBookingStore,
+          now,
+        );
+        if (registered.kind !== "patient-registered") {
+          throw new Error("No se registró el menor");
+        }
+        const tasks = await listPendingGuardianshipVerifications(
+          fixture,
+          drizzleAdministrativeRecordsStore,
+        );
+        expect(tasks).toHaveLength(1);
+        expect(tasks[0]?.guardianDui).toBe("01234567-8");
+        expect(tasks[0]?.patient.id).toBe(registered.patientId);
+        await expect(
+          listPendingGuardianshipVerifications(
+            fixture.other,
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toEqual([]);
+
+        await inClinicTransaction(fixture, async (transaction) => {
+          await transaction.insert(contacts).values({
+            clinicId: fixture.clinicId,
+            name: "Carlos",
+            phoneE164: "+50370000003",
+          });
+        });
+        const privateMessage = (id: string, patientId: string) =>
+          processSimulatedWhatsAppMessage(
+            {
+              from: "+50370000003",
+              id: `${fixture.clinicId}-${id}`,
+              text: `paciente ${patientId}`,
+              to: fixture.whatsappNumber,
+            },
+            drizzleSimulatedWhatsAppBookingStore,
+            now,
+          );
+        await expect(
+          privateMessage("minor-privacy", registered.patientId),
+        ).resolves.toEqual(
+          await privateMessage(
+            "missing-privacy",
+            "patient-that-does-not-exist",
+          ),
+        );
       } finally {
         await fixture.cleanup();
       }
@@ -258,7 +421,7 @@ async function createFixture() {
       contactId: contact.id,
       patientId: patient.id,
     });
-    return { offerId: offer.id, patientId: patient.id };
+    return { contactId: contact.id, offerId: offer.id, patientId: patient.id };
   });
   return {
     ...primary,

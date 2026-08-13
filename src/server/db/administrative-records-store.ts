@@ -243,6 +243,65 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
       };
     });
   },
+
+  async listPendingGuardianshipVerifications(input) {
+    return inClinicTransaction(input, async (transaction) => {
+      const tasks = await transaction
+        .select({
+          guardianDui: contactPatientLinks.guardianDui,
+          id: contactPatientLinks.id,
+          patientBirthDate: patients.birthDate,
+          patientId: patients.id,
+          patientName: patients.name,
+          tutorId: contacts.id,
+          tutorName: contacts.name,
+          tutorPhoneE164: contacts.phoneE164,
+        })
+        .from(contactPatientLinks)
+        .innerJoin(
+          patients,
+          and(
+            eq(contactPatientLinks.clinicId, patients.clinicId),
+            eq(contactPatientLinks.patientId, patients.id),
+          ),
+        )
+        .innerJoin(
+          contacts,
+          and(
+            eq(contactPatientLinks.clinicId, contacts.clinicId),
+            eq(contactPatientLinks.contactId, contacts.id),
+          ),
+        )
+        .where(
+          and(
+            eq(contactPatientLinks.clinicId, input.clinicId),
+            eq(contactPatientLinks.relationship, "tutor"),
+            eq(contactPatientLinks.guardianshipVerificationStatus, "pending"),
+          ),
+        )
+        .orderBy(asc(patients.name), asc(contactPatientLinks.id));
+      return tasks.flatMap((task) =>
+        task.guardianDui === null || task.patientBirthDate === null
+          ? []
+          : [
+              {
+                guardianDui: task.guardianDui,
+                id: task.id,
+                patient: {
+                  birthDate: task.patientBirthDate,
+                  id: task.patientId,
+                  name: task.patientName,
+                },
+                tutor: {
+                  id: task.tutorId,
+                  name: task.tutorName,
+                  phoneE164: task.tutorPhoneE164,
+                },
+              },
+            ],
+      );
+    });
+  },
 };
 
 const contactFields = {

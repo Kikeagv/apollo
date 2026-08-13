@@ -13,6 +13,8 @@ export const appointmentEventTypes = [
   "manual-cancellation-sent",
   "manual-cancellation-failed",
   "reservation-confirmed",
+  "reminder-sent",
+  "reminder-failed",
 ] as const;
 
 export type AppointmentEventType = (typeof appointmentEventTypes)[number];

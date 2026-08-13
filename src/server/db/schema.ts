@@ -543,6 +543,9 @@ export const contactPatientLinks = createTable(
     clinicId: uuid("clinic_id").notNull(),
     contactId: uuid("contact_id").notNull(),
     patientId: uuid("patient_id").notNull(),
+    relationship: text("relationship").notNull().default("contact"),
+    guardianDui: text("guardian_dui"),
+    guardianshipVerificationStatus: text("guardianship_verification_status"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

@@ -8,6 +8,8 @@ import { formValue } from "./form-values";
 export function AdministrativeRecordsSection() {
   const [result, setResult] = useState<string>();
   const records = api.panacea.listAdministrativeRecords.useQuery();
+  const pendingGuardianshipVerifications =
+    api.panacea.listPendingGuardianshipVerifications.useQuery();
   const cancelledAppointments =
     api.panacea.listCancelledManualAppointments.useQuery();
   const createContact = api.panacea.createContact.useMutation({
@@ -110,6 +112,26 @@ export function AdministrativeRecordsSection() {
           la atención.
         </p>
       </div>
+      <section
+        aria-label="Tutelas pendientes de verificación"
+        className="rounded border border-amber-700/60 bg-amber-950/30 p-3"
+      >
+        <h3 className="font-medium">Tutelas pendientes de verificación</h3>
+        {pendingGuardianshipVerifications.data?.length ? (
+          <ul className="mt-2 space-y-2 text-sm">
+            {pendingGuardianshipVerifications.data.map((task) => (
+              <li key={task.id}>
+                Verificar la tutela de {task.tutor.name} (DUI {task.guardianDui}
+                ) sobre {task.patient.name} antes de su primera visita.
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 text-sm text-slate-300">
+            No hay tutelas pendientes.
+          </p>
+        )}
+      </section>
       <div className="grid gap-4 sm:grid-cols-2">
         <form className="grid gap-2" onSubmit={createContactRecord}>
           <h3 className="font-medium">Nuevo Contacto</h3>

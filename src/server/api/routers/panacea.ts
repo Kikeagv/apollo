@@ -28,6 +28,7 @@ import {
   createContactPatientLink,
   createPatient,
   listAdministrativeRecords,
+  listPendingGuardianshipVerifications,
   registerAdministrativeRecordsForManualAppointment,
   updateContact,
   updatePatient,
@@ -159,6 +160,16 @@ export const panaceaRouter = {
 
   listAdministrativeRecords: clinicProcedure.query(({ ctx }) =>
     listAdministrativeRecords(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleAdministrativeRecordsStore,
+    ),
+  ),
+
+  listPendingGuardianshipVerifications: clinicProcedure.query(({ ctx }) =>
+    listPendingGuardianshipVerifications(
       {
         clinicId: ctx.clinic.clinicId,
         identityId: ctx.clinic.identityId,

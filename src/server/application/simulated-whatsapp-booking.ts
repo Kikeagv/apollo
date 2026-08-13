@@ -16,6 +16,7 @@ export type WhatsAppBookingResponse =
       patients: PatientSummary[];
       text: string;
     }
+  | { id: string; kind: "appointment-cancelled"; text: string }
   | { kind: "patient-selected"; patientId: string; text: string }
   | { kind: "public-information"; offers: PublicOffer[]; text: string }
   | { kind: "care-options"; options: Date[]; text: string }
@@ -56,11 +57,7 @@ export type BookingConversation = {
 };
 
 export type SimulatedWhatsAppBookingStore = {
-  beginMessage(input: {
-    from: string;
-    id: string;
-    to: string;
-  }): Promise<
+  beginMessage(input: { from: string; id: string; to: string }): Promise<
     | {
         contactId: string;
         clinicId: string;
@@ -81,6 +78,13 @@ export type SimulatedWhatsAppBookingStore = {
   }): Promise<
     { id: string; origin: "reservation"; patientId: string } | undefined
   >;
+  cancelAppointment(input: {
+    appointmentId: string;
+    clinicId: string;
+    contactId: string;
+    now: Date;
+    patientId: string;
+  }): Promise<{ id: string } | undefined>;
   getConversation(input: {
     clinicId: string;
     contactId: string;
@@ -103,6 +107,14 @@ export type SimulatedWhatsAppBookingStore = {
     clinicId: string;
     contactId: string;
     dui: string;
+    name: string;
+    now: Date;
+  }): Promise<PatientSummary>;
+  registerMinor(input: {
+    birthDate: string;
+    clinicId: string;
+    contactId: string;
+    guardianDui: string;
     name: string;
     now: Date;
   }): Promise<PatientSummary>;
@@ -198,13 +210,24 @@ async function processMessage(
     }
     case "registrar": {
       const registration = parseAdultRegistration(text);
-      if (registration === undefined) return invalidRequest();
-      if (!isAdult(registration.birthDate, now)) return invalidRequest();
-      const patient = await store.registerAdult({
-        ...context,
-        ...registration,
-        now,
-      });
+      const minorRegistration = parseMinorRegistration(text);
+      if (registration === undefined && minorRegistration === undefined)
+        return invalidRequest();
+      const patient =
+        registration !== undefined
+          ? isAdult(registration.birthDate, now)
+            ? await store.registerAdult({ ...context, ...registration, now })
+            : undefined
+          : minorRegistration !== undefined &&
+              !isAdult(minorRegistration.birthDate, now) &&
+              !isFutureBirthDate(minorRegistration.birthDate, now)
+            ? await store.registerMinor({
+                ...context,
+                ...minorRegistration,
+                now,
+              })
+            : undefined;
+      if (patient === undefined) return invalidRequest();
       return {
         kind: "patient-registered",
         patientId: patient.id,
@@ -280,6 +303,27 @@ async function processMessage(
         text: "Cita confirmada.",
       };
     }
+    case "cancelar": {
+      if (conversation.selectedPatientId === null) {
+        return patientSelectionRequired(
+          await store.listLinkedPatients(context),
+        );
+      }
+      const appointmentId = arguments_[0];
+      if (appointmentId === undefined) return invalidRequest();
+      const appointment = await store.cancelAppointment({
+        ...context,
+        appointmentId,
+        now,
+        patientId: conversation.selectedPatientId,
+      });
+      if (appointment === undefined) return invalidRequest();
+      return {
+        ...appointment,
+        kind: "appointment-cancelled",
+        text: "Cita cancelada.",
+      };
+    }
     default:
       return invalidRequest();
   }
@@ -330,6 +374,27 @@ function parseAdultRegistration(text: string) {
   return { birthDate, dui, name };
 }
 
+function parseMinorRegistration(text: string) {
+  const match =
+    /^registrar\s+menor\|([^|]+)\|([^|]+)\|(\d{4}-\d{2}-\d{2})$/i.exec(
+      text.trim(),
+    );
+  if (match === null) return undefined;
+  const [, rawName, rawGuardianDui, birthDate] = match;
+  const name = rawName?.trim().replace(/\s+/g, " ");
+  const guardianDui = rawGuardianDui?.trim();
+  if (
+    name === undefined ||
+    name.length === 0 ||
+    guardianDui === undefined ||
+    !/^\d{8}-\d$/.test(guardianDui) ||
+    birthDate === undefined ||
+    !validLocalDate(birthDate)
+  )
+    return undefined;
+  return { birthDate, guardianDui, name };
+}
+
 function parseFutureInstant(value: string | undefined, now: Date) {
   if (
     value === undefined ||
@@ -359,6 +424,10 @@ function isAdult(birthDate: string, now: Date) {
   return eighteenthBirthday <= now;
 }
 
+function isFutureBirthDate(birthDate: string, now: Date) {
+  return new Date(`${birthDate}T00:00:00.000Z`) > now;
+}
+
 function normalizeE164Phone(value: string) {
   const normalized = value.trim().replace(/[()\s.-]/g, "");
   if (!/^\+[1-9]\d{1,14}$/.test(normalized))
@@ -368,11 +437,19 @@ function normalizeE164Phone(value: string) {
 
 type InMemoryPatient = PatientSummary & { dui?: string };
 
+type InMemoryContactPatientLink = {
+  contactId: string;
+  guardianDui?: string;
+  guardianshipVerificationStatus?: "pending";
+  patientId: string;
+  relationship?: "contact" | "tutor";
+};
+
 /** Adaptador simulado en memoria para probar el seam del caso de uso. */
 export function createInMemorySimulatedWhatsAppBookingStore(input: {
   clinic: { id: string; whatsappNumberE164: string };
   contacts: { id: string; name: string; phoneE164: string }[];
-  links: { contactId: string; patientId: string }[];
+  links: InMemoryContactPatientLink[];
   offers: PublicOffer[];
   options: Date[];
   patients: InMemoryPatient[];
@@ -448,7 +525,23 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     async registerAdult({ birthDate, contactId, dui, name }) {
       const patient = { birthDate, dui, id: randomUUID(), name };
       store.patients.push(patient);
-      input.links.push({ contactId, patientId: patient.id });
+      input.links.push({
+        contactId,
+        patientId: patient.id,
+        relationship: "contact",
+      });
+      return patient;
+    },
+    async registerMinor({ birthDate, contactId, guardianDui, name }) {
+      const patient = { birthDate, id: randomUUID(), name };
+      store.patients.push(patient);
+      input.links.push({
+        contactId,
+        guardianDui,
+        guardianshipVerificationStatus: "pending",
+        patientId: patient.id,
+        relationship: "tutor",
+      });
       return patient;
     },
     async holdReservation({ contactId, now, offerId, patientId, startsAt }) {
@@ -482,6 +575,15 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
       };
       appointments.push(appointment);
       return appointment;
+    },
+    async cancelAppointment({ appointmentId, contactId, patientId }) {
+      const appointment = appointments.find(
+        (candidate) =>
+          candidate.id === appointmentId && candidate.patientId === patientId,
+      );
+      return appointment === undefined || contactId !== input.contacts[0]?.id
+        ? undefined
+        : { id: appointment.id };
     },
   };
   return store;

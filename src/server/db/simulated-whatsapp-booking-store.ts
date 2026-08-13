@@ -1,4 +1,4 @@
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 
 import { CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
@@ -10,6 +10,7 @@ import type {
   PublicOffer,
   SimulatedWhatsAppBookingStore,
 } from "~/server/application/simulated-whatsapp-booking";
+import type { AppointmentSelfManagementStore } from "~/server/application/appointment-self-management";
 import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import {
   inSimulatedWhatsAppClinicTransaction,
@@ -253,6 +254,43 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
             clinicId: input.clinicId,
             contactId: input.contactId,
             patientId: patient.id,
+            relationship: "contact",
+          });
+          return {
+            birthDate: patient.birthDate,
+            id: patient.id,
+            name: patient.name,
+          };
+        },
+      );
+    },
+
+    async registerMinor(input) {
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        async (transaction) => {
+          const [patient] = await transaction
+            .insert(patients)
+            .values({
+              birthDate: input.birthDate,
+              clinicId: input.clinicId,
+              name: input.name,
+            })
+            .returning({
+              birthDate: patients.birthDate,
+              id: patients.id,
+              name: patients.name,
+            });
+          if (patient?.birthDate == null) {
+            throw new Error("No se pudo registrar el Paciente menor");
+          }
+          await transaction.insert(contactPatientLinks).values({
+            clinicId: input.clinicId,
+            contactId: input.contactId,
+            guardianDui: input.guardianDui,
+            guardianshipVerificationStatus: "pending",
+            patientId: patient.id,
+            relationship: "tutor",
           });
           return {
             birthDate: patient.birthDate,
@@ -431,6 +469,60 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
             patientId: appointment.patientId,
           };
         },
+      );
+    },
+
+    async cancelAppointment(input) {
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        async (transaction) => {
+          const [appointment] = await transaction
+            .update(appointments)
+            .set({ status: "cancelled" })
+            .where(
+              and(
+                eq(appointments.clinicId, input.clinicId),
+                eq(appointments.id, input.appointmentId),
+                eq(appointments.patientId, input.patientId),
+                eq(appointments.authorContactId, input.contactId),
+                eq(appointments.status, "confirmed"),
+                gt(appointments.startsAt, input.now),
+                lt(
+                  appointments.startsAt,
+                  new Date(input.now.valueOf() + 12 * 60 * 60_000),
+                ),
+              ),
+            )
+            .returning({ id: appointments.id });
+          if (appointment === undefined) return undefined;
+          await transaction.insert(appointmentEvents).values({
+            actorContactId: input.contactId,
+            appointmentId: appointment.id,
+            clinicId: input.clinicId,
+            type: "cancelled",
+          });
+          return appointment;
+        },
+      );
+    },
+  };
+
+/** Consulta de autorización para los futuros comandos de autogestión de Asclepio. */
+export const drizzleAppointmentSelfManagementStore: AppointmentSelfManagementStore =
+  {
+    async isAppointmentAuthor(input) {
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        async (transaction) =>
+          (await transaction.query.appointments.findFirst({
+            columns: { id: true },
+            where: and(
+              eq(appointments.clinicId, input.clinicId),
+              eq(appointments.id, input.appointmentId),
+              eq(appointments.authorContactId, input.contactId),
+              eq(appointments.status, "confirmed"),
+            ),
+          })) !== undefined,
       );
     },
   };
