@@ -1,5 +1,9 @@
 export type ConversationEscalationTrigger =
-  "human-request" | "frustration" | "misunderstanding";
+  | "human-request"
+  | "frustration"
+  | "misunderstanding"
+  | "voice-transcription-disabled"
+  | "voice-transcription-failed";
 
 export type ConversationEscalation = {
   contact: { id: string; name: string };

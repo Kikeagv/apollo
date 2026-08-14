@@ -18,6 +18,10 @@ import {
   resolveConversationEscalation,
   setEscalationNotificationSettings,
 } from "~/server/application/conversation-escalations";
+import {
+  getVoiceTranscriptionSettings,
+  setVoiceTranscriptionSettings,
+} from "~/server/application/voice-note-transcription-settings";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import {
   configureEffectiveSchedule,
@@ -76,6 +80,7 @@ import {
   drizzleConversationEscalationReader,
   drizzleConversationEscalationResolver,
   drizzleEscalationNotificationSettingsStore,
+  drizzleVoiceTranscriptionSettingsStore,
 } from "~/server/db/simulated-whatsapp-booking-store";
 import {
   sendSimulatedClinicDoctorInvitation,
@@ -594,6 +599,26 @@ export const panaceaRouter = {
           identityId: ctx.clinic.identityId,
         },
         drizzleEscalationNotificationSettingsStore,
+      ),
+    ),
+
+  getVoiceTranscriptionSettings: clinicProcedure.query(({ ctx }) =>
+    getVoiceTranscriptionSettings(
+      { clinicId: ctx.clinic.clinicId, identityId: ctx.clinic.identityId },
+      drizzleVoiceTranscriptionSettingsStore,
+    ),
+  ),
+
+  setVoiceTranscriptionSettings: clinicProcedure
+    .input(z.object({ enabled: z.boolean() }))
+    .mutation(({ ctx, input }) =>
+      setVoiceTranscriptionSettings(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleVoiceTranscriptionSettingsStore,
       ),
     ),
 

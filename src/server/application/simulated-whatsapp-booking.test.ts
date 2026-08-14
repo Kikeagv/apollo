@@ -2,10 +2,263 @@ import { describe, expect, it } from "vitest";
 
 import {
   createInMemorySimulatedWhatsAppBookingStore,
+  processSimulatedWhatsAppVoiceNote,
   processSimulatedWhatsAppMessage,
 } from "./simulated-whatsapp-booking";
+import { createSimulatedAudioTranscriber } from "~/server/integrations/audio-transcriber";
 
 describe("reservar una Cita adulta por WhatsApp simulado", () => {
+  it("transcribe temporalmente una nota de voz habilitada y la entrega a Asclepio como voz", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        id: "clinic-1",
+        voiceTranscriptionEnabled: true,
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const transcriber = createSimulatedAudioTranscriber({ transcript: "info" });
+
+    await expect(
+      processSimulatedWhatsAppVoiceNote(
+        {
+          audio: new Uint8Array([1, 2, 3]),
+          contentType: "audio/ogg; codecs=opus",
+          from: "+50370000002",
+          id: "voice-1",
+          to: "+50370000001",
+        },
+        store,
+        transcriber,
+        new Date("2026-08-14T12:00:00.000Z"),
+      ),
+    ).resolves.toMatchObject({ kind: "public-information" });
+
+    expect(store.messageOrigins.get("voice-1")).toBe("voice");
+    expect(transcriber.attempts).toEqual([
+      {
+        byteLength: 3,
+        contentType: "audio/ogg",
+        model: "gpt-transcribe",
+        normalization: "ogg-opus-to-wav",
+      },
+    ]);
+    expect(transcriber.temporaryAudioCount).toBe(0);
+  });
+
+  it("no entrega al proveedor una nota de voz deshabilitada y crea un Escalamiento", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        id: "clinic-1",
+        voiceTranscriptionEnabled: false,
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const transcriber = createSimulatedAudioTranscriber({
+      transcript: "confirmar",
+    });
+
+    await expect(
+      processSimulatedWhatsAppVoiceNote(
+        {
+          audio: new Uint8Array([1, 2, 3]),
+          contentType: "audio/ogg",
+          from: "+50370000002",
+          id: "voice-disabled-1",
+          to: "+50370000001",
+        },
+        store,
+        transcriber,
+        new Date("2026-08-14T12:00:00.000Z"),
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+
+    expect(transcriber.attempts).toEqual([]);
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "voice-transcription-disabled" },
+    ]);
+    expect(store.appointments).toEqual([]);
+  });
+
+  it("escala formatos no admitidos y fallos de transcripción sin retener temporales ni duplicar intentos", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        id: "clinic-1",
+        voiceTranscriptionEnabled: true,
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const failedTranscriber = createSimulatedAudioTranscriber({
+      failure: "provider-unavailable",
+    });
+    const now = new Date("2026-08-14T12:00:00.000Z");
+    const failedVoice = {
+      audio: new Uint8Array([1, 2, 3]),
+      contentType: "audio/ogg",
+      from: "+50370000002",
+      id: "voice-failed-1",
+      to: "+50370000001",
+    } as const;
+
+    const first = await processSimulatedWhatsAppVoiceNote(
+      failedVoice,
+      store,
+      failedTranscriber,
+      now,
+    );
+    await expect(
+      processSimulatedWhatsAppVoiceNote(
+        failedVoice,
+        store,
+        failedTranscriber,
+        now,
+      ),
+    ).resolves.toEqual(first);
+    await expect(
+      processSimulatedWhatsAppVoiceNote(
+        {
+          ...failedVoice,
+          contentType: "audio/flac",
+          id: "voice-format-1",
+        },
+        store,
+        failedTranscriber,
+        now,
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+
+    expect(failedTranscriber.attempts).toEqual([
+      {
+        byteLength: 3,
+        contentType: "audio/ogg",
+        model: "gpt-transcribe",
+        normalization: "ogg-opus-to-wav",
+      },
+    ]);
+    expect(failedTranscriber.temporaryAudioCount).toBe(0);
+    expect(store.conversationEscalations).toHaveLength(2);
+    expect(store.appointments).toEqual([]);
+  });
+
+  it.each(["audio/mpeg", "audio/mp4", "audio/wav", "audio/webm"] as const)(
+    "acepta %s mediante el adaptador compatible con gpt-transcribe",
+    async (contentType) => {
+      const store = createInMemorySimulatedWhatsAppBookingStore({
+        clinic: {
+          id: "clinic-1",
+          voiceTranscriptionEnabled: true,
+          whatsappNumberE164: "+50370000001",
+        },
+        contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+        links: [],
+        offers: [],
+        options: [],
+        patients: [],
+      });
+      const transcriber = createSimulatedAudioTranscriber({
+        transcript: "info",
+      });
+
+      await expect(
+        processSimulatedWhatsAppVoiceNote(
+          {
+            audio: new Uint8Array([1]),
+            contentType,
+            from: "+50370000002",
+            id: `voice-${contentType}`,
+            to: "+50370000001",
+          },
+          store,
+          transcriber,
+        ),
+      ).resolves.toMatchObject({ kind: "public-information" });
+      expect(transcriber.temporaryAudioCount).toBe(0);
+    },
+  );
+
+  it("escala un audio demasiado grande sin llamar al proveedor", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        id: "clinic-1",
+        voiceTranscriptionEnabled: true,
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const transcriber = createSimulatedAudioTranscriber({ transcript: "info" });
+
+    await expect(
+      processSimulatedWhatsAppVoiceNote(
+        {
+          audio: new Uint8Array(25 * 1024 * 1024 + 1),
+          contentType: "audio/ogg",
+          from: "+50370000002",
+          id: "voice-too-large-1",
+          to: "+50370000001",
+        },
+        store,
+        transcriber,
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+
+    expect(transcriber.attempts).toEqual([]);
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "voice-transcription-failed" },
+    ]);
+  });
+
+  it("escala una transcripción no accionable antes de que pueda cambiar una Cita", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        id: "clinic-1",
+        voiceTranscriptionEnabled: true,
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+
+    await expect(
+      processSimulatedWhatsAppVoiceNote(
+        {
+          audio: new Uint8Array([1]),
+          contentType: "audio/ogg",
+          from: "+50370000002",
+          id: "voice-not-actionable-1",
+          to: "+50370000001",
+        },
+        store,
+        createSimulatedAudioTranscriber({ transcript: "ruido inentendible" }),
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "voice-transcription-failed" },
+    ]);
+    expect(store.appointments).toEqual([]);
+  });
+
   it("escala una petición explícita de atención humana y silencia la conversación", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: {

@@ -21,6 +21,7 @@ import type { ConversationEscalationTrigger } from "~/server/application/convers
 import type {
   BookingConversation,
   WhatsAppBookingResponse,
+  WhatsAppMessageOrigin,
 } from "~/server/application/simulated-whatsapp-booking";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
@@ -102,6 +103,9 @@ export const clinics = createTable("clinic", {
     .default(false)
     .notNull(),
   escalationSecretaryPhoneE164: text("escalation_secretary_phone_e164"),
+  voiceTranscriptionEnabled: boolean("voice_transcription_enabled")
+    .default(false)
+    .notNull(),
   isSynthetic: boolean("is_synthetic").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
@@ -844,6 +848,10 @@ export const simulatedWhatsAppMessages = createTable(
     id: text("id").primaryKey(),
     clinicId: uuid("clinic_id").notNull(),
     contactId: uuid("contact_id").notNull(),
+    origin: text("origin")
+      .$type<WhatsAppMessageOrigin>()
+      .default("text")
+      .notNull(),
     response: jsonb("response").$type<WhatsAppBookingResponse>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

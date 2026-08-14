@@ -20,6 +20,7 @@ import type {
   ConversationEscalationResolver,
   EscalationNotificationSettingsStore,
 } from "~/server/application/conversation-escalations";
+import type { VoiceTranscriptionSettingsStore } from "~/server/application/voice-note-transcription-settings";
 import {
   drizzleAgendaAppointmentCanceller,
   drizzleAgendaAppointmentRescheduler,
@@ -55,6 +56,7 @@ type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 const EMPTY_CONVERSATION: BookingConversation = {
   agendaStopped: false,
   escalationId: null,
+  lastInboundOrigin: "text",
   misunderstandingCount: 0,
   reservationId: null,
   selectedOfferId: null,
@@ -82,6 +84,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               clinicId: context.clinicId,
               contactId: contact.id,
               id: input.id,
+              origin: input.origin,
             })
             .onConflictDoNothing()
             .returning({ id: simulatedWhatsAppMessages.id });
@@ -155,6 +158,19 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                 : null,
           };
         },
+      );
+    },
+
+    async isVoiceTranscriptionEnabled(input) {
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        async (transaction) =>
+          transaction.query.clinics
+            .findFirst({
+              columns: { voiceTranscriptionEnabled: true },
+              where: eq(clinics.id, input.clinicId),
+            })
+            .then((clinic) => clinic?.voiceTranscriptionEnabled === true),
       );
     },
 
@@ -702,6 +718,34 @@ export const drizzleEscalationNotificationSettingsStore: EscalationNotificationS
             escalationNotificationsEnabled: input.enabled,
             escalationSecretaryPhoneE164: input.secretaryPhoneE164,
           })
+          .where(eq(clinics.id, input.clinicId))
+          .returning({ id: clinics.id });
+        return clinic !== undefined;
+      });
+    },
+  };
+
+/** Configuración RLS de la Transcripción de nota de voz por Clínica. */
+export const drizzleVoiceTranscriptionSettingsStore: VoiceTranscriptionSettingsStore =
+  {
+    async getVoiceTranscriptionSettings(input) {
+      return inClinicTransaction(input, async (transaction) => {
+        if (!(await hasActiveClinicOwner(transaction, input))) return undefined;
+        return transaction.query.clinics
+          .findFirst({
+            columns: { voiceTranscriptionEnabled: true },
+            where: eq(clinics.id, input.clinicId),
+          })
+          .then((clinic) => clinic?.voiceTranscriptionEnabled);
+      });
+    },
+
+    async setVoiceTranscriptionSettings(input) {
+      return inClinicTransaction(input, async (transaction) => {
+        if (!(await hasActiveClinicOwner(transaction, input))) return false;
+        const [clinic] = await transaction
+          .update(clinics)
+          .set({ voiceTranscriptionEnabled: input.enabled })
           .where(eq(clinics.id, input.clinicId))
           .returning({ id: clinics.id });
         return clinic !== undefined;

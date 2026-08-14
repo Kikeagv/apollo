@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { canAuthorSelfManageAppointment } from "~/server/application/appointment-self-management";
 import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
+import type {
+  AudioContentType,
+  AudioTranscriber,
+} from "~/server/integrations/audio-transcriber";
 
 const RESERVATION_DURATION_MS = 10 * 60_000;
 
@@ -11,6 +15,16 @@ export type SimulatedWhatsAppInboundMessage = {
   text: string;
   to: string;
 };
+
+export type SimulatedWhatsAppVoiceNote = {
+  audio: Uint8Array;
+  contentType: string;
+  from: string;
+  id: string;
+  to: string;
+};
+
+export type WhatsAppMessageOrigin = "text" | "voice";
 
 export type WhatsAppBookingResponse =
   | { kind: "contact-not-found"; text: string }
@@ -66,6 +80,7 @@ export type PublicOffer = {
 export type BookingConversation = {
   agendaStopped: boolean;
   escalationId: string | null;
+  lastInboundOrigin: WhatsAppMessageOrigin;
   misunderstandingCount: number;
   reservationId: string | null;
   selectedOfferId: string | null;
@@ -79,7 +94,12 @@ type AppointmentSelfManagementResult =
   | { kind: "unavailable" };
 
 export type SimulatedWhatsAppBookingStore = {
-  beginMessage(input: { from: string; id: string; to: string }): Promise<
+  beginMessage(input: {
+    from: string;
+    id: string;
+    origin: WhatsAppMessageOrigin;
+    to: string;
+  }): Promise<
     | {
         contactId: string;
         clinicId: string;
@@ -98,6 +118,7 @@ export type SimulatedWhatsAppBookingStore = {
     now: Date;
     trigger: ConversationEscalationTrigger;
   }): Promise<{ id: string; secretaryPhoneE164: string | null }>;
+  isVoiceTranscriptionEnabled(input: { clinicId: string }): Promise<boolean>;
   notifySecretaryOfConversationEscalation?(input: {
     clinicId: string;
     escalationId: string;
@@ -197,6 +218,7 @@ export async function processSimulatedWhatsAppMessage(
   const normalized = {
     ...input,
     from: normalizeE164Phone(input.from),
+    origin: "text" as const,
     to: normalizeE164Phone(input.to),
   };
   const received = await store.beginMessage(normalized);
@@ -205,13 +227,12 @@ export async function processSimulatedWhatsAppMessage(
   }
   if (received.duplicate !== null) return received.duplicate;
 
-  await store.suppressPendingReminderDeliveries?.({
-    clinicId: received.clinicId,
-    contactId: received.contactId,
+  const response = await processReceivedMessage(
+    normalized,
+    received,
+    store,
     now,
-  });
-
-  const response = await processMessage(normalized.text, received, store, now);
+  );
   await store.completeMessage({
     clinicId: received.clinicId,
     id: normalized.id,
@@ -220,14 +241,165 @@ export async function processSimulatedWhatsAppMessage(
   return response;
 }
 
+/**
+ * Procesa una nota de voz sin conservar el audio ni el texto transcrito. Una
+ * falla siempre se deriva a una persona antes de que Asclepio ejecute agenda.
+ */
+export async function processSimulatedWhatsAppVoiceNote(
+  input: SimulatedWhatsAppVoiceNote,
+  store: SimulatedWhatsAppBookingStore,
+  transcriber: AudioTranscriber,
+  now = new Date(),
+): Promise<WhatsAppBookingResponse> {
+  const normalized = {
+    ...input,
+    from: normalizeE164Phone(input.from),
+    origin: "voice" as const,
+    to: normalizeE164Phone(input.to),
+  };
+  const received = await store.beginMessage(normalized);
+  if (received === undefined) return contactNotFound();
+  if (received.duplicate !== null) return received.duplicate;
+
+  const response = !(await store.isVoiceTranscriptionEnabled(received))
+    ? await escalateVoiceNote(
+        received,
+        store,
+        now,
+        "voice-transcription-disabled",
+      )
+    : await transcribeVoiceNote(normalized, received, store, transcriber, now);
+  await store.completeMessage({
+    clinicId: received.clinicId,
+    id: normalized.id,
+    response,
+  });
+  return response;
+}
+
+async function transcribeVoiceNote(
+  input: SimulatedWhatsAppVoiceNote & { origin: "voice" },
+  context: { clinicId: string; contactId: string },
+  store: SimulatedWhatsAppBookingStore,
+  transcriber: AudioTranscriber,
+  now: Date,
+) {
+  const contentType = transcriberContentType(input.contentType);
+  if (
+    contentType === undefined ||
+    input.audio.byteLength === 0 ||
+    input.audio.byteLength > 25 * 1024 * 1024
+  ) {
+    return escalateVoiceNote(context, store, now, "voice-transcription-failed");
+  }
+  try {
+    const text = (
+      await transcriber.transcribe({
+        audio: input.audio,
+        contentType,
+        model: "gpt-transcribe",
+      })
+    ).trim();
+    if (text.length === 0 || text.length > 1_000) {
+      return escalateVoiceNote(
+        context,
+        store,
+        now,
+        "voice-transcription-failed",
+      );
+    }
+    const response = await processReceivedMessage(
+      { ...input, text },
+      context,
+      store,
+      now,
+    );
+    return response.kind === "invalid-request"
+      ? escalateVoiceNote(context, store, now, "voice-transcription-failed")
+      : response;
+  } catch {
+    return escalateVoiceNote(context, store, now, "voice-transcription-failed");
+  }
+}
+
+async function escalateVoiceNote(
+  context: { clinicId: string; contactId: string },
+  store: SimulatedWhatsAppBookingStore,
+  now: Date,
+  trigger: Extract<
+    ConversationEscalationTrigger,
+    "voice-transcription-disabled" | "voice-transcription-failed"
+  >,
+) {
+  const conversation = await store.getConversation(context);
+  const escalation = await store.createConversationEscalation({
+    ...context,
+    now,
+    trigger,
+  });
+  await store.saveConversation({
+    ...context,
+    conversation: {
+      ...conversation,
+      escalationId: escalation.id,
+      lastInboundOrigin: "voice",
+    },
+  });
+  await notifySecretaryOfEscalation(
+    store,
+    escalation,
+    context.clinicId,
+    trigger,
+  );
+  return conversationSilenced();
+}
+
+function transcriberContentType(
+  contentType: string,
+): AudioContentType | undefined {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+  switch (mediaType) {
+    case "audio/ogg":
+    case "audio/opus":
+      return mediaType;
+    case "audio/mpeg":
+    case "audio/mp4":
+    case "audio/wav":
+    case "audio/webm":
+      return mediaType;
+    default:
+      return undefined;
+  }
+}
+
+async function processReceivedMessage(
+  input: SimulatedWhatsAppInboundMessage & { origin: WhatsAppMessageOrigin },
+  received: { clinicId: string; contactId: string },
+  store: SimulatedWhatsAppBookingStore,
+  now: Date,
+) {
+  await store.suppressPendingReminderDeliveries?.({
+    clinicId: received.clinicId,
+    contactId: received.contactId,
+    now,
+  });
+
+  return processMessage(input.text, received, store, now, input.origin);
+}
+
 async function processMessage(
   text: string,
   context: { clinicId: string; contactId: string },
   store: SimulatedWhatsAppBookingStore,
   now: Date,
+  origin: WhatsAppMessageOrigin,
 ): Promise<WhatsAppBookingResponse> {
   const [command, ...arguments_] = text.trim().split(/\s+/);
-  const conversation = await store.getConversation(context);
+  const conversation = {
+    ...(await store.getConversation(context)),
+    lastInboundOrigin: origin,
+  };
+  await store.saveConversation({ ...context, conversation });
   if (conversation.escalationId !== null || conversation.agendaStopped)
     return conversationSilenced();
   if (indicatesUrgency(text)) {
@@ -679,6 +851,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     escalationNotificationsEnabled?: boolean;
     escalationSecretaryPhoneE164?: string;
     id: string;
+    voiceTranscriptionEnabled?: boolean;
     whatsappNumberE164: string;
   };
   contacts: { id: string; name: string; phoneE164: string }[];
@@ -689,6 +862,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
 }) {
   const conversations = new Map<string, BookingConversation>();
   const messages = new Map<string, WhatsAppBookingResponse>();
+  const messageOrigins = new Map<string, WhatsAppMessageOrigin>();
   const reservations: Array<{
     contactId: string;
     expiresAt: Date;
@@ -726,6 +900,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     appointments: typeof appointments;
     conversationEscalations: typeof conversationEscalations;
     conversationEvents: typeof conversationEvents;
+    messageOrigins: typeof messageOrigins;
     appointmentEvents: typeof appointmentEvents;
     escalations: typeof escalations;
     patients: InMemoryPatient[];
@@ -734,6 +909,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     appointments,
     conversationEscalations,
     conversationEvents,
+    messageOrigins,
     appointmentEvents,
     escalations,
     patients: input.patients,
@@ -744,10 +920,12 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
         (candidate) => candidate.phoneE164 === message.from,
       );
       if (contact === undefined) return undefined;
+      const duplicate = messages.get(message.id) ?? null;
+      if (duplicate === null) messageOrigins.set(message.id, message.origin);
       return {
         clinicId: input.clinic.id,
         contactId: contact.id,
-        duplicate: messages.get(message.id) ?? null,
+        duplicate,
       };
     },
     async completeMessage({ id, response }) {
@@ -763,6 +941,9 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
             : null,
       };
     },
+    async isVoiceTranscriptionEnabled() {
+      return input.clinic.voiceTranscriptionEnabled === true;
+    },
     async recordUrgencyEvent({ contactId }) {
       conversationEvents.push({ contactId, type: "urgency-protocol" });
     },
@@ -772,6 +953,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
         conversations.get(key) ?? {
           agendaStopped: false,
           escalationId: null,
+          lastInboundOrigin: "text",
           misunderstandingCount: 0,
           reservationId: null,
           selectedOfferId: null,

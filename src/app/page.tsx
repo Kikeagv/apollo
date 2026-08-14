@@ -23,6 +23,7 @@ import { TransactionalDeliveryAlertsSection } from "./transactional-delivery-ale
 import { ServiceCatalogSection } from "./service-catalog-section";
 import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
 import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
+import { VoiceNoteTranscriptionSettingsSection } from "./voice-note-transcription-settings-section";
 
 export default async function Home({
   searchParams,
@@ -78,6 +79,9 @@ export default async function Home({
             {context.role === "owner" ? <NoShowPolicySection /> : null}
             {context.role === "owner" ? (
               <EscalationNotificationSettingsSection />
+            ) : null}
+            {context.role === "owner" ? (
+              <VoiceNoteTranscriptionSettingsSection />
             ) : null}
             {context.role === "owner" || context.role === "doctor" ? (
               <>
