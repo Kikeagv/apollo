@@ -128,6 +128,42 @@ _Avoid_: aceptar cambios de configuración que invaliden una opción o Cita exis
 El mensaje proactivo por WhatsApp que Asclepio envía al Contacto sobre una Cita concreta: confirmación, recordatorio o aviso de cancelación. No incluye campañas ni seguimiento comercial.
 _Avoid_: mensaje proactivo cuando se habla de comunicación promocional
 
+**Entrega transaccional**:
+El intento persistente de entregar un Mensaje transaccional de cita o el PDF nocturno de agenda. Garantiza entrega al menos una vez mediante una clave idempotente estable; el adaptador debe reconocer reintentos de la misma entrega sin duplicar el efecto para el destinatario.
+_Avoid_: exactamente una vez cuando se habla de una llamada que cruza la base de datos y un proveedor externo
+
+**Entrega transaccional fallida**:
+La Entrega transaccional que no fue aceptada tras el intento inicial y cuatro reintentos a 1, 5, 15 y 60 minutos. Conserva su historial y crea una alerta operativa en Panacea para resolución humana.
+_Avoid_: descartar silenciosamente un fallo del proveedor
+
+**Supresión de recordatorios por respuesta**:
+La cancelación de las Entregas transaccionales pendientes de recordatorios futuros cuando un Contacto responde sobre la Cita. No revoca una entrega ya en envío ni borra su callback; esas condiciones de carrera se conservan en el historial.
+_Avoid_: reintentar un recordatorio que una respuesta ya volvió innecesario
+
+**Alerta de Entrega transaccional fallida**:
+La tarea de Operación diaria de agenda creada cuando una Entrega transaccional falla definitivamente. Es visible y resoluble para todo Usuario de clínica activo en Panacea; no genera un aviso adicional por WhatsApp.
+_Avoid_: modelarla como configuración clínica o como Escalamiento humano
+
+**Contenido de Entrega transaccional**:
+La instantánea administrativa preparada para una Entrega transaccional: fecha y hora de la Cita, Clínica y destinatario. Permanece estable durante reintentos y no conserva motivo de consulta, especialidad ni otro dato clínico.
+_Avoid_: reconstruir el mensaje pendiente desde una Cita modificada
+
+**Clave de idempotencia de Entrega transaccional**:
+El identificador estable de una Entrega transaccional. Para un recordatorio combina Cita, hito y Contacto; para el PDF nocturno combina Médico y fecha local de agenda. El adaptador la usa para reconocer un reintento sin repetir el efecto.
+_Avoid_: usar un identificador nuevo en cada intento
+
+**Retención de Entrega transaccional**:
+El período mínimo de 12 meses durante el cual se conserva el historial de una Entrega transaccional, sus intentos, callbacks, alertas y contenido administrativo preparado. Al vencer se elimina también esa instantánea de contenido.
+_Avoid_: conservar indefinidamente un contenido administrativo de Cita
+
+**Concesión de Entrega transaccional**:
+La posesión temporal de una Entrega transaccional por un worker para enviarla. Vence a los 10 minutos; entonces otro worker puede reintentar la misma Entrega usando su Clave de idempotencia.
+_Avoid_: un bloqueo permanente tras la caída de un worker
+
+**Worker de Entregas transaccionales**:
+El proceso que se ejecuta cada minuto para reclamar y entregar Entregas transaccionales pendientes, incluidas las concesiones vencidas. Las guardas de cadencia siguen impidiendo recordatorios o cancelaciones tardías.
+_Avoid_: un único envío puntual como única oportunidad de entrega
+
 **Confirmación automática**:
 La creación de una cita confirmada cuando el contacto acepta una opción y la Agenda la autoriza. No requiere aprobación manual en Panacea.
 _Avoid_: cita pendiente de aprobación
