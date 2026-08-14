@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { canAuthorSelfManageAppointment } from "~/server/application/appointment-self-management";
+import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
 
 const RESERVATION_DURATION_MS = 10 * 60_000;
 
@@ -28,6 +29,7 @@ export type WhatsAppBookingResponse =
   | { id: string; kind: "appointment-escalated"; text: string }
   | { kind: "appointment-unavailable"; text: string }
   | { kind: "conversation-silenced"; text: string }
+  | { kind: "urgent-protocol"; text: string }
   | { kind: "patient-selected"; patientId: string; text: string }
   | { kind: "public-information"; offers: PublicOffer[]; text: string }
   | { kind: "care-options"; options: Date[]; text: string }
@@ -62,7 +64,9 @@ export type PublicOffer = {
 };
 
 export type BookingConversation = {
+  agendaStopped: boolean;
   escalationId: string | null;
+  misunderstandingCount: number;
   reservationId: string | null;
   selectedOfferId: string | null;
   selectedPatientId: string | null;
@@ -87,6 +91,23 @@ export type SimulatedWhatsAppBookingStore = {
     clinicId: string;
     id: string;
     response: WhatsAppBookingResponse;
+  }): Promise<void>;
+  createConversationEscalation(input: {
+    clinicId: string;
+    contactId: string;
+    now: Date;
+    trigger: ConversationEscalationTrigger;
+  }): Promise<{ id: string; secretaryPhoneE164: string | null }>;
+  notifySecretaryOfConversationEscalation?(input: {
+    clinicId: string;
+    escalationId: string;
+    recipientPhoneE164: string;
+    trigger: ConversationEscalationTrigger;
+  }): Promise<void>;
+  recordUrgencyEvent(input: {
+    clinicId: string;
+    contactId: string;
+    now: Date;
   }): Promise<void>;
   confirmReservation(input: {
     clinicId: string;
@@ -207,178 +228,251 @@ async function processMessage(
 ): Promise<WhatsAppBookingResponse> {
   const [command, ...arguments_] = text.trim().split(/\s+/);
   const conversation = await store.getConversation(context);
-  if (conversation.escalationId !== null) return conversationSilenced();
-  switch (command?.toLowerCase()) {
-    case "info":
-    case "servicios": {
-      const offers = await store.listPublicOffers({
-        clinicId: context.clinicId,
-      });
-      return {
-        kind: "public-information",
-        offers,
-        text:
-          offers.length === 0
-            ? "No hay servicios disponibles."
-            : "Servicios disponibles.",
-      };
-    }
-    case "paciente": {
-      const patientId = arguments_[0];
-      const patients = await store.listLinkedPatients(context);
-      if (
-        patientId === undefined ||
-        !patients.some((patient) => patient.id === patientId)
-      ) {
-        return patientSelectionRequired(patients);
-      }
-      await store.saveConversation({
-        ...context,
-        conversation: {
-          ...conversation,
-          reservationId: null,
-          selectedPatientId: patientId,
-        },
-      });
-      return {
-        kind: "patient-selected",
-        patientId,
-        text: "Paciente seleccionado.",
-      };
-    }
-    case "registrar": {
-      const registration = parseAdultRegistration(text);
-      const minorRegistration = parseMinorRegistration(text);
-      if (registration === undefined && minorRegistration === undefined)
-        return invalidRequest();
-      const patient =
-        registration !== undefined
-          ? isAdult(registration.birthDate, now)
-            ? await store.registerAdult({ ...context, ...registration, now })
-            : undefined
-          : minorRegistration !== undefined &&
-              !isAdult(minorRegistration.birthDate, now) &&
-              !isFutureBirthDate(minorRegistration.birthDate, now)
-            ? await store.registerMinor({
-                ...context,
-                ...minorRegistration,
-                now,
-              })
-            : undefined;
-      if (patient === undefined) return invalidRequest();
-      return {
-        kind: "patient-registered",
-        patientId: patient.id,
-        text: "Paciente registrado. Seleccione explícitamente el Paciente para continuar.",
-      };
-    }
-    case "opciones": {
-      const patients = await store.listLinkedPatients(context);
-      if (conversation.selectedPatientId === null)
-        return patientSelectionRequired(patients);
-      const [offerId, on] = arguments_;
-      if (offerId === undefined || on === undefined || !validLocalDate(on))
-        return invalidRequest();
-      const options = await store.listCareOptions({
-        ...context,
-        now,
-        offerId,
-        on,
-        patientId: conversation.selectedPatientId,
-      });
-      if (options === undefined) return invalidRequest();
-      await store.saveConversation({
-        ...context,
-        conversation: { ...conversation, selectedOfferId: offerId },
-      });
-      return {
-        kind: "care-options",
-        options,
-        text: "Opciones calculadas por la Agenda.",
-      };
-    }
-    case "reservar": {
-      const patients = await store.listLinkedPatients(context);
-      if (conversation.selectedPatientId === null)
-        return patientSelectionRequired(patients);
-      if (conversation.selectedOfferId === null) return invalidRequest();
-      const startsAt = parseFutureInstant(arguments_[0], now);
-      if (startsAt === undefined) return invalidRequest();
-      const reservation = await store.holdReservation({
-        ...context,
-        now,
-        offerId: conversation.selectedOfferId,
-        patientId: conversation.selectedPatientId,
-        startsAt,
-      });
-      if (reservation === undefined) return invalidRequest();
-      await store.saveConversation({
-        ...context,
-        conversation: { ...conversation, reservationId: reservation.id },
-      });
-      return {
-        expiresAt: reservation.expiresAt,
-        kind: "reservation-held",
-        reservationId: reservation.id,
-        text: "Espacio reservado temporalmente. Responda confirmar.",
-      };
-    }
-    case "confirmar": {
-      if (conversation.reservationId === null) return invalidRequest();
-      const appointment = await store.confirmReservation({
-        ...context,
-        now,
-        reservationId: conversation.reservationId,
-      });
-      if (appointment === undefined) return invalidRequest();
-      await store.saveConversation({
-        ...context,
-        conversation: { ...conversation, reservationId: null },
-      });
-      return {
-        ...appointment,
-        kind: "appointment-confirmed",
-        text: "Cita confirmada.",
-      };
-    }
-    case "cancelar": {
-      if (conversation.selectedPatientId === null) {
-        return patientSelectionRequired(
-          await store.listLinkedPatients(context),
-        );
-      }
-      const appointmentId = arguments_[0];
-      if (appointmentId === undefined) return invalidRequest();
-      const outcome = await store.cancelAppointment({
-        ...context,
-        appointmentId,
-        now,
-        patientId: conversation.selectedPatientId,
-      });
-      return selfManagementResponse(outcome, context, conversation, store);
-    }
-    case "reprogramar": {
-      if (conversation.selectedPatientId === null) {
-        return patientSelectionRequired(
-          await store.listLinkedPatients(context),
-        );
-      }
-      const [appointmentId, rawStartsAt] = arguments_;
-      const startsAt = parseFutureInstant(rawStartsAt, now);
-      if (appointmentId === undefined || startsAt === undefined)
-        return invalidRequest();
-      const outcome = await store.rescheduleAppointment({
-        ...context,
-        appointmentId,
-        now,
-        patientId: conversation.selectedPatientId,
-        startsAt,
-      });
-      return selfManagementResponse(outcome, context, conversation, store);
-    }
-    default:
-      return invalidRequest();
+  if (conversation.escalationId !== null || conversation.agendaStopped)
+    return conversationSilenced();
+  if (indicatesUrgency(text)) {
+    await store.recordUrgencyEvent({ ...context, now });
+    await store.saveConversation({
+      ...context,
+      conversation: {
+        ...conversation,
+        agendaStopped: true,
+        misunderstandingCount: 0,
+      },
+    });
+    return urgentProtocol();
   }
+  const trigger = escalationTrigger(text);
+  if (trigger !== undefined) {
+    const escalation = await store.createConversationEscalation({
+      ...context,
+      now,
+      trigger,
+    });
+    await store.saveConversation({
+      ...context,
+      conversation: { ...conversation, escalationId: escalation.id },
+    });
+    await notifySecretaryOfEscalation(
+      store,
+      escalation,
+      context.clinicId,
+      trigger,
+    );
+    return conversationSilenced();
+  }
+  const response: WhatsAppBookingResponse =
+    await (async (): Promise<WhatsAppBookingResponse> => {
+      switch (command?.toLowerCase()) {
+        case "info":
+        case "servicios": {
+          const offers = await store.listPublicOffers({
+            clinicId: context.clinicId,
+          });
+          return {
+            kind: "public-information",
+            offers,
+            text:
+              offers.length === 0
+                ? "No hay servicios disponibles."
+                : "Servicios disponibles.",
+          };
+        }
+        case "paciente": {
+          const patientId = arguments_[0];
+          const patients = await store.listLinkedPatients(context);
+          if (
+            patientId === undefined ||
+            !patients.some((patient) => patient.id === patientId)
+          ) {
+            return patientSelectionRequired(patients);
+          }
+          await store.saveConversation({
+            ...context,
+            conversation: {
+              ...conversation,
+              reservationId: null,
+              selectedPatientId: patientId,
+            },
+          });
+          return {
+            kind: "patient-selected",
+            patientId,
+            text: "Paciente seleccionado.",
+          };
+        }
+        case "registrar": {
+          const registration = parseAdultRegistration(text);
+          const minorRegistration = parseMinorRegistration(text);
+          if (registration === undefined && minorRegistration === undefined)
+            return invalidRequest();
+          const patient =
+            registration !== undefined
+              ? isAdult(registration.birthDate, now)
+                ? await store.registerAdult({
+                    ...context,
+                    ...registration,
+                    now,
+                  })
+                : undefined
+              : minorRegistration !== undefined &&
+                  !isAdult(minorRegistration.birthDate, now) &&
+                  !isFutureBirthDate(minorRegistration.birthDate, now)
+                ? await store.registerMinor({
+                    ...context,
+                    ...minorRegistration,
+                    now,
+                  })
+                : undefined;
+          if (patient === undefined) return invalidRequest();
+          return {
+            kind: "patient-registered",
+            patientId: patient.id,
+            text: "Paciente registrado. Seleccione explícitamente el Paciente para continuar.",
+          };
+        }
+        case "opciones": {
+          const patients = await store.listLinkedPatients(context);
+          if (conversation.selectedPatientId === null)
+            return patientSelectionRequired(patients);
+          const [offerId, on] = arguments_;
+          if (offerId === undefined || on === undefined || !validLocalDate(on))
+            return invalidRequest();
+          const options = await store.listCareOptions({
+            ...context,
+            now,
+            offerId,
+            on,
+            patientId: conversation.selectedPatientId,
+          });
+          if (options === undefined) return invalidRequest();
+          await store.saveConversation({
+            ...context,
+            conversation: { ...conversation, selectedOfferId: offerId },
+          });
+          return {
+            kind: "care-options",
+            options,
+            text: "Opciones calculadas por la Agenda.",
+          };
+        }
+        case "reservar": {
+          const patients = await store.listLinkedPatients(context);
+          if (conversation.selectedPatientId === null)
+            return patientSelectionRequired(patients);
+          if (conversation.selectedOfferId === null) return invalidRequest();
+          const startsAt = parseFutureInstant(arguments_[0], now);
+          if (startsAt === undefined) return invalidRequest();
+          const reservation = await store.holdReservation({
+            ...context,
+            now,
+            offerId: conversation.selectedOfferId,
+            patientId: conversation.selectedPatientId,
+            startsAt,
+          });
+          if (reservation === undefined) return invalidRequest();
+          await store.saveConversation({
+            ...context,
+            conversation: { ...conversation, reservationId: reservation.id },
+          });
+          return {
+            expiresAt: reservation.expiresAt,
+            kind: "reservation-held",
+            reservationId: reservation.id,
+            text: "Espacio reservado temporalmente. Responda confirmar.",
+          };
+        }
+        case "confirmar": {
+          if (conversation.reservationId === null) return invalidRequest();
+          const appointment = await store.confirmReservation({
+            ...context,
+            now,
+            reservationId: conversation.reservationId,
+          });
+          if (appointment === undefined) return invalidRequest();
+          await store.saveConversation({
+            ...context,
+            conversation: { ...conversation, reservationId: null },
+          });
+          return {
+            ...appointment,
+            kind: "appointment-confirmed",
+            text: "Cita confirmada.",
+          };
+        }
+        case "cancelar": {
+          if (conversation.selectedPatientId === null) {
+            return patientSelectionRequired(
+              await store.listLinkedPatients(context),
+            );
+          }
+          const appointmentId = arguments_[0];
+          if (appointmentId === undefined) return invalidRequest();
+          const outcome = await store.cancelAppointment({
+            ...context,
+            appointmentId,
+            now,
+            patientId: conversation.selectedPatientId,
+          });
+          return selfManagementResponse(outcome, context, conversation, store);
+        }
+        case "reprogramar": {
+          if (conversation.selectedPatientId === null) {
+            return patientSelectionRequired(
+              await store.listLinkedPatients(context),
+            );
+          }
+          const [appointmentId, rawStartsAt] = arguments_;
+          const startsAt = parseFutureInstant(rawStartsAt, now);
+          if (appointmentId === undefined || startsAt === undefined)
+            return invalidRequest();
+          const outcome = await store.rescheduleAppointment({
+            ...context,
+            appointmentId,
+            now,
+            patientId: conversation.selectedPatientId,
+            startsAt,
+          });
+          return selfManagementResponse(outcome, context, conversation, store);
+        }
+        default:
+          return invalidRequest();
+      }
+    })();
+  if (response.kind === "invalid-request") {
+    const misunderstandingCount = conversation.misunderstandingCount + 1;
+    if (misunderstandingCount < 2) {
+      await store.saveConversation({
+        ...context,
+        conversation: { ...conversation, misunderstandingCount },
+      });
+      return response;
+    }
+    const escalation = await store.createConversationEscalation({
+      ...context,
+      now,
+      trigger: "misunderstanding",
+    });
+    await store.saveConversation({
+      ...context,
+      conversation: { ...conversation, escalationId: escalation.id },
+    });
+    await notifySecretaryOfEscalation(
+      store,
+      escalation,
+      context.clinicId,
+      "misunderstanding",
+    );
+    return conversationSilenced();
+  }
+  if (conversation.misunderstandingCount > 0) {
+    const currentConversation = await store.getConversation(context);
+    await store.saveConversation({
+      ...context,
+      conversation: { ...currentConversation, misunderstandingCount: 0 },
+    });
+  }
+  return response;
 }
 
 async function selfManagementResponse(
@@ -417,6 +511,50 @@ async function selfManagementResponse(
 
 function conversationSilenced(): WhatsAppBookingResponse {
   return { kind: "conversation-silenced", text: "" };
+}
+
+async function notifySecretaryOfEscalation(
+  store: SimulatedWhatsAppBookingStore,
+  escalation: { id: string; secretaryPhoneE164: string | null },
+  clinicId: string,
+  trigger: ConversationEscalationTrigger,
+) {
+  if (escalation.secretaryPhoneE164 === null) return;
+  await store.notifySecretaryOfConversationEscalation?.({
+    clinicId,
+    escalationId: escalation.id,
+    recipientPhoneE164: escalation.secretaryPhoneE164,
+    trigger,
+  });
+}
+
+function escalationTrigger(
+  text: string,
+):
+  | Extract<ConversationEscalationTrigger, "human-request" | "frustration">
+  | undefined {
+  if (
+    /\b(hablar\s+con\s+(una\s+)?persona|atenci[oó]n\s+humana|humano|secretaria)\b/i.test(
+      text,
+    )
+  ) {
+    return "human-request";
+  }
+  if (/\b(no\s+sirve|no\s+entiendes|in[úu]til|frustrad[oa])\b/i.test(text)) {
+    return "frustration";
+  }
+  return undefined;
+}
+
+function indicatesUrgency(text: string) {
+  return /\b(emergencia|urgencia)\b/i.test(text);
+}
+
+function urgentProtocol(): WhatsAppBookingResponse {
+  return {
+    kind: "urgent-protocol",
+    text: "Si es una emergencia médica, llame al 911 ahora.",
+  };
 }
 
 function patientSelectionRequired(
@@ -537,7 +675,12 @@ type InMemoryContactPatientLink = {
 
 /** Adaptador simulado en memoria para probar el seam del caso de uso. */
 export function createInMemorySimulatedWhatsAppBookingStore(input: {
-  clinic: { id: string; whatsappNumberE164: string };
+  clinic: {
+    escalationNotificationsEnabled?: boolean;
+    escalationSecretaryPhoneE164?: string;
+    id: string;
+    whatsappNumberE164: string;
+  };
   contacts: { id: string; name: string; phoneE164: string }[];
   links: InMemoryContactPatientLink[];
   offers: PublicOffer[];
@@ -571,14 +714,26 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     appointmentId: string;
     contactId: string;
   }> = [];
+  const conversationEscalations: Array<{
+    contactId: string;
+    trigger: ConversationEscalationTrigger;
+  }> = [];
+  const conversationEvents: Array<{
+    contactId: string;
+    type: "urgency-protocol";
+  }> = [];
   const store: SimulatedWhatsAppBookingStore & {
     appointments: typeof appointments;
+    conversationEscalations: typeof conversationEscalations;
+    conversationEvents: typeof conversationEvents;
     appointmentEvents: typeof appointmentEvents;
     escalations: typeof escalations;
     patients: InMemoryPatient[];
     reservations: typeof reservations;
   } = {
     appointments,
+    conversationEscalations,
+    conversationEvents,
     appointmentEvents,
     escalations,
     patients: input.patients,
@@ -598,11 +753,26 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     async completeMessage({ id, response }) {
       messages.set(id, response);
     },
+    async createConversationEscalation({ contactId, trigger }) {
+      conversationEscalations.push({ contactId, trigger });
+      return {
+        id: randomUUID(),
+        secretaryPhoneE164:
+          input.clinic.escalationNotificationsEnabled === true
+            ? (input.clinic.escalationSecretaryPhoneE164 ?? null)
+            : null,
+      };
+    },
+    async recordUrgencyEvent({ contactId }) {
+      conversationEvents.push({ contactId, type: "urgency-protocol" });
+    },
     async getConversation({ clinicId, contactId }) {
       const key = `${clinicId}:${contactId}`;
       return (
         conversations.get(key) ?? {
+          agendaStopped: false,
           escalationId: null,
+          misunderstandingCount: 0,
           reservationId: null,
           selectedOfferId: null,
           selectedPatientId: null,

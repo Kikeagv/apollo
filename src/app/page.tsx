@@ -9,6 +9,8 @@ import { cookies } from "next/headers";
 
 import { ClinicSessionActivity } from "./clinic-session-activity";
 import { ClinicSignInForm } from "./clinic-sign-in-form";
+import { ConversationEscalationsSection } from "./conversation-escalations-section";
+import { EscalationNotificationSettingsSection } from "./escalation-notification-settings-section";
 import { DoctorProfileSetup } from "./doctor-profile-setup";
 import { AvailabilitySection } from "./availability-section";
 import { AdministrativeRecordsSection } from "./administrative-records-section";
@@ -68,11 +70,15 @@ export default async function Home({
             </p>
             {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
             <AdministrativeRecordsSection />
+            <ConversationEscalationsSection />
             <AppointmentSelfManagementEscalationsSection />
             <TransactionalDeliveryAlertsSection />
             <ManualAppointmentsSection />
             {context.role === "owner" ? <DoctorsSection /> : null}
             {context.role === "owner" ? <NoShowPolicySection /> : null}
+            {context.role === "owner" ? (
+              <EscalationNotificationSettingsSection />
+            ) : null}
             {context.role === "owner" || context.role === "doctor" ? (
               <>
                 <ServiceCatalogSection

@@ -17,6 +17,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import type { AppointmentEventType } from "~/server/application/manual-appointments";
+import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
 import type {
   BookingConversation,
   WhatsAppBookingResponse,
@@ -97,6 +98,10 @@ export const clinics = createTable("clinic", {
     .$type<NoShowPolicy>()
     .default("alert")
     .notNull(),
+  escalationNotificationsEnabled: boolean("escalation_notifications_enabled")
+    .default(false)
+    .notNull(),
+  escalationSecretaryPhoneE164: text("escalation_secretary_phone_e164"),
   isSynthetic: boolean("is_synthetic").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
@@ -343,12 +348,12 @@ export const appointments = createTable(
       columns: [table.clinicId, table.patientId],
       foreignColumns: [patients.clinicId, patients.id],
       name: "appointment_patient_same_clinic_fk",
-    }).onDelete("restrict"),
+    }).onDelete("cascade"),
     foreignKey({
       columns: [table.clinicId, table.authorContactId],
       foreignColumns: [contacts.clinicId, contacts.id],
       name: "appointment_author_contact_same_clinic_fk",
-    }).onDelete("restrict"),
+    }).onDelete("cascade"),
     foreignKey({
       columns: [table.clinicId, table.serviceOfferId],
       foreignColumns: [serviceOffers.clinicId, serviceOffers.id],
@@ -781,6 +786,54 @@ export const whatsappConversations = createTable(
       foreignColumns: [contacts.clinicId, contacts.id],
       name: "whatsapp_conversation_contact_same_clinic_fk",
     }).onDelete("cascade"),
+  ],
+);
+
+/** Tarea de atención humana que detiene el diálogo administrativo de Asclepio. */
+export const conversationEscalations = createTable(
+  "conversation_escalation",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    trigger: text("trigger").$type<ConversationEscalationTrigger>().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("conversation_escalation_clinic_idx").on(
+      table.clinicId,
+      table.createdAt,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "conversation_escalation_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+/** Registro administrativo del Protocolo de urgencia, sin contenido clínico. */
+export const conversationEvents = createTable(
+  "conversation_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    type: text("type").$type<"urgency-protocol">().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("conversation_event_clinic_idx").on(table.clinicId, table.occurredAt),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "conversation_event_contact_same_clinic_fk",
+    }).onDelete("restrict"),
   ],
 );
 

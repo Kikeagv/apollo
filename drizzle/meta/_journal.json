@@ -267,6 +267,20 @@
       "when": 1786720860000,
       "tag": "0037_transactional_delivery_worker_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786740802669,
+      "tag": "0038_conversation_escalations_and_urgencies",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786740900000,
+      "tag": "0039_cascade_conversation_records",
+      "breakpoints": true
     }
   ]
 }

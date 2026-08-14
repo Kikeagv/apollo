@@ -8,6 +8,10 @@ import { listPendingGuardianshipVerifications } from "./administrative-records";
 import { sendAppointmentReminder } from "./appointment-reminders";
 import { canContactManageAppointment } from "./appointment-self-management";
 import { resolveAppointmentSelfManagementEscalation } from "./appointment-self-management";
+import {
+  listConversationEscalations,
+  resolveConversationEscalation,
+} from "./conversation-escalations";
 import { db } from "../db";
 import {
   inClinicTransaction,
@@ -16,6 +20,8 @@ import {
 import {
   drizzleAppointmentSelfManagementStore,
   drizzleAppointmentSelfManagementEscalationResolver,
+  drizzleConversationEscalationReader,
+  drizzleConversationEscalationResolver,
   drizzleSimulatedWhatsAppBookingStore,
 } from "../db/simulated-whatsapp-booking-store";
 import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-store";
@@ -30,6 +36,8 @@ import {
   apoloSuperadmins,
   clinicUsers,
   clinics,
+  conversationEscalations,
+  conversationEvents,
   contactPatientLinks,
   contacts,
   doctors,
@@ -273,6 +281,68 @@ describe("Reserva simulada de WhatsApp persistente", () => {
               .select({ id: simulatedWhatsAppMessages.id })
               .from(simulatedWhatsAppMessages)
               .where(eq(simulatedWhatsAppMessages.clinicId, fixture.clinicId)),
+          ).resolves.toEqual([]);
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "persiste Escalamientos humanos y urgencias aislados por RLS",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-14T12:00:00.000Z");
+      try {
+        await expect(
+          processSimulatedWhatsAppMessage(
+            message(fixture, "human-request", "Quiero hablar con una persona"),
+            drizzleSimulatedWhatsAppBookingStore,
+            now,
+          ),
+        ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+        const escalations = await listConversationEscalations(
+          fixture,
+          drizzleConversationEscalationReader,
+        );
+        expect(escalations).toMatchObject([
+          { contact: { id: fixture.contactId }, trigger: "human-request" },
+        ]);
+        await expect(
+          listConversationEscalations(
+            fixture.other,
+            drizzleConversationEscalationReader,
+          ),
+        ).resolves.toEqual([]);
+        const escalation = escalations[0];
+        if (escalation === undefined) throw new Error("Falta el Escalamiento");
+        await expect(
+          resolveConversationEscalation(
+            { ...fixture, escalationId: escalation.id },
+            drizzleConversationEscalationResolver,
+          ),
+        ).resolves.toBe(true);
+        await expect(
+          processSimulatedWhatsAppMessage(
+            message(fixture, "urgency", "Tengo una urgencia médica"),
+            drizzleSimulatedWhatsAppBookingStore,
+            now,
+          ),
+        ).resolves.toMatchObject({ kind: "urgent-protocol" });
+        await inClinicTransaction(fixture, async (transaction) => {
+          await expect(
+            transaction
+              .select({ type: conversationEvents.type })
+              .from(conversationEvents),
+          ).resolves.toEqual([{ type: "urgency-protocol" }]);
+        });
+        await inClinicTransaction(fixture.other, async (transaction) => {
+          await expect(
+            transaction
+              .select({ id: conversationEscalations.id })
+              .from(conversationEscalations)
+              .where(eq(conversationEscalations.clinicId, fixture.clinicId)),
           ).resolves.toEqual([]);
         });
       } finally {

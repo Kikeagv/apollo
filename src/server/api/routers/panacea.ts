@@ -12,6 +12,12 @@ import {
   listAppointmentSelfManagementEscalations,
   resolveAppointmentSelfManagementEscalation,
 } from "~/server/application/appointment-self-management";
+import {
+  getEscalationNotificationSettings,
+  listConversationEscalations,
+  resolveConversationEscalation,
+  setEscalationNotificationSettings,
+} from "~/server/application/conversation-escalations";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import {
   configureEffectiveSchedule,
@@ -67,6 +73,9 @@ import { drizzleManualAppointmentStore } from "~/server/db/manual-appointment-st
 import {
   drizzleAppointmentSelfManagementEscalationReader,
   drizzleAppointmentSelfManagementEscalationResolver,
+  drizzleConversationEscalationReader,
+  drizzleConversationEscalationResolver,
+  drizzleEscalationNotificationSettingsStore,
 } from "~/server/db/simulated-whatsapp-booking-store";
 import {
   sendSimulatedClinicDoctorInvitation,
@@ -534,6 +543,57 @@ export const panaceaRouter = {
           identityId: ctx.clinic.identityId,
         },
         drizzleAppointmentSelfManagementEscalationResolver,
+      ),
+    ),
+
+  listConversationEscalations: clinicProcedure.query(({ ctx }) =>
+    listConversationEscalations(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleConversationEscalationReader,
+    ),
+  ),
+
+  resolveConversationEscalation: clinicProcedure
+    .input(z.object({ escalationId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      resolveConversationEscalation(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleConversationEscalationResolver,
+      ),
+    ),
+
+  getEscalationNotificationSettings: clinicProcedure.query(({ ctx }) =>
+    getEscalationNotificationSettings(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleEscalationNotificationSettingsStore,
+    ),
+  ),
+
+  setEscalationNotificationSettings: clinicProcedure
+    .input(
+      z.object({
+        enabled: z.boolean(),
+        secretaryPhoneE164: z.string().max(32).nullable(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      setEscalationNotificationSettings(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleEscalationNotificationSettingsStore,
       ),
     ),
 

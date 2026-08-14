@@ -15,6 +15,11 @@ import type {
   AppointmentSelfManagementEscalationResolver,
   AppointmentSelfManagementStore,
 } from "~/server/application/appointment-self-management";
+import type {
+  ConversationEscalationReader,
+  ConversationEscalationResolver,
+  EscalationNotificationSettingsStore,
+} from "~/server/application/conversation-escalations";
 import {
   drizzleAgendaAppointmentCanceller,
   drizzleAgendaAppointmentRescheduler,
@@ -31,6 +36,9 @@ import {
   appointmentSelfManagementEscalations,
   appointments,
   clinicUsers,
+  clinics,
+  conversationEscalations,
+  conversationEvents,
   contactPatientLinks,
   contacts,
   doctors,
@@ -45,7 +53,9 @@ import {
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const EMPTY_CONVERSATION: BookingConversation = {
+  agendaStopped: false,
   escalationId: null,
+  misunderstandingCount: 0,
   reservationId: null,
   selectedOfferId: null,
   selectedPatientId: null,
@@ -111,6 +121,53 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                 eq(simulatedWhatsAppMessages.id, input.id),
               ),
             ),
+      );
+    },
+
+    async createConversationEscalation(input) {
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        async (transaction) => {
+          const [escalation] = await transaction
+            .insert(conversationEscalations)
+            .values({
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              createdAt: input.now,
+              trigger: input.trigger,
+            })
+            .returning({ id: conversationEscalations.id });
+          if (escalation === undefined) {
+            throw new Error("No se pudo crear el Escalamiento de conversación");
+          }
+          const clinic = await transaction.query.clinics.findFirst({
+            columns: {
+              escalationNotificationsEnabled: true,
+              escalationSecretaryPhoneE164: true,
+            },
+            where: eq(clinics.id, input.clinicId),
+          });
+          return {
+            ...escalation,
+            secretaryPhoneE164:
+              clinic?.escalationNotificationsEnabled === true
+                ? clinic.escalationSecretaryPhoneE164
+                : null,
+          };
+        },
+      );
+    },
+
+    async recordUrgencyEvent(input) {
+      await inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        (transaction) =>
+          transaction.insert(conversationEvents).values({
+            clinicId: input.clinicId,
+            contactId: input.contactId,
+            occurredAt: input.now,
+            type: "urgency-protocol",
+          }),
       );
     },
 
@@ -525,6 +582,149 @@ export const drizzleAppointmentSelfManagementStore: AppointmentSelfManagementSto
       );
     },
   };
+
+/** Persistencia RLS de la bandeja humana de conversaciones de Panacea. */
+export const drizzleConversationEscalationReader: ConversationEscalationReader =
+  {
+    async listConversationEscalations(input) {
+      return inClinicTransaction(input, async (transaction) =>
+        transaction
+          .select({
+            contactId: contacts.id,
+            contactName: contacts.name,
+            createdAt: conversationEscalations.createdAt,
+            id: conversationEscalations.id,
+            trigger: conversationEscalations.trigger,
+          })
+          .from(conversationEscalations)
+          .innerJoin(
+            contacts,
+            and(
+              eq(conversationEscalations.clinicId, contacts.clinicId),
+              eq(conversationEscalations.contactId, contacts.id),
+            ),
+          )
+          .where(
+            and(
+              eq(conversationEscalations.clinicId, input.clinicId),
+              isNull(conversationEscalations.resolvedAt),
+            ),
+          )
+          .orderBy(conversationEscalations.createdAt)
+          .then((rows) =>
+            rows.map(({ contactId, contactName, ...escalation }) => ({
+              ...escalation,
+              contact: { id: contactId, name: contactName },
+            })),
+          ),
+      );
+    },
+  };
+
+export const drizzleConversationEscalationResolver: ConversationEscalationResolver =
+  {
+    async resolveConversationEscalation(input) {
+      return inClinicTransaction(input, async (transaction) => {
+        const [escalation] = await transaction
+          .update(conversationEscalations)
+          .set({ resolvedAt: new Date() })
+          .where(
+            and(
+              eq(conversationEscalations.clinicId, input.clinicId),
+              eq(conversationEscalations.id, input.escalationId),
+              isNull(conversationEscalations.resolvedAt),
+            ),
+          )
+          .returning({ contactId: conversationEscalations.contactId });
+        if (escalation === undefined) return false;
+        const conversation =
+          await transaction.query.whatsappConversations.findFirst({
+            columns: { state: true },
+            where: and(
+              eq(whatsappConversations.clinicId, input.clinicId),
+              eq(whatsappConversations.contactId, escalation.contactId),
+            ),
+          });
+        if (conversation?.state.escalationId === input.escalationId) {
+          await transaction
+            .update(whatsappConversations)
+            .set({
+              state: {
+                ...EMPTY_CONVERSATION,
+                ...conversation.state,
+                escalationId: null,
+              },
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(whatsappConversations.clinicId, input.clinicId),
+                eq(whatsappConversations.contactId, escalation.contactId),
+              ),
+            );
+        }
+        return true;
+      });
+    },
+  };
+
+/** Configuración RLS del aviso adicional por WhatsApp simulado a secretaria. */
+export const drizzleEscalationNotificationSettingsStore: EscalationNotificationSettingsStore =
+  {
+    async getEscalationNotificationSettings(input) {
+      return inClinicTransaction(input, async (transaction) => {
+        if (!(await hasActiveClinicOwner(transaction, input))) return undefined;
+        return transaction.query.clinics
+          .findFirst({
+            columns: {
+              escalationNotificationsEnabled: true,
+              escalationSecretaryPhoneE164: true,
+            },
+            where: eq(clinics.id, input.clinicId),
+          })
+          .then((clinic) =>
+            clinic === undefined
+              ? undefined
+              : {
+                  enabled: clinic.escalationNotificationsEnabled,
+                  secretaryPhoneE164: clinic.escalationSecretaryPhoneE164,
+                },
+          );
+      });
+    },
+
+    async setEscalationNotificationSettings(input) {
+      return inClinicTransaction(input, async (transaction) => {
+        if (!(await hasActiveClinicOwner(transaction, input))) return false;
+        const [clinic] = await transaction
+          .update(clinics)
+          .set({
+            escalationNotificationsEnabled: input.enabled,
+            escalationSecretaryPhoneE164: input.secretaryPhoneE164,
+          })
+          .where(eq(clinics.id, input.clinicId))
+          .returning({ id: clinics.id });
+        return clinic !== undefined;
+      });
+    },
+  };
+
+async function hasActiveClinicOwner(
+  transaction: ClinicTransaction,
+  input: { clinicId: string; identityId: string },
+) {
+  return (
+    (await transaction.query.clinicUsers.findFirst({
+      columns: { id: true },
+      where: and(
+        eq(clinicUsers.clinicId, input.clinicId),
+        eq(clinicUsers.identityId, input.identityId),
+        eq(clinicUsers.role, "owner"),
+        eq(clinicUsers.active, true),
+      ),
+    })) !== undefined
+  );
+}
 
 export const drizzleAppointmentSelfManagementEscalationReader: AppointmentSelfManagementEscalationReader =
   {

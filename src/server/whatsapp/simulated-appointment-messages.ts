@@ -8,6 +8,7 @@ import type {
   AppointmentReminderSender,
   AppointmentReminderRecipient,
 } from "~/server/application/appointment-reminders";
+import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
 
 const sentAppointmentMessages: ManualAppointmentTransactionalMessage[] = [];
 const sentAppointmentReminders: Array<{
@@ -15,6 +16,12 @@ const sentAppointmentReminders: Array<{
   clinicId: string;
   idempotencyKey?: string;
   recipient: AppointmentReminderRecipient;
+}> = [];
+const sentConversationEscalationNotifications: Array<{
+  clinicId: string;
+  escalationId: string;
+  recipientPhoneE164: string;
+  trigger: ConversationEscalationTrigger;
 }> = [];
 
 /** Adaptador simulado de WhatsApp para Mensajes transaccionales de Cita. */
@@ -49,10 +56,24 @@ export async function sendSimulatedAppointmentReminder(input: {
   sentAppointmentReminders.push(input);
 }
 
+/** Adaptador simulado del aviso adicional a la secretaria de la Clínica. */
+export async function sendSimulatedConversationEscalationNotification(input: {
+  clinicId: string;
+  escalationId: string;
+  recipientPhoneE164: string;
+  trigger: ConversationEscalationTrigger;
+}) {
+  sentConversationEscalationNotifications.push(input);
+}
+
 export function getSentSimulatedAppointmentMessages() {
   return [...sentAppointmentMessages];
 }
 
 export function getSentSimulatedAppointmentReminders() {
   return [...sentAppointmentReminders];
+}
+
+export function getSentSimulatedConversationEscalationNotifications() {
+  return [...sentConversationEscalationNotifications];
 }

@@ -4,6 +4,7 @@ import { processSimulatedWhatsAppMessage } from "~/server/application/simulated-
 import { captureTransactionalDeliveryCallback } from "~/server/application/transactional-deliveries";
 import { publicProcedure } from "~/server/api/trpc";
 import { drizzleSimulatedWhatsAppBookingStore } from "~/server/db/simulated-whatsapp-booking-store";
+import { sendSimulatedConversationEscalationNotification } from "~/server/whatsapp/simulated-appointment-messages";
 import {
   drizzleTransactionalDeliveryCallbackStore,
   suppressPendingReminderDeliveries,
@@ -23,6 +24,8 @@ export const asclepioRouter = {
     .mutation(({ input }) =>
       processSimulatedWhatsAppMessage(input, {
         ...drizzleSimulatedWhatsAppBookingStore,
+        notifySecretaryOfConversationEscalation:
+          sendSimulatedConversationEscalationNotification,
         suppressPendingReminderDeliveries,
       }),
     ),

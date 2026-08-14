@@ -6,6 +6,150 @@ import {
 } from "./simulated-whatsapp-booking";
 
 describe("reservar una Cita adulta por WhatsApp simulado", () => {
+  it("escala una petición explícita de atención humana y silencia la conversación", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        escalationNotificationsEnabled: true,
+        escalationSecretaryPhoneE164: "+50370000003",
+        id: "clinic-1",
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const now = new Date("2026-08-14T12:00:00.000Z");
+    const notifications: Array<{ recipientPhoneE164: string }> = [];
+    store.notifySecretaryOfConversationEscalation = async (notification) => {
+      notifications.push(notification);
+    };
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "human-request-1",
+          text: "Quiero hablar con una persona",
+          to: "+50370000001",
+        },
+        store,
+        now,
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "human-request" },
+    ]);
+    expect(notifications).toMatchObject([
+      { recipientPhoneE164: "+50370000003" },
+    ]);
+  });
+
+  it("aplica el Protocolo de urgencia sin ofrecer agenda y registra el evento", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "urgency-1",
+          text: "Tengo una emergencia médica",
+          to: "+50370000001",
+        },
+        store,
+        new Date("2026-08-14T12:00:00.000Z"),
+      ),
+    ).resolves.toEqual({
+      kind: "urgent-protocol",
+      text: "Si es una emergencia médica, llame al 911 ahora.",
+    });
+    expect(store.conversationEvents).toEqual([
+      { contactId: "contact-1", type: "urgency-protocol" },
+    ]);
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "after-urgency",
+          text: "info",
+          to: "+50370000001",
+        },
+        store,
+        new Date("2026-08-14T12:01:00.000Z"),
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+  });
+
+  it("escala solo tras dos fallos consecutivos y no confunde un flujo administrativo", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const now = new Date("2026-08-14T12:00:00.000Z");
+    const receive = (id: string, text: string) =>
+      processSimulatedWhatsAppMessage(
+        { from: "+50370000002", id, text, to: "+50370000001" },
+        store,
+        now,
+      );
+
+    await expect(receive("administrative-info", "info")).resolves.toMatchObject(
+      {
+        kind: "public-information",
+      },
+    );
+    await expect(receive("misunderstanding-1", "???")).resolves.toMatchObject({
+      kind: "invalid-request",
+    });
+    await expect(receive("misunderstanding-2", "???")).resolves.toEqual({
+      kind: "conversation-silenced",
+      text: "",
+    });
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "misunderstanding" },
+    ]);
+  });
+
+  it("escala una frustración explícita sin tratarla como una urgencia", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "frustration-1",
+          text: "Esto no sirve",
+          to: "+50370000001",
+        },
+        store,
+        new Date("2026-08-14T12:00:00.000Z"),
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "frustration" },
+    ]);
+    expect(store.conversationEvents).toEqual([]);
+  });
+
   it("suprime solo recordatorios pendientes cuando responde el Contacto", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
