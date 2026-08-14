@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -500,6 +500,134 @@ export const dailyAgendaEmails = createTable(
       foreignColumns: [doctors.clinicId, doctors.id],
       name: "daily_agenda_email_doctor_same_clinic_fk",
     }).onDelete("cascade"),
+  ],
+);
+
+export type TransactionalDeliveryKind =
+  "appointment-reminder" | "daily-agenda-pdf";
+export type TransactionalDeliveryStatus =
+  "pending" | "processing" | "sent" | "failed" | "suppressed";
+
+/** Outbox administrativo: sobrevive caídas entre la decisión y el proveedor. */
+export const transactionalDeliveries = createTable(
+  "transactional_delivery",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    appointmentId: uuid("appointment_id"),
+    recipientContactId: uuid("recipient_contact_id"),
+    kind: text("kind").$type<TransactionalDeliveryKind>().notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status")
+      .$type<TransactionalDeliveryStatus>()
+      .default("pending")
+      .notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", {
+      withTimezone: true,
+    }).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    retainUntil: timestamp("retain_until", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("transactional_delivery_clinic_id_unique").on(
+      table.clinicId,
+      table.id,
+    ),
+    uniqueIndex("transactional_delivery_clinic_key_unique").on(
+      table.clinicId,
+      table.idempotencyKey,
+    ),
+    index("transactional_delivery_ready_idx").on(
+      table.status,
+      table.nextAttemptAt,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.appointmentId],
+      foreignColumns: [appointments.clinicId, appointments.id],
+      name: "transactional_delivery_appointment_same_clinic_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.recipientContactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "transactional_delivery_recipient_same_clinic_fk",
+    }).onDelete("restrict"),
+  ],
+);
+
+/** Intentos y callbacks inmutables para auditar una Entrega transaccional. */
+export const transactionalDeliveryAttempts = createTable(
+  "transactional_delivery_attempt",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    deliveryId: uuid("delivery_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    outcome: text("outcome")
+      .$type<"delivered" | "failed" | "callback">()
+      .notNull(),
+    providerStatus: text("provider_status"),
+    error: text("error"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    retainUntil: timestamp("retain_until", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("transactional_delivery_callback_unique")
+      .on(table.deliveryId)
+      .where(sql`${table.outcome} = 'callback'`),
+    foreignKey({
+      columns: [table.clinicId, table.deliveryId],
+      foreignColumns: [
+        transactionalDeliveries.clinicId,
+        transactionalDeliveries.id,
+      ],
+      name: "transactional_delivery_attempt_delivery_same_clinic_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Tarea humana visible a cualquier Usuario activo de la Clínica. */
+export const transactionalDeliveryAlerts = createTable(
+  "transactional_delivery_alert",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    deliveryId: uuid("delivery_id").notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedByClinicUserId: uuid("resolved_by_clinic_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    retainUntil: timestamp("retain_until", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("transactional_delivery_alert_delivery_unique").on(
+      table.deliveryId,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.deliveryId],
+      foreignColumns: [
+        transactionalDeliveries.clinicId,
+        transactionalDeliveries.id,
+      ],
+      name: "transactional_delivery_alert_delivery_same_clinic_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.clinicId, table.resolvedByClinicUserId],
+      foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
+      name: "transactional_delivery_alert_resolver_same_clinic_fk",
+    }).onDelete("restrict"),
   ],
 );
 

@@ -141,6 +141,11 @@ export type SimulatedWhatsAppBookingStore = {
     contactId: string;
     conversation: BookingConversation;
   }): Promise<void>;
+  suppressPendingReminderDeliveries?(input: {
+    clinicId: string;
+    contactId: string;
+    now: Date;
+  }): Promise<number>;
   holdReservation(input: {
     clinicId: string;
     contactId: string;
@@ -178,6 +183,12 @@ export async function processSimulatedWhatsAppMessage(
     return contactNotFound();
   }
   if (received.duplicate !== null) return received.duplicate;
+
+  await store.suppressPendingReminderDeliveries?.({
+    clinicId: received.clinicId,
+    contactId: received.contactId,
+    now,
+  });
 
   const response = await processMessage(normalized.text, received, store, now);
   await store.completeMessage({

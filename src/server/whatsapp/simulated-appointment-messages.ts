@@ -13,6 +13,7 @@ const sentAppointmentMessages: ManualAppointmentTransactionalMessage[] = [];
 const sentAppointmentReminders: Array<{
   appointmentId: string;
   clinicId: string;
+  idempotencyKey?: string;
   recipient: AppointmentReminderRecipient;
 }> = [];
 
@@ -30,6 +31,23 @@ export const simulatedAppointmentReminderSender: AppointmentReminderSender = {
     sentAppointmentReminders.push(reminder);
   },
 };
+
+/** El proveedor simulado aplica la misma deduplicación que un proveedor real. */
+export async function sendSimulatedAppointmentReminder(input: {
+  appointmentId: string;
+  clinicId: string;
+  idempotencyKey: string;
+  recipient: AppointmentReminderRecipient;
+}) {
+  if (
+    sentAppointmentReminders.some(
+      (reminder) => reminder.idempotencyKey === input.idempotencyKey,
+    )
+  ) {
+    return;
+  }
+  sentAppointmentReminders.push(input);
+}
 
 export function getSentSimulatedAppointmentMessages() {
   return [...sentAppointmentMessages];

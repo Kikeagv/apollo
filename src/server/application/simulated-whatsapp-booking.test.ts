@@ -6,6 +6,36 @@ import {
 } from "./simulated-whatsapp-booking";
 
 describe("reservar una Cita adulta por WhatsApp simulado", () => {
+  it("suprime solo recordatorios pendientes cuando responde el Contacto", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const suppressed: Array<{ clinicId: string; contactId: string }> = [];
+    store.suppressPendingReminderDeliveries = async (input) => {
+      suppressed.push(input);
+      return 2;
+    };
+
+    await processSimulatedWhatsAppMessage(
+      { from: "+50370000002", id: "reply-1", text: "info", to: "+50370000001" },
+      store,
+      new Date("2026-08-14T12:00:00.000Z"),
+    );
+
+    expect(suppressed).toEqual([
+      {
+        clinicId: "clinic-1",
+        contactId: "contact-1",
+        now: new Date("2026-08-14T12:00:00.000Z"),
+      },
+    ]);
+  });
+
   it("exige seleccionar explícitamente el Paciente y confirma una Reserva temporal", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },

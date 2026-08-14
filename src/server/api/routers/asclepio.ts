@@ -1,10 +1,13 @@
 import { z } from "zod";
 
 import { processSimulatedWhatsAppMessage } from "~/server/application/simulated-whatsapp-booking";
-import { captureAppointmentReminderCallback } from "~/server/application/appointment-reminders";
+import { captureTransactionalDeliveryCallback } from "~/server/application/transactional-deliveries";
 import { publicProcedure } from "~/server/api/trpc";
 import { drizzleSimulatedWhatsAppBookingStore } from "~/server/db/simulated-whatsapp-booking-store";
-import { drizzleAppointmentReminderCallbackStore } from "~/server/db/appointment-scheduler-store";
+import {
+  drizzleTransactionalDeliveryCallbackStore,
+  suppressPendingReminderDeliveries,
+} from "~/server/db/transactional-delivery-store";
 
 /** Punto de entrada del adaptador simulado; no expone el almacén a Asclepio. */
 export const asclepioRouter = {
@@ -18,25 +21,22 @@ export const asclepioRouter = {
       }),
     )
     .mutation(({ input }) =>
-      processSimulatedWhatsAppMessage(
-        input,
-        drizzleSimulatedWhatsAppBookingStore,
-      ),
+      processSimulatedWhatsAppMessage(input, {
+        ...drizzleSimulatedWhatsAppBookingStore,
+        suppressPendingReminderDeliveries,
+      }),
     ),
   receiveSimulatedAppointmentReminderCallback: publicProcedure
     .input(
       z.object({
-        appointmentId: z.string().uuid(),
-        checkpoint: z.enum(["24h", "22h", "20h"]),
-        clinicId: z.string().uuid(),
-        recipientContactId: z.string().uuid(),
+        idempotencyKey: z.string().min(1).max(300),
         status: z.enum(["delivered", "failed"]),
       }),
     )
     .mutation(({ input }) =>
-      captureAppointmentReminderCallback(
+      captureTransactionalDeliveryCallback(
         input,
-        drizzleAppointmentReminderCallbackStore,
+        drizzleTransactionalDeliveryCallbackStore,
       ),
     ),
 };

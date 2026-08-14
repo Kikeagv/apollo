@@ -1,8 +1,12 @@
 import { env } from "~/env";
-import { runAppointmentScheduler } from "~/server/application/appointment-reminders";
-import { drizzleManualAppointmentStore } from "~/server/db/manual-appointment-store";
+import { runTransactionalDeliveryScheduler } from "~/server/application/transactional-deliveries";
 import { drizzleAppointmentSchedulerStore } from "~/server/db/appointment-scheduler-store";
-import { appointmentSchedulerDeliveryAdapters } from "~/server/integrations/appointment-scheduler-delivery";
+import {
+  enqueueDueTransactionalDeliveries,
+  purgeExpiredTransactionalDeliveries,
+  drizzleTransactionalDeliveryStore,
+} from "~/server/db/transactional-delivery-store";
+import { transactionalDeliveryAdapter } from "~/server/integrations/transactional-delivery";
 
 /** Entrada protegida del job de producción; los adaptadores siguen simulados. */
 export async function POST(request: Request) {
@@ -12,13 +16,18 @@ export async function POST(request: Request) {
   ) {
     return new Response("No autorizado", { status: 401 });
   }
-  const delivery = appointmentSchedulerDeliveryAdapters();
-  const result = await runAppointmentScheduler(
+  const result = await runTransactionalDeliveryScheduler(
     { now: new Date() },
-    drizzleAppointmentSchedulerStore,
-    drizzleManualAppointmentStore,
-    delivery.reminderSender,
-    delivery.agendaEmailSender,
+    {
+      applyNoShowPolicy: (input) =>
+        drizzleAppointmentSchedulerStore.applyNoShowPolicy(input),
+      enqueueDueDeliveries: enqueueDueTransactionalDeliveries,
+      purgeExpiredDeliveries: purgeExpiredTransactionalDeliveries,
+      releaseExpiredReservations: (input) =>
+        drizzleAppointmentSchedulerStore.releaseExpiredReservations(input),
+    },
+    drizzleTransactionalDeliveryStore,
+    transactionalDeliveryAdapter(),
   );
   return Response.json(result);
 }

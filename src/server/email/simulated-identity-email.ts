@@ -34,7 +34,9 @@ type ClinicOwnerInvitationDelivery = Omit<
 const sentIdentityOtps: IdentityOtp[] = [];
 const sentClinicOwnerInvitations: ClinicOwnerInvitation[] = [];
 const sentClinicDoctorInvitations: ClinicDoctorInvitation[] = [];
-const sentDailyAgendaEmails: Array<DailyAgendaEmail & { pdf: Uint8Array }> = [];
+const sentDailyAgendaEmails: Array<
+  DailyAgendaEmail & { idempotencyKey?: string; pdf: Uint8Array }
+> = [];
 
 /** Adaptador de correo sintético para desarrollo y pruebas de integración. */
 export async function sendSimulatedIdentityEmail(otp: IdentityOtp) {
@@ -79,6 +81,19 @@ export const simulatedDailyAgendaEmailSender = {
     sentDailyAgendaEmails.push(email);
   },
 };
+
+/** El correo simulado conserva la clave para que reintentos no dupliquen el PDF. */
+export async function sendSimulatedDailyAgenda(
+  email: DailyAgendaEmail & { idempotencyKey: string; pdf: Uint8Array },
+) {
+  if (
+    sentDailyAgendaEmails.some(
+      (sent) => sent.idempotencyKey === email.idempotencyKey,
+    )
+  )
+    return;
+  sentDailyAgendaEmails.push(email);
+}
 
 export function getSentDailyAgendaEmails() {
   return [...sentDailyAgendaEmails];

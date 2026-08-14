@@ -79,6 +79,10 @@ import {
 } from "~/server/application/no-show-policy";
 import { drizzleNoShowPolicyStore } from "~/server/db/no-show-policy-store";
 import {
+  listTransactionalDeliveryAlerts,
+  resolveTransactionalDeliveryAlert,
+} from "~/server/db/transactional-delivery-store";
+import {
   clinicProcedure,
   protectedProcedure,
   publicProcedure,
@@ -110,6 +114,24 @@ export const panaceaRouter = {
         },
         drizzleNoShowPolicyStore,
       ),
+    ),
+
+  listTransactionalDeliveryAlerts: clinicProcedure.query(({ ctx }) =>
+    listTransactionalDeliveryAlerts({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    }),
+  ),
+
+  resolveTransactionalDeliveryAlert: clinicProcedure
+    .input(z.object({ alertId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      resolveTransactionalDeliveryAlert({
+        ...input,
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+        now: new Date(),
+      }),
     ),
 
   acceptClinicInvitation: publicProcedure

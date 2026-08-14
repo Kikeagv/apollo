@@ -49,7 +49,9 @@ describe("migraciones de PostgreSQL", () => {
           `;
           expect(policies).toEqual([
             { command: "INSERT", name: "appointment_event_append" },
+            { command: "INSERT", name: "appointment_event_scheduler_append" },
             { command: "SELECT", name: "appointment_event_operating_read" },
+            { command: "SELECT", name: "appointment_event_scheduler_read" },
           ]);
           const escalationPolicies = await migrated<
             Array<{ command: "INSERT" | "SELECT" | "UPDATE"; name: string }>
@@ -73,6 +75,19 @@ describe("migraciones de PostgreSQL", () => {
               command: "UPDATE",
               name: "appointment_self_management_escalation_operating_resolve",
             },
+          ]);
+          const deliveryPolicies = await migrated<
+            Array<{ command: "ALL" | "SELECT"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_transactional_delivery'
+            order by cmd, policyname
+          `;
+          expect(deliveryPolicies).toEqual([
+            { command: "ALL", name: "transactional_delivery_scheduler_access" },
+            { command: "SELECT", name: "transactional_delivery_clinic_read" },
           ]);
         } finally {
           await migrated.end();
