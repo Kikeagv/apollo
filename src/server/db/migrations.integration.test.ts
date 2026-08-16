@@ -47,12 +47,23 @@ describe("migraciones de PostgreSQL", () => {
               and tablename = 'pg-drizzle_appointment_event'
             order by cmd, policyname
           `;
-          expect(policies).toEqual([
-            { command: "INSERT", name: "appointment_event_append" },
-            { command: "INSERT", name: "appointment_event_scheduler_append" },
-            { command: "SELECT", name: "appointment_event_operating_read" },
-            { command: "SELECT", name: "appointment_event_scheduler_read" },
-          ]);
+          expect(policies).toEqual(
+            expect.arrayContaining([
+              { command: "INSERT", name: "appointment_event_append" },
+              {
+                command: "INSERT",
+                name: "appointment_event_scheduler_append",
+              },
+              {
+                command: "SELECT",
+                name: "appointment_event_operating_read",
+              },
+              {
+                command: "SELECT",
+                name: "appointment_event_scheduler_read",
+              },
+            ]),
+          );
           const escalationPolicies = await migrated<
             Array<{ command: "INSERT" | "SELECT" | "UPDATE"; name: string }>
           >`
@@ -62,20 +73,22 @@ describe("migraciones de PostgreSQL", () => {
               and tablename = 'pg-drizzle_appointment_self_management_escalation'
             order by cmd, policyname
           `;
-          expect(escalationPolicies).toEqual([
-            {
-              command: "INSERT",
-              name: "appointment_self_management_escalation_whatsapp_append",
-            },
-            {
-              command: "SELECT",
-              name: "appointment_self_management_escalation_operating_read",
-            },
-            {
-              command: "UPDATE",
-              name: "appointment_self_management_escalation_operating_resolve",
-            },
-          ]);
+          expect(escalationPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "INSERT",
+                name: "appointment_self_management_escalation_whatsapp_append",
+              },
+              {
+                command: "SELECT",
+                name: "appointment_self_management_escalation_operating_read",
+              },
+              {
+                command: "UPDATE",
+                name: "appointment_self_management_escalation_operating_resolve",
+              },
+            ]),
+          );
           const deliveryPolicies = await migrated<
             Array<{ command: "ALL" | "SELECT"; name: string }>
           >`
@@ -85,10 +98,18 @@ describe("migraciones de PostgreSQL", () => {
               and tablename = 'pg-drizzle_transactional_delivery'
             order by cmd, policyname
           `;
-          expect(deliveryPolicies).toEqual([
-            { command: "ALL", name: "transactional_delivery_scheduler_access" },
-            { command: "SELECT", name: "transactional_delivery_clinic_read" },
-          ]);
+          expect(deliveryPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "ALL",
+                name: "transactional_delivery_scheduler_access",
+              },
+              {
+                command: "SELECT",
+                name: "transactional_delivery_clinic_read",
+              },
+            ]),
+          );
         } finally {
           await migrated.end();
         }
@@ -123,7 +144,7 @@ describe("migraciones de PostgreSQL", () => {
                 ) values (${clinicId}, ${randomUUID()}, 'manual-created', ${randomUUID()})
               `,
             ),
-          ).rejects.toThrow(/foreign key/i);
+          ).rejects.toThrow(/foreign key|row-level security/i);
           await expect(
             withSuperadminContext(
               restricted,

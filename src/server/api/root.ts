@@ -1,6 +1,7 @@
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 import { panaceaRouter } from "~/server/api/routers/panacea";
 import { asclepioRouter } from "~/server/api/routers/asclepio";
+import { apoloRouter } from "~/server/api/routers/apolo";
 
 /**
  * This is the primary router for your server.
@@ -8,6 +9,7 @@ import { asclepioRouter } from "~/server/api/routers/asclepio";
  * All routers added in /api/routers should be manually added here.
  */
 export const appRouter = createTRPCRouter({
+  apolo: apoloRouter,
   asclepio: asclepioRouter,
   panacea: panaceaRouter,
 });

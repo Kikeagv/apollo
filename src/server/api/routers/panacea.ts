@@ -55,6 +55,7 @@ import {
   updateServiceOffer,
 } from "~/server/application/service-catalog";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
+import { listVisibleClinicSupportSessions } from "~/server/db/subscription-support-store";
 import {
   drizzleAvailabilityStore,
   drizzleCareOptionsStore,
@@ -107,6 +108,13 @@ export const panaceaRouter = {
     service: "panacea",
     status: "ready" as const,
   })),
+
+  listVisibleSupportSessions: clinicProcedure.query(({ ctx }) =>
+    listVisibleClinicSupportSessions({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    }),
+  ),
 
   getNoShowPolicy: clinicProcedure.query(({ ctx }) =>
     getNoShowPolicy(

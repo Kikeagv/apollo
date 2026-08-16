@@ -9,6 +9,7 @@ import { hashClinicInvitationToken } from "~/server/db/clinic-invitation-token";
 import {
   account,
   clinicInvitations,
+  clinics,
   clinicUsers,
   configurationAuditEvents,
   doctors,
@@ -188,5 +189,13 @@ async function setClinicContext(
 ) {
   await transaction.execute(
     sql`select set_config('app.clinic_id', ${clinicId}, true)`,
+  );
+  const clinic = await transaction.query.clinics.findFirst({
+    columns: { subscriptionStatus: true },
+    where: eq(clinics.id, clinicId),
+  });
+  if (clinic === undefined) throw new Error("La Clínica no existe");
+  await transaction.execute(
+    sql`select set_config('app.subscription_status', ${clinic.subscriptionStatus}, true)`,
   );
 }

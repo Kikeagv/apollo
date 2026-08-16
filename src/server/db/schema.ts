@@ -31,6 +31,7 @@ export type ClinicInvitationRole = "owner" | "doctor";
 export type AppointmentOrigin = "manual" | "reservation";
 export type AppointmentStatus = "confirmed" | "cancelled";
 export type NoShowPolicy = "alert" | "cancel-after-third-reminder";
+export type SubscriptionStatus = "active" | "suspended";
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -107,6 +108,10 @@ export const clinics = createTable("clinic", {
     .default(false)
     .notNull(),
   isSynthetic: boolean("is_synthetic").default(true).notNull(),
+  subscriptionStatus: text("subscription_status")
+    .$type<SubscriptionStatus>()
+    .default("active")
+    .notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -917,6 +922,74 @@ export const apoloSuperadmins = createTable("superadmin", {
     .defaultNow()
     .notNull(),
 });
+
+/** Pago comercial manual; no concede contexto ni permisos clínicos. */
+export const transferPayments = createTable(
+  "transfer_payment",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "restrict" }),
+    amountUsd: numeric("amount_usd", { precision: 12, scale: 2 }).notNull(),
+    reference: text("reference").notNull(),
+    recordedByIdentityId: text("recorded_by_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    recordedAt: timestamp("recorded_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("transfer_payment_clinic_idx").on(table.clinicId)],
+);
+
+/** Impersonación de soporte explícita, limitada a una Clínica y vencible. */
+export const clinicSupportSessions = createTable(
+  "clinic_support_session",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    superadminIdentityId: text("superadmin_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("clinic_support_session_clinic_idx").on(
+      table.clinicId,
+      table.expiresAt,
+    ),
+  ],
+);
+
+/** Evidencia append-only de cada acceso de soporte a una Clínica. */
+export const apoloAuditEvents = createTable(
+  "apolo_audit_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "restrict" }),
+    actorIdentityId: text("actor_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    supportSessionId: uuid("support_session_id").references(
+      () => clinicSupportSessions.id,
+      { onDelete: "restrict" },
+    ),
+    action: text("action").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("apolo_audit_event_clinic_idx").on(table.clinicId)],
+);
 
 export const userRelations = relations(user, ({ many }) => ({
   account: many(account),

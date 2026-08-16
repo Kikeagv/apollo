@@ -288,6 +288,27 @@
       "when": 1786744727724,
       "tag": "0040_same_mother_askani",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786906811171,
+      "tag": "0041_past_quicksilver",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1786910248367,
+      "tag": "0042_apo24_support_least_privilege",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786910502125,
+      "tag": "0043_apo24_restrict_subscription_update",
+      "breakpoints": true
     }
   ]
 }

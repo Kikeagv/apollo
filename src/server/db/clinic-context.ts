@@ -44,13 +44,23 @@ export async function inClinicTransaction<T>(
     await transaction.execute(
       sql`select set_config('app.clinic_role', ${membership.role}, true)`,
     );
-    const doctor = await transaction.query.doctors.findFirst({
-      columns: { id: true },
-      where: and(
-        eq(doctors.clinicId, input.clinicId),
-        eq(doctors.clinicUserId, membership.id),
-      ),
-    });
+    const [clinic, doctor] = await Promise.all([
+      transaction.query.clinics.findFirst({
+        columns: { subscriptionStatus: true },
+        where: eq(clinics.id, input.clinicId),
+      }),
+      transaction.query.doctors.findFirst({
+        columns: { id: true },
+        where: and(
+          eq(doctors.clinicId, input.clinicId),
+          eq(doctors.clinicUserId, membership.id),
+        ),
+      }),
+    ]);
+    if (clinic === undefined) throw new Error("La Clínica no existe");
+    await transaction.execute(
+      sql`select set_config('app.subscription_status', ${clinic.subscriptionStatus}, true)`,
+    );
     await transaction.execute(
       sql`select set_config('app.doctor_id', ${doctor?.id ?? ""}, true)`,
     );
@@ -77,6 +87,26 @@ export async function inSuperadminTransaction<T>(
   });
 }
 
+/** Camino comercial mínimo: solo el estado de suscripción de una Clínica. */
+export async function inCommercialSubscriptionTransaction<T>(
+  identityId: string,
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role apolo_commercial_access`);
+    const operator = await transaction.query.apoloSuperadmins.findFirst({
+      where: eq(apoloSuperadmins.identityId, identityId),
+    });
+    if (operator === undefined) {
+      throw new Error("La Identidad no es superadmin de Apolo");
+    }
+    await transaction.execute(
+      sql`select set_config('app.superadmin_id', ${identityId}, true)`,
+    );
+    return operation(transaction);
+  });
+}
+
 /**
  * Resuelve el destino del adaptador de WhatsApp bajo RLS y después fija el
  * contexto de la Clínica. No crea una identidad ni concede un rol clínico.
@@ -94,10 +124,11 @@ export async function inSimulatedWhatsAppInboundTransaction<T>(
       sql`select set_config('app.whatsapp_inbound', 'true', true)`,
     );
     const clinic = await transaction.query.clinics.findFirst({
-      columns: { id: true },
+      columns: { id: true, subscriptionStatus: true },
       where: eq(clinics.whatsappNumberE164, whatsappNumberE164),
     });
     if (clinic === undefined) return undefined;
+    if (clinic.subscriptionStatus === "suspended") return undefined;
     await configureSimulatedWhatsAppClinic(transaction, clinic.id);
     return operation({ clinicId: clinic.id }, transaction);
   });
@@ -140,6 +171,16 @@ async function configureSimulatedWhatsAppClinic(
 ) {
   await transaction.execute(
     sql`select set_config('app.clinic_id', ${clinicId}, true)`,
+  );
+  const clinic = await transaction.query.clinics.findFirst({
+    columns: { subscriptionStatus: true },
+    where: eq(clinics.id, clinicId),
+  });
+  if (clinic?.subscriptionStatus !== "active") {
+    throw new Error("La Clínica está suspendida");
+  }
+  await transaction.execute(
+    sql`select set_config('app.subscription_status', ${clinic.subscriptionStatus}, true)`,
   );
   await transaction.execute(
     sql`select set_config('app.panacea_operation', 'appointments', true)`,

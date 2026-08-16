@@ -24,6 +24,7 @@ import { ServiceCatalogSection } from "./service-catalog-section";
 import { SyntheticClinicalActionForm } from "./synthetic-clinical-action-form";
 import { VerifyClinicOtpForm } from "./verify-clinic-otp-form";
 import { VoiceNoteTranscriptionSettingsSection } from "./voice-note-transcription-settings-section";
+import { SupportAccessSection } from "./support-access-section";
 
 export default async function Home({
   searchParams,
@@ -69,6 +70,7 @@ export default async function Home({
               Aún no hay información para mostrar en esta Clínica. Esta es su
               Panacea vacía.
             </p>
+            <SupportAccessSection />
             {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
             <AdministrativeRecordsSection />
             <ConversationEscalationsSection />

@@ -25,6 +25,9 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
         await transaction.execute(
           sql`select set_config('app.clinic_id', ${createdClinic.id}, true)`,
         );
+        await transaction.execute(
+          sql`select set_config('app.subscription_status', 'active', true)`,
+        );
         await transaction.insert(clinicInvitations).values({
           clinicId: createdClinic.id,
           email: input.invitation.ownerEmail,
@@ -54,6 +57,9 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
       async (transaction) => {
         await transaction.execute(
           sql`select set_config('app.clinic_id', ${input.clinicId}, true)`,
+        );
+        await transaction.execute(
+          sql`select set_config('app.subscription_status', 'active', true)`,
         );
         await transaction.insert(identityAuditEvents).values({
           action: "clinic-owner-invited",
