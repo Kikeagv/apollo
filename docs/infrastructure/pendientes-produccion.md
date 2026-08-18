@@ -1,0 +1,70 @@
+# Pendientes de producción — Praxia
+
+**Fecha base:** 18 de agosto de 2026
+**Tipo:** documento vivo; marcar cada ítem como resuelto al cerrarse. No contiene secretos.
+
+## Decisiones tomadas el 18 de agosto de 2026
+
+- **APO-26** (`Desplegar el perímetro y recuperación verificable de Apolo`) está reclamado, asignado a Enrique y en In Progress.
+- **Plan Cloudflare: permanecer en Free** durante el piloto y mientras crece la base de usuarios. Subir a **Pro** al go-live con la primera clínica real (rate limit de login de 1 min, Super Bot Fight Mode, Managed Ruleset completo + OWASP). El upgrade es un clic y no toca DNS ni Tunnel.
+  - En Free el rate limiting solo admite período de conteo de 10 s y una regla; por eso los límites por minuto/15 min van a nivel de aplicación (ver ticket AC4) y la regla WAF de login se activa al pasar a Pro.
+- **Base de datos:** PostgreSQL 15 en la VPS (contenedor gestionado por Coolify), sin puerto público. Backup doble: lógico diario (pg_dump) + físico con archivo WAL (pgBackRest) hacia R2. BD administrada queda descartada para el piloto; se revisa al escalar.
+- **Nombres aprobados:** proyecto/BD `praxia`, bucket `praxia-production-backups`.
+- **AC4 de APO-26 movido a ticket de aplicación** (restablecimiento de contraseña + Turnstile + límites por IP + correo Resend de Identidad). Ver `## Tickets creados`.
+
+## Aprobaciones registradas
+
+- Crear bucket y token R2 de alcance mínimo, añadir ruta de tunnel `app.usepraxia.com` y reglas WAF: **OK del fundador** (las reglas WAF quedan condicionadas al plan; ver decisión de Cloudflare Free/Pro).
+- Aplicar update de Coolify (v4.3.7 → última) antes de crear recursos nuevos: **OK**.
+- Nombres de proyecto, base y bucket: **OK**.
+
+## Pendientes de infraestructura (APO-26)
+
+| # | Pendiente | Estado | Referencia |
+|---:|---|---|---|
+| 1 | Crear bucket privado R2 `praxia-production-backups` | Pendiente | APO-26 |
+| 2 | Crear token API R2 de alcance mínimo (solo ese bucket) y guardarlo en Coolify | Pendiente | APO-26 |
+| 3 | Registrar R2 como S3 Storage en Coolify | Pendiente | APO-26 |
+| 4 | Aplicar update de Coolify | Pendiente | APO-26 |
+| 5 | Crear proyecto `praxia` y PostgreSQL 15 sin puerto público | Pendiente | APO-26 |
+| 6 | Backups lógicos diarios → R2 (retención 30 d diarios, 12 semanas semanales) | Pendiente | APO-26 |
+| 7 | pgBackRest + archivo continuo de WAL → R2 (PITR, RPO minutos) | Pendiente | APO-26 |
+| 8 | Drill: restaurar en postgres aislado con datos sintéticos y documentar RPO/RTO | Pendiente | APO-26 |
+| 9 | Runbook de restauración `docs/runbooks/restauracion-backup.md` | Pendiente | APO-26 |
+| 10 | Dockerfile standalone + health check en el repo | Pendiente | APO-26 |
+| 11 | Recurso de aplicación en Coolify (repo público `Kikeagv/apollo`, main) | Pendiente | APO-26 |
+| 12 | Ruta de tunnel `app.usepraxia.com` → `localhost:80` | Pendiente | APO-26 |
+| 13 | Migraciones y variables de entorno de producción (secretos solo en Coolify) | Pendiente | APO-26 |
+| 14 | Cron loopback cada minuto → `/api/jobs/appointment-scheduler` con `SCHEDULER_SECRET` | Pendiente | APO-26 |
+| 15 | Verificar TLS Full (strict) y baseline WAF en el zone | Pendiente | APO-26 |
+| 16 | Diseñar skip-rule para el callback de Twilio (se activa con APO-25) | Pendiente | APO-26 |
+| 17 | Notificaciones de Coolify por correo (Resend) para deploys/backups fallidos | Pendiente | APO-26 |
+| 18 | Health checks y monitoreo externo de `app.usepraxia.com` | Pendiente | APO-26 |
+| 19 | Actualizar estado de infraestructura con los hechos verificados (Meta in review, OVH Canadá, Twilio $20, Coolify v4.3.7) | Hecho 2026-08-18 | `docs/infrastructure/estado-infraestructura-produccion-2026-08-17.md` |
+| 20 | ADR 0007 de despliegue y recuperación | Hecho 2026-08-18 | `docs/adr/0007-despliegue-produccion-y-recuperacion.md` |
+
+## Pendientes de aplicación (nuevos)
+
+| # | Pendiente | Estado | Referencia |
+|---:|---|---|---|
+| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Ticket creado, pendiente | APO-56 |
+
+## Pendientes externos y de fase
+
+| # | Pendiente | Estado | Referencia |
+|---:|---|---|---|
+| 22 | Verificación de negocio de Meta (K31 SOFTWARE) — enviada, en review (~2 días hábiles) | En curso | APO-4 |
+| 23 | Base legal para procesar datos reales | Bloquea go-live | APO-5 |
+| 24 | Validar transcripción de notas de voz antes del piloto | Pendiente | APO-11 |
+| 25 | Twilio/WhatsApp: configurar webhooks y callbacks solo cuando la app esté lista; verificar firmas | Después de APO-57/APO-25 | APO-25 |
+| 26 | Meta fase 2 (Tech Provider, Partner Solution, Embedded Signup) | Fase 2 | — |
+| 27 | Decidir `www.usepraxia.com`: servir landing o redirigir al apex | Sin decidir (no tocar en silencio) | — |
+| 28 | Rutina mensual de actualizaciones y revisión trimestral de accesos | Pendiente | — |
+
+## Referencias
+
+- `docs/infrastructure/estado-infraestructura-produccion-2026-08-17.md` — estado operativo y arquitectura.
+- `docs/research/alternativas-hetzner-vps-coolify.md` — decisión de VPS y modelo de backups.
+- `docs/adr/0003-perimetro-cloudflare-para-el-piloto.md` — perímetro Cloudflare del piloto.
+- `docs/adr/0007-despliegue-produccion-y-recuperacion.md` — arquitectura de despliegue y recuperación.
+- `docs/runbooks/activacion-whatsapp-piloto.md` — runbook de activación de WhatsApp (fase 1 manual).

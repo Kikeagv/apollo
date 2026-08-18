@@ -12,8 +12,17 @@
 La base de infraestructura de Praxia ya está configurada sobre una VPS de OVH con Coolify. El acceso administrativo no depende de puertos Docker abiertos a Internet: Cloudflare Tunnel enruta el tráfico hacia el servidor y Cloudflare Access limita la consola de Coolify al propietario autorizado.
 
 El dominio `usepraxia.com` ya está gestionado por Cloudflare. Resend está verificado y habilitado en Coolify para correo transaccional desde `Praxia <noreply@usepraxia.com>`.
-
 El riesgo principal previo a datos reales es la continuidad: la infraestructura opera sobre una sola VPS y aún no hay backups externos en Cloudflare R2. En paralelo se prepara la verificación de negocio de Meta, que puede tardar semanas, pero la integración de onboarding autoservicio de Meta/Twilio queda explícitamente fuera de la fase 1.
+
+## Actualización 2026-08-18
+
+- **APO-26** (`Desplegar el perímetro y recuperación verificable`) está en In Progress y asignado. El criterio de recuperación/Turnstile se movió a **APO-56** (aplicación). La lista viva de pendientes está en `docs/infrastructure/pendientes-produccion.md`.
+- **Meta:** la verificación de negocio de K31 SOFTWARE quedó enviada y está **In review** (~2 días hábiles). 2FA requerido para todos en el Business Portfolio; un administrador sin passkey.
+- **OVH:** la VPS es modelo **VPS-2 2027** en **Beauharnois (Canadá)**, Ubuntu 24.04. El **backup automatizado de OVH está activo** (último 2026-08-17 23:10). Snapshot desactivado.
+- **Twilio:** cuenta `AC81e8ab…` activa con saldo de $20 y unidades gratuitas (100 SMS / 100 WhatsApp / 3000 email / 75 min voz). Sin números ni senders configurados.
+- **Cloudflare:** la zona opera en plan **Free** (el ADR 0003 asume Pro). Decisión: permanecer en Free durante el piloto y subir a **Pro** en el go-live para rate limit de login, SBfM y Managed Ruleset completo. Ver `docs/adr/0007-despliegue-produccion-y-recuperacion.md`.
+- **Coolify:** v4.3.7 sin notificaciones habilitadas y sin S3 Storage registrado. Email transaccional por Resend configurado (`Praxia <noreply@usepraxia.com>`).
+
 
 ## Estado por componente
 
