@@ -23,6 +23,7 @@ El riesgo principal previo a datos reales es la continuidad: la infraestructura 
 - **Cloudflare:** la zona opera en plan **Free** (el ADR 0003 asume Pro). Decisión: permanecer en Free durante el piloto y subir a **Pro** en el go-live para rate limit de login, SBfM y Managed Ruleset completo. Ver `docs/adr/0007-despliegue-produccion-y-recuperacion.md`.
 - **Coolify:** v4.3.9. Sin notificaciones habilitadas. Email transaccional por Resend configurado (`Praxia <noreply@usepraxia.com>`). S3 Storage de R2 registrado (Connected).
 - **Backups (nuevo):** doble capa activa hacia R2 — pg_dump diario de Coolify (05:00 El Salvador) y pgBackRest con WAL continuo (imagen propia `localhost:5000/praxia-postgres:16` servida por un registro Docker local de la VPS). Primer full y drill de restauración (full y PITR) ejecutados y documentados en `docs/runbooks/restauracion-backup.md`.
+- **Aplicación (nuevo):** desplegada en producción el 2026-08-18. Recurso `praxia-app` en Coolify (repo público `Kikeagv/apollo`, main, build pack Dockerfile; fix `7106212f` para `npm ci` con peers de better-auth). 5 env vars en Coolify (incluida `DATABASE_URL` interna, inyectada sin pasar por chat). Migraciones drizzle aplicadas al cluster `praxia` desde la VPS. Dominio `app.usepraxia.com` publicado por el tunnel `praxia-ovh-prod` → `http://localhost:80` (Traefik). HTTPS punta a punta verificado (`/api/health` 200). Cron loopback cada minuto (`appointment-scheduler-loopback`) llamando a `/api/jobs/appointment-scheduler` con `SCHEDULER_SECRET`; 401/200 verificados y primera ejecución success. Quedan: TLS Full (strict) + WAF (requiere OK del fundador), skip-rule Twilio, notificaciones y monitoreo externo.
 
 ## Estado por componente
 
@@ -36,7 +37,7 @@ El riesgo principal previo a datos reales es la continuidad: la infraestructura 
 | Meta / WhatsApp | En curso | Existe un Meta Business Portfolio y está abierta la verificación. | Completar verificación con datos legales correctos y 2FA. |
 | Twilio / WhatsApp, fase 1 | Pendiente | Sin sender ni operación manual de la primera clínica. | Definir y ejecutar el runbook manual del piloto. |
 | Meta Tech Provider, fase 2 | Pendiente | No se ha implementado onboarding autoservicio. | App Meta, Partner Solution y Embedded Signup. |
-| Aplicación Praxia | Pendiente | No hay despliegue de producción registrado. | Conectar repositorio, secretos, base de datos y dominio. |
+| Aplicación Praxia | Desplegada | `praxia-app` en Coolify (main, Dockerfile); `app.usepraxia.com` por tunnel; migraciones aplicadas; cron loopback activo; HTTPS y health 200. | TLS Full (strict) + WAF, APO-56, correo real (APO-25). |
 
 ## Arquitectura configurada
 
@@ -148,14 +149,13 @@ La fase 1 no incluye **Embedded Signup** en la aplicación. La clínica no se re
 6. Restaurar una copia en un entorno aislado y documentar los pasos y el tiempo de recuperación.
 
 ### P1 — Primer despliegue de la aplicación
-
-- Conectar el repositorio de Praxia a Coolify.
-- Definir el método de build, el comando de arranque y health checks de cada servicio.
-- Crear variables de entorno de producción en Coolify. Los secretos de base de datos, autenticación, Resend y Twilio deben quedar fuera del repositorio.
-- Provisionar la base de datos y aplicar migraciones de forma controlada.
-- Activar los backups de la base antes de cargar datos reales.
-- Asignar el dominio público y subdominios de la aplicación, manteniendo la consola de Coolify separada del producto público.
-- Validar de extremo a extremo: autenticación, correo, flujo principal, logs, health check y rollback básico.
+- Conectar el repositorio de Praxia a Coolify. **Hecho 2026-08-18** (recurso `praxia-app`, repo público `Kikeagv/apollo`, main, build pack Dockerfile).
+- Definir el método de build, el comando de arranque y health checks de cada servicio. **Hecho** (Dockerfile del repo con HEALTHCHECK a `/api/health`; deploy Success con rolling update y healthcheck en verde).
+- Crear variables de entorno de producción en Coolify. Los secretos de base de datos, autenticación, Resend y Twilio deben quedar fuera del repositorio. **Hecho** (5 vars en Coolify; `DATABASE_URL` interna inyectada vía tinker sin pasar por chat).
+- Provisionar la base de datos y aplicar migraciones de forma controlada. **Hecho** (migraciones drizzle aplicadas al cluster `praxia` desde un contenedor temporal en la VPS).
+- Activar los backups de la base antes de cargar datos reales. **Hecho** (pg_dump diario + pgBackRest con WAL, drill probado).
+- Asignar el dominio público y subdominios de la aplicación, manteniendo la consola de Coolify separada del producto público. **Hecho** (`app.usepraxia.com` → tunnel → Traefik → app; la consola sigue en `coolify.usepraxia.com` con Access).
+- Validar de extremo a extremo: autenticación, correo, flujo principal, logs, health check y rollback básico. **Parcial**: health check, HTTPS, login renderizado y worker verificados; correo real (Resend) y flujo completo quedan para APO-25/APO-56.
 
 ### P2 — Onboarding autoservicio de clínicas (fase 2)
 

@@ -32,10 +32,10 @@
 | 8 | Drill: restaurar en postgres aislado con datos sintéticos y documentar RPO/RTO | Hecho 2026-08-18 (restore full ≈ 54 s + replay; PITR ≈ 33 s; evidencia en runbook) | APO-26 |
 | 9 | Runbook de restauración `docs/runbooks/restauracion-backup.md` | Hecho 2026-08-18 | APO-26 |
 | 10 | Dockerfile standalone + health check en el repo | Hecho 2026-08-18 (`fb475696`; health 200 verificado) | APO-26 |
-| 11 | Recurso de aplicación en Coolify (repo público `Kikeagv/apollo`, main) | Pendiente | APO-26 |
-| 12 | Ruta de tunnel `app.usepraxia.com` → `localhost:80` | Pendiente | APO-26 |
-| 13 | Migraciones y variables de entorno de producción (secretos solo en Coolify) | Pendiente | APO-26 |
-| 14 | Cron loopback cada minuto → `/api/jobs/appointment-scheduler` con `SCHEDULER_SECRET` | Pendiente | APO-26 |
+| 11 | Recurso de aplicación en Coolify (repo público `Kikeagv/apollo`, main) | Hecho 2026-08-18 (`praxia-app`, build pack Dockerfile, env vars de producción, deploy Success `7106212f`, contenedor healthy) | APO-26 |
+| 12 | Ruta de tunnel `app.usepraxia.com` → `localhost:80` | Hecho 2026-08-18 (ruta publicada en `praxia-ovh-prod`; DNS proxied) | APO-26 |
+| 13 | Migraciones y variables de entorno de producción (secretos solo en Coolify) | Hecho 2026-08-18 (5 vars en Coolify; `DATABASE_URL` inyectada vía tinker sin pasar por chat; migraciones drizzle aplicadas al cluster `praxia`) | APO-26 |
+| 14 | Cron loopback cada minuto → `/api/jobs/appointment-scheduler` con `SCHEDULER_SECRET` | Hecho 2026-08-18 (tarea `appointment-scheduler-loopback` en Coolify; primera ejecución success 23:40 UTC; 401 sin token / 200 con token verificados) | APO-26 |
 | 15 | Verificar TLS Full (strict) y baseline WAF en el zone | Pendiente | APO-26 |
 | 16 | Diseñar skip-rule para el callback de Twilio (se activa con APO-25) | Pendiente | APO-26 |
 | 17 | Notificaciones de Coolify por correo (Resend) para deploys/backups fallidos | Pendiente | APO-26 |
