@@ -60,6 +60,7 @@
 | 26 | Meta fase 2 (Tech Provider, Partner Solution, Embedded Signup) | Fase 2 | — |
 | 27 | Decidir `www.usepraxia.com`: servir landing o redirigir al apex | Sin decidir (no tocar en silencio) | — |
 | 28 | Rutina mensual de actualizaciones y revisión trimestral de accesos | Pendiente | — |
+| 29 | Rotar secretos que pasaron por transcript de sesiones de agente (token R2 de backups, `BETTER_AUTH_SECRET`, `SCHEDULER_SECRET`) | Pendiente | APO-26 |
 
 ## Referencias
 
