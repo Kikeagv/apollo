@@ -21,7 +21,7 @@ en el plan Free.
    Traefik de Coolify (`localhost:80`) → contenedor Next.js standalone. La
    consola de Coolify permanece solo detrás de Cloudflare Access. No se crean
    subdominios de login; el acceso es `app.usepraxia.com/login`.
-2. **Base de datos.** PostgreSQL 15 como contenedor gestionado por Coolify en
+2. **Base de datos.** PostgreSQL 16 como contenedor gestionado por Coolify en
    la VPS, solo en la red Docker interna, sin puerto público. No se contrata
    base administrada en el piloto; se revisa cuando el RTO exigido, el volumen
    o el número de Clínicas lo justifiquen.

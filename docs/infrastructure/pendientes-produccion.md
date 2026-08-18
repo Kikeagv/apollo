@@ -8,7 +8,7 @@
 - **APO-26** (`Desplegar el perímetro y recuperación verificable de Apolo`) está reclamado, asignado a Enrique y en In Progress.
 - **Plan Cloudflare: permanecer en Free** durante el piloto y mientras crece la base de usuarios. Subir a **Pro** al go-live con la primera clínica real (rate limit de login de 1 min, Super Bot Fight Mode, Managed Ruleset completo + OWASP). El upgrade es un clic y no toca DNS ni Tunnel.
   - En Free el rate limiting solo admite período de conteo de 10 s y una regla; por eso los límites por minuto/15 min van a nivel de aplicación (ver ticket AC4) y la regla WAF de login se activa al pasar a Pro.
-- **Base de datos:** PostgreSQL 15 en la VPS (contenedor gestionado por Coolify), sin puerto público. Backup doble: lógico diario (pg_dump) + físico con archivo WAL (pgBackRest) hacia R2. BD administrada queda descartada para el piloto; se revisa al escalar.
+- **Base de datos:** PostgreSQL **16** en la VPS (contenedor gestionado por Coolify; Coolify 4.3.9 no ofrece la 15), sin puerto público. Backup doble: lógico diario (pg_dump) + físico con archivo WAL (pgBackRest) hacia R2. BD administrada queda descartada para el piloto; se revisa al escalar.
 - **Nombres aprobados:** proyecto/BD `praxia`, bucket `praxia-production-backups`.
 - **AC4 de APO-26 movido a ticket de aplicación** (restablecimiento de contraseña + Turnstile + límites por IP + correo Resend de Identidad). Ver `## Tickets creados`.
 
@@ -22,16 +22,16 @@
 
 | # | Pendiente | Estado | Referencia |
 |---:|---|---|---|
-| 1 | Crear bucket privado R2 `praxia-production-backups` | Pendiente | APO-26 |
-| 2 | Crear token API R2 de alcance mínimo (solo ese bucket) y guardarlo en Coolify | Pendiente | APO-26 |
-| 3 | Registrar R2 como S3 Storage en Coolify | Pendiente | APO-26 |
-| 4 | Aplicar update de Coolify | Pendiente | APO-26 |
-| 5 | Crear proyecto `praxia` y PostgreSQL 15 sin puerto público | Pendiente | APO-26 |
-| 6 | Backups lógicos diarios → R2 (retención 30 d diarios, 12 semanas semanales) | Pendiente | APO-26 |
-| 7 | pgBackRest + archivo continuo de WAL → R2 (PITR, RPO minutos) | Pendiente | APO-26 |
+| 1 | Crear bucket privado R2 `praxia-production-backups` | Hecho 2026-08-18 | APO-26 |
+| 2 | Crear token API R2 de alcance mínimo (solo ese bucket) y guardarlo en Coolify | Hecho 2026-08-18 | APO-26 |
+| 3 | Registrar R2 como S3 Storage en Coolify | Hecho 2026-08-18 (Connected) | APO-26 |
+| 4 | Aplicar update de Coolify | Hecho 2026-08-18 (v4.3.9) | APO-26 |
+| 5 | Crear proyecto `praxia` y PostgreSQL 16 sin puerto público | Hecho 2026-08-18 (BD `praxia` healthy) | APO-26 |
+| 6 | Backups lógicos diarios → R2 (cron `0 11 * * *`, retención 30 S3 + 2 locales) | Hecho 2026-08-18 | APO-26 |
+| 7 | pgBackRest + archivo continuo de WAL → R2 (PITR, RPO minutos) | En curso, pausado: imagen `praxia-postgres:16` construida y secretos en host listos; faltan 3 campos de Coolify (imagen, docker options, archive config) + stanza + cron | APO-26 |
 | 8 | Drill: restaurar en postgres aislado con datos sintéticos y documentar RPO/RTO | Pendiente | APO-26 |
 | 9 | Runbook de restauración `docs/runbooks/restauracion-backup.md` | Pendiente | APO-26 |
-| 10 | Dockerfile standalone + health check en el repo | Pendiente | APO-26 |
+| 10 | Dockerfile standalone + health check en el repo | Hecho 2026-08-18 (`fb475696`; health 200 verificado) | APO-26 |
 | 11 | Recurso de aplicación en Coolify (repo público `Kikeagv/apollo`, main) | Pendiente | APO-26 |
 | 12 | Ruta de tunnel `app.usepraxia.com` → `localhost:80` | Pendiente | APO-26 |
 | 13 | Migraciones y variables de entorno de producción (secretos solo en Coolify) | Pendiente | APO-26 |
