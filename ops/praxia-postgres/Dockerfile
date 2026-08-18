@@ -8,16 +8,16 @@
 # En una reconstrucción de la VPS debe reconstruirse antes de levantar la base.
 #
 # Secretos: NO se hornean en la imagen. El contenedor monta el secrets.conf
-# del host (root:root, 640) directamente en /etc/pgbackrest/secrets.conf
+# del host (root:root, 640) directamente en /etc/pgbackrest/conf.d/secrets.conf
 # mediante la opción Custom Docker Options de Coolify:
-#   -v /data/praxia-pgbackrest/secrets.conf:/etc/pgbackrest/secrets.conf:ro
-# pgBackRest carga automáticamente todos los *.conf de /etc/pgbackrest
+#   -v /data/praxia-pgbackrest/secrets.conf:/etc/pgbackrest/conf.d/secrets.conf:ro
+# pgBackRest carga automáticamente los *.conf de /etc/pgbackrest/conf.d
 # (la opción `include` no existe en 2.58); ahí van repo1-s3-key y
 # repo1-s3-key-secret.
 FROM postgres:16-alpine
 
 RUN apk add --no-cache pgbackrest \
-  && mkdir -p /var/spool/pgbackrest \
+  && mkdir -p /var/spool/pgbackrest /etc/pgbackrest/conf.d \
   && chown -R postgres:postgres /var/spool/pgbackrest
 
 COPY pgbackrest.conf /etc/pgbackrest/pgbackrest.conf
