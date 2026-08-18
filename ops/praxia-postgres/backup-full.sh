@@ -3,9 +3,9 @@
 # Corre por cron en la VPS (root): 30 11 * * *  (05:30 hora de El Salvador).
 set -eu
 
-CONTAINER=$(docker ps --filter ancestor=praxia-postgres:16 --format '{{.Names}}' | head -n 1)
+CONTAINER=$(docker ps --filter ancestor=localhost:5000/praxia-postgres:16 --format '{{.Names}}' | head -n 1)
 if [ -z "$CONTAINER" ]; then
-  echo "ERROR: contenedor praxia-postgres:16 no encontrado" >&2
+  echo "ERROR: contenedor localhost:5000/praxia-postgres:16 no encontrado" >&2
   exit 1
 fi
 
