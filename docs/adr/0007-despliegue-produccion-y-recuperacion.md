@@ -29,7 +29,11 @@ en el plan Free.
    - Lógico: pg_dump diario desde Coolify al bucket `praxia-production-backups`.
      Retención: diarios 30 días, semanales 12 semanas.
    - Físico: pgBackRest con archivo continuo de WAL al mismo bucket, para
-     restauración a un punto en el tiempo con RPO de minutos.
+     restauración a un punto en el tiempo con RPO de minutos. Se usa una
+     imagen propia (`postgres:16-alpine` + pgBackRest) servida por un registro
+     Docker local en la VPS, porque Coolify ejecuta `docker compose pull` en
+     cada arranque del recurso; los secretos S3 se montan como archivo del
+     host. Detalle y drill en `docs/runbooks/restauracion-backup.md`.
    - El snapshot diario de OVH es red de seguridad de la VM, no sustituye estos
      backups. Se ensaya una restauración mensual en un servidor limpio con
      datos sintéticos y se registra la evidencia en APO-26.

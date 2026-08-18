@@ -28,9 +28,9 @@
 | 4 | Aplicar update de Coolify | Hecho 2026-08-18 (v4.3.9) | APO-26 |
 | 5 | Crear proyecto `praxia` y PostgreSQL 16 sin puerto público | Hecho 2026-08-18 (BD `praxia` healthy) | APO-26 |
 | 6 | Backups lógicos diarios → R2 (cron `0 11 * * *`, retención 30 S3 + 2 locales) | Hecho 2026-08-18 | APO-26 |
-| 7 | pgBackRest + archivo continuo de WAL → R2 (PITR, RPO minutos) | En curso, pausado: imagen `praxia-postgres:16` construida y secretos en host listos; faltan 3 campos de Coolify (imagen, docker options, archive config) + stanza + cron | APO-26 |
-| 8 | Drill: restaurar en postgres aislado con datos sintéticos y documentar RPO/RTO | Pendiente | APO-26 |
-| 9 | Runbook de restauración `docs/runbooks/restauracion-backup.md` | Pendiente | APO-26 |
+| 7 | pgBackRest + archivo continuo de WAL → R2 (PITR, RPO minutos) | Hecho 2026-08-18 (imagen `localhost:5000/praxia-postgres:16` en registro local, stanza `main`, full inicial, WAL en segundos, cron diario 11:30 UTC) | APO-26 |
+| 8 | Drill: restaurar en postgres aislado con datos sintéticos y documentar RPO/RTO | Hecho 2026-08-18 (restore full ≈ 54 s + replay; PITR ≈ 33 s; evidencia en runbook) | APO-26 |
+| 9 | Runbook de restauración `docs/runbooks/restauracion-backup.md` | Hecho 2026-08-18 | APO-26 |
 | 10 | Dockerfile standalone + health check en el repo | Hecho 2026-08-18 (`fb475696`; health 200 verificado) | APO-26 |
 | 11 | Recurso de aplicación en Coolify (repo público `Kikeagv/apollo`, main) | Pendiente | APO-26 |
 | 12 | Ruta de tunnel `app.usepraxia.com` → `localhost:80` | Pendiente | APO-26 |

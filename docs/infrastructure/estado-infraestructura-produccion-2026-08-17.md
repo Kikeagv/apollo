@@ -21,8 +21,8 @@ El riesgo principal previo a datos reales es la continuidad: la infraestructura 
 - **OVH:** la VPS es modelo **VPS-2 2027** en **Beauharnois (Canadá)**, Ubuntu 24.04. El **backup automatizado de OVH está activo** (último 2026-08-17 23:10). Snapshot desactivado.
 - **Twilio:** cuenta `AC81e8ab…` activa con saldo de $20 y unidades gratuitas (100 SMS / 100 WhatsApp / 3000 email / 75 min voz). Sin números ni senders configurados.
 - **Cloudflare:** la zona opera en plan **Free** (el ADR 0003 asume Pro). Decisión: permanecer en Free durante el piloto y subir a **Pro** en el go-live para rate limit de login, SBfM y Managed Ruleset completo. Ver `docs/adr/0007-despliegue-produccion-y-recuperacion.md`.
-- **Coolify:** v4.3.7 sin notificaciones habilitadas y sin S3 Storage registrado. Email transaccional por Resend configurado (`Praxia <noreply@usepraxia.com>`).
-
+- **Coolify:** v4.3.9. Sin notificaciones habilitadas. Email transaccional por Resend configurado (`Praxia <noreply@usepraxia.com>`). S3 Storage de R2 registrado (Connected).
+- **Backups (nuevo):** doble capa activa hacia R2 — pg_dump diario de Coolify (05:00 El Salvador) y pgBackRest con WAL continuo (imagen propia `localhost:5000/praxia-postgres:16` servida por un registro Docker local de la VPS). Primer full y drill de restauración (full y PITR) ejecutados y documentados en `docs/runbooks/restauracion-backup.md`.
 
 ## Estado por componente
 
@@ -32,7 +32,7 @@ El riesgo principal previo a datos reales es la continuidad: la infraestructura 
 | VPS OVH | Activo | Ubuntu, Docker y Coolify instalados; SSH endurecido. | Mantener actualizaciones y vigilar capacidad. |
 | Perímetro Cloudflare | Activo | Tunnel y Access protegen la consola de Coolify. | Revisar acceso al sumar operadores. |
 | Resend | Verificado | Dominio y envío desde Coolify habilitados. | Enviar prueba y revisar entregabilidad. |
-| Backups externos | Pendiente crítico | No existe aún una copia independiente de la VPS. | Configurar Cloudflare R2 y probar restauración. |
+| Backups externos | Activo | pg_dump diario + pgBackRest/WAL hacia R2; restauración full y PITR probadas 2026-08-18. | Repetir el drill mensualmente y vigilar el cron. |
 | Meta / WhatsApp | En curso | Existe un Meta Business Portfolio y está abierta la verificación. | Completar verificación con datos legales correctos y 2FA. |
 | Twilio / WhatsApp, fase 1 | Pendiente | Sin sender ni operación manual de la primera clínica. | Definir y ejecutar el runbook manual del piloto. |
 | Meta Tech Provider, fase 2 | Pendiente | No se ha implementado onboarding autoservicio. | App Meta, Partner Solution y Embedded Signup. |
@@ -50,7 +50,7 @@ flowchart LR
 
     U[Usuarios de Praxia] -. después del despliegue .-> APP[Aplicación Praxia]
     APP -. alojada por .-> C
-    C -. pendiente .-> R2[Cloudflare R2: backups]
+    C -. pg_dump diario + WAL pgBackRest .-> R2[Cloudflare R2: backups]
     APP -. webhooks HTTPS, fase 1 .-> TW[Twilio]
     TW -. WhatsApp Business Platform .-> META[Meta / WABA]
     APP -. onboarding autoservicio, fase 2 .-> ES[Embedded Signup]
@@ -103,6 +103,16 @@ flowchart LR
 - Se creó una clave de Resend de privilegio mínimo: solo envío y restringida a `usepraxia.com`.
 - La clave se guardó como secreto en Coolify; no está registrada en este archivo ni debe incorporarse al repositorio.
 - La entrega por Resend quedó habilitada y Coolify confirmó que actualizó los ajustes.
+
+### Backups físicos con pgBackRest (completado 2026-08-18)
+
+- Imagen propia `praxia-postgres:16` (postgres:16-alpine + pgBackRest 2.58) construida en la VPS y publicada en un registro Docker local (`praxia-registry`, registry:2, bound a 127.0.0.1:5000, datos en `/data/docker-registry`, restart always). Coolify ejecuta `docker compose pull` en cada arranque del recurso, por lo que la imagen debe existir en el registro local; el nombre en el campo Image de Coolify es `localhost:5000/praxia-postgres:16`.
+- Secretos S3 en `/data/praxia-pgbackrest/secrets.conf` del host (root:70, 640); el contenedor los recibe por file mount de Coolify (Persistent Storage → Files → Host file mount) en `/etc/pgbackrest/conf.d/secrets.conf`. El campo Custom Docker options de Coolify solo admite flags `--…`; un `-v` ahí se ignora.
+- Config de archivado vía campo Custom PostgreSQL configuration de Coolify: `archive_mode=on`, `archive_command='pgbackrest --stanza=main archive-push %p'`, `archive_timeout=60`.
+- Stanza `main` creada en R2 (`praxia-production-backups`, prefijo `praxia-pgbackrest`), primer full de 29.4 MB verificado, retención 30 fulls.
+- Cron del host: `/etc/cron.d/praxia-pgbackrest` → `/opt/praxia-db/backup-full.sh` (11:30 UTC), log en `/var/log/praxia-pgbackrest.log`.
+- Drill de restauración ejecutado y verificado (full ≈ 1 min; PITR ≈ 35 s; WAL en segundos). Pasos y evidencia en `docs/runbooks/restauracion-backup.md`.
+
 
 ## Pendientes priorizados
 
