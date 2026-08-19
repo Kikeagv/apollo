@@ -58,7 +58,7 @@
 | 24 | Validar transcripción de notas de voz antes del piloto | Pendiente | APO-11 |
 | 25 | Twilio/WhatsApp: configurar webhooks y callbacks solo cuando la app esté lista; verificar firmas | Después de APO-57/APO-25 | APO-25 |
 | 26 | Meta fase 2 (Tech Provider, Partner Solution, Embedded Signup) | Fase 2 | — |
-| 27 | Decidir `www.usepraxia.com`: servir landing o redirigir al apex | Sin decidir (no tocar en silencio) | — |
+| 27 | `www.usepraxia.com` sirve la landing (decisión del fundador 2026-08-19) | Hecho 2026-08-19: ruta de tunnel `www → localhost:80` + registro DNS tipo Tunnel (se eliminó el CNAME heredado `parkingpage.namecheap.com` que causaba 525); landing con botón **"Iniciar sesión" → `https://app.usepraxia.com`** y canonical a www desplegada (commit `a01bb5bd`); verificado 200. Nota: el apex `usepraxia.com` sigue sin registro DNS (no resuelve); opcional redirigir apex → www | — |
 | 28 | Rutina mensual de actualizaciones y revisión trimestral de accesos | Pendiente | — |
 | 29 | Rotar secretos que pasaron por transcript de sesiones de agente (token R2 de backups, `BETTER_AUTH_SECRET`, `SCHEDULER_SECRET`) | Pendiente | APO-26 |
 
