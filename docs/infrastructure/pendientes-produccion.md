@@ -5,7 +5,7 @@
 
 ## Decisiones tomadas el 18 de agosto de 2026
 
-- **APO-26** (`Desplegar el perímetro y recuperación verificable de Apolo`) está reclamado, asignado a Enrique y en In Progress.
+- **APO-26** (`Desplegar el perímetro y recuperación verificable de Apolo`) está **cerrado (Done) con evidencia por criterio el 19 de agosto de 2026** (comentario en el ticket; AC1-AC5 con salvedades explícitas: SBFM/Managed al pasar a Pro, regla de Twilio con APO-25, `www` sin decidir).
 - **Plan Cloudflare: Pro activo en live** (decisión de agosto de 2026). El plan se reevalúa al llegar a 5-10 clientes. Queda pendiente configurar con Pro disponible: **Managed Ruleset completo + OWASP** y **Super Bot Fight Mode** (confirmado 2026-08-18: Managed Rules no existen en Free — la página muestra "Upgrade plan").
   - La regla WAF de login (rate limit, 2 req/10 s ≈ 12/min por IP, Block 10 s) ya está **configurada hoy** (fila 15); cierra el backstop contra intentos distribuidos. Los límites por minuto/15 min a nivel de aplicación (APO-56) siguen como defensa en profundidad.
 - **Base de datos:** PostgreSQL **16** en la VPS (contenedor gestionado por Coolify; Coolify 4.3.9 no ofrece la 15), sin puerto público. Backup doble: lógico diario (pg_dump) + físico con archivo WAL (pgBackRest) hacia R2. BD administrada queda descartada para el piloto; se revisa al escalar.
