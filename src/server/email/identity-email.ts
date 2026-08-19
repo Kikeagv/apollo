@@ -20,6 +20,23 @@ export type IdentityEmailSender = {
   sendPasswordBlockNotice(email: string): Promise<void>;
 };
 
+/** El piloto no permite correos simulados en producción: falla al arrancar. */
+export function assertIdentityEmailDeliveryAllowed(input: {
+  delivery: string;
+  nodeEnv: string;
+}) {
+  if (input.nodeEnv === "production" && input.delivery === "simulated") {
+    throw new Error(
+      "IDENTITY_EMAIL_DELIVERY=simulated no está permitido en producción; configure resend",
+    );
+  }
+}
+
+assertIdentityEmailDeliveryAllowed({
+  delivery: env.IDENTITY_EMAIL_DELIVERY,
+  nodeEnv: env.NODE_ENV,
+});
+
 /**
  * Selección por configuración del adaptador de correo de Identidad. El modo
  * simulado se conserva para desarrollo y pruebas; producción envía por Resend

@@ -249,26 +249,45 @@ describe("restablecimiento de contraseña de Identidad", () => {
   );
 
   databaseTest(
-    "exige un Turnstile válido antes de emitir cualquier correo",
+    "cuenta por CF-Connecting-IP cuando el borde lo fija, ignorando x-forwarded-for",
     async () => {
       const fixture = await createFixture();
+      const cfIp = "198.51.100.7";
 
       try {
-        const otpsBefore = getSentIdentityOtps().length;
-        const response = await requestPasswordReset(
+        await clearRecoveryRequests(cfIp);
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const response = await requestPasswordReset(
+            request(
+              "/api/clinic-access/request-password-reset",
+              {
+                email: fixture.ownerEmail,
+                turnstileToken: "simulated-turnstile-token",
+              },
+              undefined,
+              `203.0.113.${60 + attempt}`,
+              cfIp,
+            ),
+          );
+          expect(response.status).toBe(200);
+        }
+
+        // Mismo CF-Connecting-IP con otro x-forwarded-for: sigue el mismo límite.
+        const exceeded = await requestPasswordReset(
           request(
             "/api/clinic-access/request-password-reset",
             {
               email: fixture.ownerEmail,
-              turnstileToken: "invalid-turnstile-token",
+              turnstileToken: "simulated-turnstile-token",
             },
             undefined,
-            "203.0.113.53",
+            "203.0.113.99",
+            cfIp,
           ),
         );
-        expect(response.status).toBe(400);
-        expect(getSentIdentityOtps().length).toBe(otpsBefore);
+        expect(exceeded.status).toBe(429);
       } finally {
+        await clearRecoveryRequests(cfIp);
         await fixture.cleanup();
       }
     },
@@ -288,7 +307,13 @@ async function clearRecoveryRequests(...ips: string[]) {
   }
 }
 
-function request(path: string, body: unknown, cookie?: string, ip?: string) {
+function request(
+  path: string,
+  body: unknown,
+  cookie?: string,
+  ip?: string,
+  cfIp?: string,
+) {
   return new Request(`http://localhost:3000${path}`, {
     body: JSON.stringify(body),
     headers: {
@@ -296,6 +321,7 @@ function request(path: string, body: unknown, cookie?: string, ip?: string) {
       origin: "http://localhost:3000",
       ...(cookie === undefined ? {} : { cookie }),
       ...(ip === undefined ? {} : { "x-forwarded-for": ip }),
+      ...(cfIp === undefined ? {} : { "cf-connecting-ip": cfIp }),
     },
     method: "POST",
   });

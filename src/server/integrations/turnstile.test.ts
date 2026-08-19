@@ -2,9 +2,38 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   TURNSTILE_SITEVERIFY_URL,
+  assertTurnstileVerificationAllowed,
   createCloudflareTurnstileVerifier,
   createSimulatedTurnstileVerifier,
 } from "./turnstile";
+
+describe("selección de verificación Turnstile", () => {
+  it("prohíbe el modo simulado en producción", () => {
+    expect(() =>
+      assertTurnstileVerificationAllowed({
+        nodeEnv: "production",
+        verification: "simulated",
+      }),
+    ).toThrow(
+      "TURNSTILE_VERIFICATION=simulated no está permitido en producción",
+    );
+  });
+
+  it("permite Cloudflare en producción y simulado fuera de ella", () => {
+    expect(() =>
+      assertTurnstileVerificationAllowed({
+        nodeEnv: "production",
+        verification: "cloudflare",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertTurnstileVerificationAllowed({
+        nodeEnv: "test",
+        verification: "simulated",
+      }),
+    ).not.toThrow();
+  });
+});
 
 describe("verificador Turnstile simulado", () => {
   it("acepta únicamente el token fijo de desarrollo", async () => {

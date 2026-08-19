@@ -6,8 +6,8 @@
 ## Decisiones tomadas el 18 de agosto de 2026
 
 - **APO-26** (`Desplegar el perímetro y recuperación verificable de Apolo`) está reclamado, asignado a Enrique y en In Progress.
-- **Plan Cloudflare: permanecer en Free** durante el piloto y mientras crece la base de usuarios. Subir a **Pro** al go-live con la primera clínica real (rate limit de login de 1 min, Super Bot Fight Mode, Managed Ruleset completo + OWASP). El upgrade es un clic y no toca DNS ni Tunnel.
-  - En Free el rate limiting solo admite período de conteo de 10 s y una regla; por eso los límites por minuto/15 min van a nivel de aplicación (ver ticket AC4) y la regla WAF de login se activa al pasar a Pro.
+- **Plan Cloudflare: Pro activo en live** (decisión de agosto de 2026). El plan se reevalúa al llegar a 5-10 clientes. Queda pendiente configurar con Pro disponible: la regla de rate limit de login (10/min), Super Bot Fight Mode y el Managed Ruleset completo + OWASP.
+  - La regla WAF de login ya se puede configurar hoy (cierra el backstop contra intentos distribuidos); los límites por minuto/15 min a nivel de aplicación (APO-56) siguen como defensa en profundidad.
 - **Base de datos:** PostgreSQL **16** en la VPS (contenedor gestionado por Coolify; Coolify 4.3.9 no ofrece la 15), sin puerto público. Backup doble: lógico diario (pg_dump) + físico con archivo WAL (pgBackRest) hacia R2. BD administrada queda descartada para el piloto; se revisa al escalar.
 - **Nombres aprobados:** proyecto/BD `praxia`, bucket `praxia-production-backups`.
 - **AC4 de APO-26 movido a ticket de aplicación** (restablecimiento de contraseña + Turnstile + límites por IP + correo Resend de Identidad). Ver `## Tickets creados`.
@@ -47,7 +47,7 @@
 
 | # | Pendiente | Estado | Referencia |
 |---:|---|---|---|
-| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Hecho 2026-08-18 (flujo completo, bloqueo y auditoría con pruebas; modo simulado por defecto). Para producción falta fijar en Coolify: `IDENTITY_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, `TURNSTILE_VERIFICATION=cloudflare`, `TURNSTILE_SECRET_KEY` y `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (todos secretos, nunca en el repo) | APO-56 |
+| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Hecho 2026-08-18 (flujo completo, bloqueo y auditoría con pruebas; modo simulado por defecto). Para producción falta fijar en Coolify: `IDENTITY_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, `TURNSTILE_VERIFICATION=cloudflare`, `TURNSTILE_SECRET_KEY` y `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (todos secretos, nunca en el repo). El arranque en producción **falla** si entrega o Turnstile quedan en `simulated`; el límite por IP usa `CF-Connecting-IP` con fallback a `x-forwarded-for` | APO-56 |
 
 ## Pendientes externos y de fase
 

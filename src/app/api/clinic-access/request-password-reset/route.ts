@@ -54,8 +54,10 @@ export async function POST(request: Request) {
 }
 
 function requestIp(request: Request) {
-  // La aplicación solo es alcanzable a través del tunnel; el borde fija el
-  // primer valor de x-forwarded-for y el cliente no puede alterarlo ahí.
+  // Cloudflare fija CF-Connecting-IP en el borde y el cliente no puede
+  // falsearlo; detrás del tunnel no llega tráfico directo a la aplicación.
+  const cloudflare = request.headers.get("cf-connecting-ip");
+  if (cloudflare !== null && cloudflare !== "") return cloudflare.trim();
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded !== null) return forwarded.split(",", 1)[0]!.trim();
   return "127.0.0.1";

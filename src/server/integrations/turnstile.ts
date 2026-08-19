@@ -21,6 +21,23 @@ export type TurnstileVerifier = {
   verify(input: { token: string; ip?: string }): Promise<{ ok: boolean }>;
 };
 
+/** El piloto no permite Turnstile simulado en producción: falla al arrancar. */
+export function assertTurnstileVerificationAllowed(input: {
+  nodeEnv: string;
+  verification: string;
+}) {
+  if (input.nodeEnv === "production" && input.verification === "simulated") {
+    throw new Error(
+      "TURNSTILE_VERIFICATION=simulated no está permitido en producción; configure cloudflare",
+    );
+  }
+}
+
+assertTurnstileVerificationAllowed({
+  nodeEnv: env.NODE_ENV,
+  verification: env.TURNSTILE_VERIFICATION,
+});
+
 export function turnstileVerifier(): TurnstileVerifier {
   const adapters = {
     simulated: () => createSimulatedTurnstileVerifier(),
