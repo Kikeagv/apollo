@@ -47,7 +47,7 @@
 
 | # | Pendiente | Estado | Referencia |
 |---:|---|---|---|
-| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Hecho 2026-08-18 (flujo completo, bloqueo y auditoría con pruebas; modo simulado por defecto). Para producción falta fijar en Coolify: `IDENTITY_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, `TURNSTILE_VERIFICATION=cloudflare`, `TURNSTILE_SECRET_KEY` y `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (todos secretos, nunca en el repo). El arranque en producción **falla** si entrega o Turnstile quedan en `simulated`; el límite por IP usa `CF-Connecting-IP` con fallback a `x-forwarded-for` | APO-56 |
+| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Hecho y desplegado 2026-08-18 (commit `019621a`, deploy Success con healthcheck; migración 0044 aplicada al cluster `praxia`; smoke 200/400 con Turnstile real validando en servidor). Secretos en Coolify: `IDENTITY_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, `TURNSTILE_VERIFICATION=cloudflare`, `TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`. Widget Turnstile `praxia-app` (`app.usepraxia.com`) en Cloudflare; clave Resend `praxia-app-identity` (solo envío, solo `usepraxia.com`). Pendiente: configurar la regla WAF de rate limit de login (Pro activo) y smoke interactivo del desafío | APO-56 |
 
 ## Pendientes externos y de fase
 
