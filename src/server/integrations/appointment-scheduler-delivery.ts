@@ -2,30 +2,20 @@ import type {
   AppointmentReminderSender,
   DailyAgendaEmailSender,
 } from "~/server/application/appointment-reminders";
-import { env } from "~/env";
 import { simulatedDailyAgendaEmailSender } from "~/server/email/simulated-identity-email";
-import { simulatedAppointmentReminderSender } from "~/server/whatsapp/simulated-appointment-messages";
+import { whatsAppSender } from "~/server/whatsapp/whatsapp-delivery";
 
 /**
- * Puerto de entrega seleccionable por configuración. El piloto mantiene los
- * adaptadores simulados; una activación real sustituye esta selección, no el
- * caso de uso de Agenda.
+ * Adaptadores de entrega del agendador. La recordatorio de Cita sale por el
+ * canal de WhatsApp seleccionado (WHATSAPP_DELIVERY); la agenda diaria por
+ * correo sigue simulada hasta su propio ticket.
  */
 export function appointmentSchedulerDeliveryAdapters(): {
   agendaEmailSender: DailyAgendaEmailSender;
   reminderSender: AppointmentReminderSender;
 } {
-  const adapters = {
-    simulated: {
-      agendaEmailSender: simulatedDailyAgendaEmailSender,
-      reminderSender: simulatedAppointmentReminderSender,
-    },
-  } satisfies Record<
-    typeof env.APPOINTMENT_SCHEDULER_DELIVERY,
-    {
-      agendaEmailSender: DailyAgendaEmailSender;
-      reminderSender: AppointmentReminderSender;
-    }
-  >;
-  return adapters[env.APPOINTMENT_SCHEDULER_DELIVERY];
+  return {
+    agendaEmailSender: simulatedDailyAgendaEmailSender,
+    reminderSender: whatsAppSender().appointmentReminderSender,
+  };
 }

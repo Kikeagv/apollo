@@ -17,6 +17,10 @@ export const env = createEnv({
       .enum(["development", "test", "production"])
       .default("development"),
     APPOINTMENT_SCHEDULER_DELIVERY: z.enum(["simulated"]).default("simulated"),
+    WHATSAPP_DELIVERY: z.enum(["simulated", "twilio"]).default("simulated"),
+    TWILIO_ACCOUNT_SID: z.string().optional(),
+    TWILIO_AUTH_TOKEN: z.string().optional(),
+    TWILIO_WHATSAPP_FROM: z.string().optional(),
     IDENTITY_EMAIL_DELIVERY: z
       .enum(["simulated", "resend"])
       .default("simulated"),
@@ -47,6 +51,10 @@ export const env = createEnv({
     DATABASE_URL: process.env.DATABASE_URL,
     NODE_ENV: process.env.NODE_ENV,
     APPOINTMENT_SCHEDULER_DELIVERY: process.env.APPOINTMENT_SCHEDULER_DELIVERY,
+    WHATSAPP_DELIVERY: process.env.WHATSAPP_DELIVERY,
+    TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+    TWILIO_WHATSAPP_FROM: process.env.TWILIO_WHATSAPP_FROM,
     IDENTITY_EMAIL_DELIVERY: process.env.IDENTITY_EMAIL_DELIVERY,
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     TURNSTILE_VERIFICATION: process.env.TURNSTILE_VERIFICATION,
