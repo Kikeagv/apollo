@@ -1,10 +1,7 @@
 import "server-only";
 
 import { env } from "~/env";
-import {
-  IDENTITY_FROM_ADDRESS,
-  sendResendEmail,
-} from "~/server/email/resend-identity-email";
+import { sendResendEmail } from "~/server/email/resend-identity-email";
 import type {
   ClinicInvitationEmailSender,
   ClinicDoctorInvitationDelivery,
@@ -27,7 +24,10 @@ export function createResendClinicInvitationEmailSender(input: {
   }
   const apiKey = input.apiKey;
   const activationUrl = (token: string) =>
-    new URL(`${INVITATION_ROUTE}?token=${encodeURIComponent(token)}`, env.BETTER_AUTH_URL).toString();
+    new URL(
+      `${INVITATION_ROUTE}?token=${encodeURIComponent(token)}`,
+      env.BETTER_AUTH_URL,
+    ).toString();
 
   return {
     async sendOwnerInvitation(invitation: ClinicOwnerInvitationDelivery) {

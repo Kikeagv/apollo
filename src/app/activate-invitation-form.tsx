@@ -1,6 +1,7 @@
 "use client";
 
 import { type FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { api } from "~/trpc/react";
@@ -84,9 +85,7 @@ export function ActivateInvitationForm({ token }: { token: string }) {
             {activation.isPending ? "Activando…" : "Activar cuenta"}
           </button>
           {activation.error ? (
-            <p className="text-sm text-rose-300">
-              {activation.error.message}
-            </p>
+            <p className="text-sm text-rose-300">{activation.error.message}</p>
           ) : null}
         </form>
       )}
@@ -94,9 +93,9 @@ export function ActivateInvitationForm({ token }: { token: string }) {
       {activated ? (
         <p className="text-sm">
           Si el inicio de sesión no abre solo,{" "}
-          <a className="text-teal-300 underline" href="/">
+          <Link className="text-teal-300 underline" href="/">
             ingrese desde aquí
-          </a>
+          </Link>
           .
         </p>
       ) : null}
