@@ -7,7 +7,7 @@
       name="description"
       content="Praxia ayuda a las clínicas a organizar su operación y comunicarse con claridad."
     />
-    <meta name="theme-color" content="#f7f8fa" />
+    <meta name="theme-color" content="#fbfdff" />
     <meta property="og:title" content="Praxia | Operación clínica más clara" />
     <meta
       property="og:description"
@@ -15,81 +15,188 @@
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://www.usepraxia.com" />
-    <meta property="og:image" content="https://www.usepraxia.com/public/clinica-praxia.png" />
+    <meta
+      property="og:image"
+      content="https://www.usepraxia.com/public/clinica-praxia.jpg"
+    />
     <link rel="canonical" href="https://www.usepraxia.com" />
+    <link rel="preload" href="/fonts/ibmplex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/ibmplex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" as="image" href="/public/clinica-praxia.webp" />
     <link rel="stylesheet" href="/styles.css" />
     <title>Praxia | Operación clínica más clara</title>
   </head>
   <body>
+    <a class="skip-link" href="#inicio">Saltar al contenido</a>
+
+    <header class="nav">
+      <div class="nav__inner">
+        <a class="brand" href="#inicio" aria-label="Praxia, inicio">Praxia</a>
+        <nav class="nav__links" aria-label="Secciones">
+          <a href="#propuesta">La propuesta</a>
+          <a href="#areas">Áreas</a>
+          <a href="#contacto">Contacto</a>
+        </nav>
+        <a class="button button--sm" href="https://app.usepraxia.com">
+          Iniciar sesión
+        </a>
+      </div>
+    </header>
+
     <main>
-      <section class="hero" aria-labelledby="hero-title">
+      <section class="hero" id="inicio" aria-labelledby="hero-title">
         <div class="hero__content">
-          <a class="brand" href="#inicio" aria-label="Praxia, inicio">Praxia</a>
-          <p class="kicker">Herramientas para clínicas</p>
-          <h1 id="hero-title">La clínica, más clara.</h1>
-          <p class="hero__summary">
-            Praxia ayuda a las clínicas a organizar agenda, equipos y comunicación con una operación más clara.
+          <p class="kicker" data-reveal>Herramientas para clínicas</p>
+          <h1 id="hero-title" data-reveal>La clínica, más clara.</h1>
+          <p class="hero__summary" data-reveal>
+            Praxia ayuda a las clínicas a organizar agenda, equipos y
+            comunicación con una operación más clara.
           </p>
-          <div class="hero__actions">
-            <a class="button" href="https://app.usepraxia.com">Iniciar sesión</a>
-            <a class="button button--ghost" href="mailto:contact@enriqueagv.com">Escríbenos</a>
+          <div class="hero__actions" data-reveal>
+            <a class="button" href="https://app.usepraxia.com"
+              >Iniciar sesión</a
+            >
+            <a class="button button--ghost" href="mailto:contact@enriqueagv.com"
+              >Escríbenos</a
+            >
           </div>
         </div>
-        <figure class="hero__image" aria-label="Profesional de salud revisando una tableta en una clínica">
-          <img
-            src="/public/clinica-praxia.png"
-            alt="Profesional de salud revisando una tableta en una clínica luminosa"
-            width="1456"
-            height="1088"
-            fetchpriority="high"
-          />
+        <figure
+          class="hero__image"
+          data-reveal
+          aria-label="Profesional de salud revisando una tableta en una clínica"
+        >
+          <picture>
+            <source
+              srcset="/public/clinica-praxia.webp"
+              type="image/webp"
+            />
+            <img
+              src="/public/clinica-praxia.jpg"
+              alt="Profesional de salud revisando una tableta en una clínica luminosa"
+              width="1448"
+              height="1086"
+              fetchpriority="high"
+            />
+          </picture>
         </figure>
       </section>
 
-      <section class="statement" id="inicio" aria-labelledby="statement-title">
+      <section
+        class="statement"
+        id="propuesta"
+        aria-labelledby="statement-title"
+      >
         <div>
           <p class="kicker">Praxia para clínicas</p>
-          <h2 id="statement-title">La operación también es parte del cuidado.</h2>
+          <h2 id="statement-title">
+            La operación también es parte del cuidado.
+          </h2>
         </div>
         <p>
-          Construimos herramientas para que el trabajo administrativo ocupe menos espacio y cada equipo pueda concentrarse mejor en las personas que atiende.
+          Construimos herramientas para que el trabajo administrativo ocupe
+          menos espacio y cada equipo pueda concentrarse mejor en las personas
+          que atiende.
         </p>
       </section>
 
-      <section class="capabilities" aria-label="Áreas de trabajo de Praxia">
+      <section class="capabilities" id="areas" aria-label="Áreas de trabajo de Praxia">
         <article class="capability capability--agenda">
-          <p class="capability__number">Agenda</p>
+          <p class="capability__label">Agenda</p>
           <h2>Un día clínico más ordenado.</h2>
-          <p>Disponibilidad, servicios y citas en un mismo lugar para dar seguimiento sin depender de conversaciones dispersas.</p>
+          <p>
+            Disponibilidad, servicios y citas en un mismo lugar para dar
+            seguimiento sin depender de conversaciones dispersas.
+          </p>
         </article>
         <article class="capability capability--communication">
-          <p class="capability__number">Comunicación</p>
+          <p class="capability__label">Comunicación</p>
           <h2>Mensajes con contexto.</h2>
-          <p>Confirmaciones y recordatorios pensados para acompañar la coordinación con pacientes de forma responsable.</p>
+          <p>
+            Confirmaciones y recordatorios pensados para acompañar la
+            coordinación con pacientes de forma responsable.
+          </p>
         </article>
         <article class="capability capability--team">
-          <p class="capability__number">Equipo</p>
+          <p class="capability__label">Equipo</p>
           <h2>Decisiones compartidas.</h2>
-          <p>Una base común para que médicos y personal administrativo conozcan lo que sigue y puedan actuar a tiempo.</p>
+          <p>
+            Una base común para que médicos y personal administrativo conozcan
+            lo que sigue y puedan actuar a tiempo.
+          </p>
         </article>
       </section>
 
-      <section class="contact" aria-labelledby="contact-title">
-        <div class="contact__body">
+      <section class="contact" id="contacto" aria-labelledby="contact-title">
+        <div>
           <p class="kicker">Conversemos</p>
-          <h2 id="contact-title">Estamos construyendo con clínicas que quieren operar con más claridad.</h2>
+          <h2 id="contact-title">
+            Estamos construyendo con clínicas que quieren operar con más
+            claridad.
+          </h2>
         </div>
-        <a class="contact__email" href="mailto:contact@enriqueagv.com">contact@enriqueagv.com</a>
+        <a class="contact__email" href="mailto:contact@enriqueagv.com">
+          contact@enriqueagv.com
+        </a>
       </section>
     </main>
 
-    <footer>
-      <span>Praxia, producto de K31 SOFTWARE.</span>
-      <span>© <span id="year"></span> K31 SOFTWARE</span>
+    <footer class="footer">
+      <div class="footer__inner">
+        <div>
+          <p class="footer__blurb">
+            Praxia, producto de K31 SOFTWARE. Operación y comunicación más
+            clara para tu clínica.
+          </p>
+        </div>
+        <div>
+          <p class="footer__label">Praxia</p>
+          <nav class="footer__links" aria-label="Praxia">
+            <a href="https://app.usepraxia.com">Iniciar sesión</a>
+            <a href="mailto:contact@enriqueagv.com">Escríbenos</a>
+          </nav>
+        </div>
+        <div>
+          <p class="footer__label">Legal</p>
+          <nav class="footer__links" aria-label="Legal">
+            <a href="/privacidad">Aviso de privacidad</a>
+            <a href="/terminos">Términos de uso</a>
+          </nav>
+        </div>
+      </div>
+      <div class="footer__bottom">
+        <div class="footer__bottom-inner">
+          <span>© <span id="year"></span> K31 SOFTWARE</span>
+          <span>Hecho en El Salvador</span>
+        </div>
+      </div>
     </footer>
 
     <script>
       document.getElementById("year").textContent = new Date().getFullYear();
+      (function () {
+        var els = document.querySelectorAll("[data-reveal]");
+        if (!("IntersectionObserver" in window)) {
+          els.forEach(function (el) {
+            el.classList.add("is-visible");
+          });
+          return;
+        }
+        var io = new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (entry) {
+              if (entry.isIntersecting) {
+                entry.target.classList.add("is-visible");
+                io.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.15, rootMargin: "0px 0px -8% 0px" },
+        );
+        els.forEach(function (el) {
+          io.observe(el);
+        });
+      })();
     </script>
   </body>
 </html>
