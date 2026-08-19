@@ -309,6 +309,13 @@
       "when": 1786910502125,
       "tag": "0043_apo24_restrict_subscription_update",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1787098055642,
+      "tag": "0044_apo56_password_recovery",
+      "breakpoints": true
     }
   ]
 }

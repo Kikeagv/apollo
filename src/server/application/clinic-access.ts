@@ -261,8 +261,9 @@ async function createTrustedDevice(identityId: string): Promise<TrustedDevice> {
   return { expiresAt, token };
 }
 
-/** Auditoría reducida: resultado, actor y Clínica, sin secretos ni datos clínicos. */
-export async function recordClinicLoginAudit(input: {
+async function insertIdentityAuditEvent(input: {
+  action: string;
+  actorKind: "anonymous" | "identity";
   identityId?: string;
   result: "failed" | "succeeded";
 }) {
@@ -273,26 +274,72 @@ export async function recordClinicLoginAudit(input: {
 
   if (context === undefined) {
     await db.insert(identityAuditEvents).values({
-      action: "identity-login-failed",
+      action: input.action,
       actorIdentityId: input.identityId,
-      actorKind: input.identityId === undefined ? "anonymous" : "identity",
+      actorKind: input.actorKind,
       clinicId: null,
-      result: "failed",
+      result: input.result,
     });
     return;
   }
 
   await inClinicTransaction(context, async (transaction) => {
     await transaction.insert(identityAuditEvents).values({
-      action:
-        input.result === "succeeded"
-          ? "identity-login-succeeded"
-          : "identity-login-failed",
+      action: input.action,
       actorIdentityId: input.identityId,
       actorKind: "identity",
       clinicId: context.clinicId,
       result: input.result,
     });
+  });
+}
+
+/** Auditoría reducida: resultado, actor y Clínica, sin secretos ni datos clínicos. */
+export async function recordClinicLoginAudit(input: {
+  identityId?: string;
+  result: "failed" | "succeeded";
+}) {
+  await insertIdentityAuditEvent({
+    action:
+      input.result === "succeeded"
+        ? "identity-login-succeeded"
+        : "identity-login-failed",
+    actorKind: input.identityId === undefined ? "anonymous" : "identity",
+    identityId: input.identityId,
+    result: input.identityId === undefined ? "failed" : input.result,
+  });
+}
+
+/** Revoca las Sesiones de Clínica y los dispositivos confiables de una Identidad. */
+export async function revokeIdentityClinicAccess(identityId: string) {
+  await db.transaction(async (transaction) => {
+    await setIdentityContext(transaction, identityId);
+    await transaction
+      .delete(clinicSessions)
+      .where(eq(clinicSessions.identityId, identityId));
+    await transaction
+      .delete(trustedClinicDevices)
+      .where(eq(trustedClinicDevices.identityId, identityId));
+  });
+}
+
+/**
+ * Auditoría de seguridad de Identidad: restablecimiento, revocación y bloqueo.
+ * Conserva actor, resultado y Clínica cuando aplica; nunca secretos ni OTP.
+ */
+export async function recordIdentitySecurityAudit(input: {
+  action:
+    | "identity-login-blocked"
+    | "identity-password-reset-succeeded"
+    | "identity-sessions-revoked";
+  identityId: string;
+  result: "failed" | "succeeded";
+}) {
+  await insertIdentityAuditEvent({
+    action: input.action,
+    actorKind: "identity",
+    identityId: input.identityId,
+    result: input.result,
   });
 }
 

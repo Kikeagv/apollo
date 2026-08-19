@@ -5,7 +5,7 @@ import { randomInt } from "node:crypto";
 
 import { env } from "~/env";
 import { db } from "~/server/db";
-import { sendSimulatedIdentityEmail } from "~/server/email/simulated-identity-email";
+import { identityEmailSender } from "~/server/email/identity-email";
 
 function generateIdentityOtp() {
   const e2eOtp = process.env.E2E_TEST_OTP;
@@ -26,6 +26,7 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     disableSignUp: true,
+    revokeSessionsOnPasswordReset: true,
   },
   session: {
     expiresIn: 30 * 60,
@@ -35,7 +36,8 @@ export const auth = betterAuth({
     emailOTP({
       disableSignUp: true,
       generateOTP: generateIdentityOtp,
-      sendVerificationOTP: sendSimulatedIdentityEmail,
+      sendVerificationOTP: (data) =>
+        identityEmailSender().sendIdentityOtp(data),
       expiresIn: 5 * 60,
       storeOTP: "hashed",
     }),

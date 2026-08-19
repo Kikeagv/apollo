@@ -891,6 +891,44 @@ export const identityAuditEvents = createTable("identity_audit_event", {
     .notNull(),
 });
 
+/** Intento fallido de contraseña; cinco en 15 minutos bloquean temporalmente la Identidad. */
+export const identityLoginFailures = createTable(
+  "identity_login_failure",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    identityId: text("identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    failedAt: timestamp("failed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("identity_login_failure_identity_idx").on(
+      table.identityId,
+      table.failedAt,
+    ),
+  ],
+);
+
+/** Solicitud de restablecimiento por IP dentro de una ventana deslizante de 15 minutos. */
+export const identityRecoveryRequests = createTable(
+  "identity_recovery_request",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    ipHash: text("ip_hash").notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("identity_recovery_request_ip_idx").on(
+      table.ipHash,
+      table.requestedAt,
+    ),
+  ],
+);
+
 /** Auditoría de capacidad clínica; nunca almacena datos de Pacientes. */
 export const configurationAuditEvents = createTable(
   "configuration_audit_event",

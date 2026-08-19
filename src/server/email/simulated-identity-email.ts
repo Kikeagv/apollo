@@ -1,12 +1,10 @@
 import "server-only";
 
+import type {
+  IdentityEmailSender,
+  IdentityOtp,
+} from "~/server/email/identity-email";
 import type { DailyAgendaEmail } from "~/server/application/appointment-reminders";
-
-type IdentityOtp = {
-  email: string;
-  otp: string;
-  type: "change-email" | "email-verification" | "forget-password" | "sign-in";
-};
 
 type ClinicOwnerInvitation = {
   activationUrl: string;
@@ -32,6 +30,7 @@ type ClinicOwnerInvitationDelivery = Omit<
 >;
 
 const sentIdentityOtps: IdentityOtp[] = [];
+const sentIdentityPasswordBlockNotices: string[] = [];
 const sentClinicOwnerInvitations: ClinicOwnerInvitation[] = [];
 const sentClinicDoctorInvitations: ClinicDoctorInvitation[] = [];
 const sentDailyAgendaEmails: Array<
@@ -39,12 +38,21 @@ const sentDailyAgendaEmails: Array<
 > = [];
 
 /** Adaptador de correo sintético para desarrollo y pruebas de integración. */
-export async function sendSimulatedIdentityEmail(otp: IdentityOtp) {
-  sentIdentityOtps.push(otp);
-}
+export const simulatedIdentityEmailSender: IdentityEmailSender = {
+  async sendIdentityOtp(otp) {
+    sentIdentityOtps.push(otp);
+  },
+  async sendPasswordBlockNotice(email) {
+    sentIdentityPasswordBlockNotices.push(email);
+  },
+};
 
 export function getSentIdentityOtps() {
   return [...sentIdentityOtps];
+}
+
+export function getSentIdentityPasswordBlockNotices() {
+  return [...sentIdentityPasswordBlockNotices];
 }
 
 /** Adaptador simulado para iniciar invitaciones de médicos propietarios. */

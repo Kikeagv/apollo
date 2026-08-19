@@ -6,12 +6,19 @@ import {
   createClinicSession,
   findTrustedDeviceClinicContext,
   recordClinicLoginAudit,
+  recordIdentitySecurityAudit,
   sendClinicLoginOtp,
   CLINIC_TRUSTED_DEVICE_COOKIE,
 } from "~/server/application/clinic-access";
+import {
+  findPasswordBlock,
+  registerPasswordFailure,
+} from "~/server/application/identity-password-block";
 import { auth } from "~/server/better-auth";
 import { db } from "~/server/db";
+import { drizzleIdentityPasswordBlockStore } from "~/server/db/identity-password-block-store";
 import { user as identities } from "~/server/db/schema";
+import { identityEmailSender } from "~/server/email/identity-email";
 import { copySetCookies, readCookie, setClinicSessionCookie } from "../cookies";
 
 const signInInput = z.object({
@@ -29,6 +36,28 @@ export async function POST(request: Request) {
   }
 
   const email = parsed.data.email.toLowerCase();
+  const identity = await db.query.user.findFirst({
+    columns: { id: true },
+    where: eq(identities.email, email),
+  });
+
+  if (identity !== undefined) {
+    const block = await findPasswordBlock(
+      { identityId: identity.id },
+      drizzleIdentityPasswordBlockStore,
+    );
+    if (block !== undefined) {
+      await recordClinicLoginAudit({
+        identityId: identity.id,
+        result: "failed",
+      });
+      return NextResponse.json(
+        { error: "Demasiados intentos. Espere 15 minutos e intente de nuevo." },
+        { status: 423 },
+      );
+    }
+  }
+
   const authResponse = await auth.handler(
     new Request(new URL("/api/auth/sign-in/email", request.url), {
       body: JSON.stringify({ ...parsed.data, email }),
@@ -40,10 +69,28 @@ export async function POST(request: Request) {
     }),
   );
   if (!authResponse.ok) {
-    const identity = await db.query.user.findFirst({
-      columns: { id: true },
-      where: eq(identities.email, email),
-    });
+    if (identity !== undefined) {
+      const blocked = await registerPasswordFailure(
+        { email, identityId: identity.id },
+        {
+          sendBlockNotice: async (recipient) => {
+            try {
+              await identityEmailSender().sendPasswordBlockNotice(recipient);
+            } catch {
+              // El Bloqueo temporal queda activo aunque el aviso no salga.
+            }
+          },
+          store: drizzleIdentityPasswordBlockStore,
+        },
+      );
+      if (blocked) {
+        await recordIdentitySecurityAudit({
+          action: "identity-login-blocked",
+          identityId: identity.id,
+          result: "succeeded",
+        });
+      }
+    }
     await recordClinicLoginAudit({
       identityId: identity?.id,
       result: "failed",
@@ -55,6 +102,7 @@ export async function POST(request: Request) {
   }
 
   const signedIn = (await authResponse.json()) as { user: { id: string } };
+  await drizzleIdentityPasswordBlockStore.clearFailures(signedIn.user.id);
   const context = await findTrustedDeviceClinicContext({
     identityId: signedIn.user.id,
     trustedDeviceToken: readCookie(

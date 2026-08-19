@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, useState } from "react";
 
 type SignInResult = {
@@ -72,6 +73,11 @@ export function ClinicSignInForm() {
       >
         {pending ? "Iniciando…" : "Iniciar sesión"}
       </button>
+      <p>
+        <Link className="text-sm text-teal-300 underline" href="/?recuperar=1">
+          ¿Olvidó su contraseña?
+        </Link>
+      </p>
       {error ? <p className="text-sm text-rose-300">{error}</p> : null}
     </form>
   );

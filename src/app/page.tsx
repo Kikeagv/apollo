@@ -1,4 +1,5 @@
 import { getSession } from "~/server/better-auth/server";
+import { env } from "~/env";
 import {
   CLINIC_SESSION_COOKIE,
   CLINIC_TRUSTED_DEVICE_COOKIE,
@@ -7,6 +8,7 @@ import {
 import { findOwnDoctorProfile } from "~/server/application/doctor-profile";
 import { cookies } from "next/headers";
 
+import { PasswordRecoveryForm } from "./password-recovery-form";
 import { ClinicSessionActivity } from "./clinic-session-activity";
 import { ClinicSignInForm } from "./clinic-sign-in-form";
 import { ConversationEscalationsSection } from "./conversation-escalations-section";
@@ -29,7 +31,7 @@ import { SupportAccessSection } from "./support-access-section";
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ verificar?: string }>;
+  searchParams: Promise<{ recuperar?: string; verificar?: string }>;
 }) {
   const session = await getSession();
   const trustedDeviceToken = (await cookies()).get(
@@ -46,7 +48,7 @@ export default async function Home({
           clinicSessionToken,
           trustedDeviceToken,
         });
-  const { verificar } = await searchParams;
+  const { recuperar, verificar } = await searchParams;
   const profile =
     context === undefined
       ? undefined
@@ -103,6 +105,10 @@ export default async function Home({
             </p>
             <VerifyClinicOtpForm />
           </>
+        ) : recuperar === "1" ? (
+          <PasswordRecoveryForm
+            turnstileSiteKey={env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+          />
         ) : (
           <ClinicSignInForm />
         )}

@@ -17,6 +17,12 @@ export const env = createEnv({
       .enum(["development", "test", "production"])
       .default("development"),
     APPOINTMENT_SCHEDULER_DELIVERY: z.enum(["simulated"]).default("simulated"),
+    IDENTITY_EMAIL_DELIVERY: z.enum(["simulated", "resend"]).default("simulated"),
+    RESEND_API_KEY: z.string().optional(),
+    TURNSTILE_VERIFICATION: z
+      .enum(["simulated", "cloudflare"])
+      .default("simulated"),
+    TURNSTILE_SECRET_KEY: z.string().optional(),
     SCHEDULER_SECRET: z.string().min(1).optional(),
   },
 
@@ -26,7 +32,7 @@ export const env = createEnv({
    * `NEXT_PUBLIC_`.
    */
   client: {
-    // NEXT_PUBLIC_CLIENTVAR: z.string(),
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().optional(),
   },
 
   /**
@@ -39,6 +45,11 @@ export const env = createEnv({
     DATABASE_URL: process.env.DATABASE_URL,
     NODE_ENV: process.env.NODE_ENV,
     APPOINTMENT_SCHEDULER_DELIVERY: process.env.APPOINTMENT_SCHEDULER_DELIVERY,
+    IDENTITY_EMAIL_DELIVERY: process.env.IDENTITY_EMAIL_DELIVERY,
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    TURNSTILE_VERIFICATION: process.env.TURNSTILE_VERIFICATION,
+    TURNSTILE_SECRET_KEY: process.env.TURNSTILE_SECRET_KEY,
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
     SCHEDULER_SECRET: process.env.SCHEDULER_SECRET,
   },
   /**

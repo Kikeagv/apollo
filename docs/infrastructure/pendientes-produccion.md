@@ -47,7 +47,7 @@
 
 | # | Pendiente | Estado | Referencia |
 |---:|---|---|---|
-| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Ticket creado, pendiente | APO-56 |
+| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Hecho 2026-08-18 (flujo completo, bloqueo y auditoría con pruebas; modo simulado por defecto). Para producción falta fijar en Coolify: `IDENTITY_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, `TURNSTILE_VERIFICATION=cloudflare`, `TURNSTILE_SECRET_KEY` y `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (todos secretos, nunca en el repo) | APO-56 |
 
 ## Pendientes externos y de fase
 
