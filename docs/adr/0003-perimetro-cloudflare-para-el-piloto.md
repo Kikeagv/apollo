@@ -11,10 +11,12 @@ públicos usan TLS Full (strict); bases de datos, workers y administración no s
 exponen públicamente.
 
 El callback exacto de Twilio queda libre de Access, Turnstile y desafíos. Una
-regla de alcance mínimo puede omitir solo Super Bot Fight Mode para esa ruta;
-el origen siempre valida la firma de Twilio y la idempotencia. Panacea y sus
-flujos de autenticación sí usan las reglas de WAF, límites y controles de bots
-aplicables.
+regla de alcance mínimo puede omitir solo Super Bot Fight Mode y los límites
+de tasa para esa ruta; no se usa allowlist de IPs de origen porque Twilio no
+publica rangos fijos para webhooks (pool de IPs; su propia guía recomienda no
+filtrar por IP). El origen siempre valida la firma `X-Twilio-Signature` y la
+idempotencia. Panacea y sus flujos de autenticación sí usan las reglas de WAF,
+límites y controles de bots aplicables.
 
 Los límites iniciales son 10 intentos de inicio de sesión por minuto por IP y
 5 solicitudes de recuperación por IP cada 15 minutos. Se revisan con los

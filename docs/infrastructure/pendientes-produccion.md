@@ -37,7 +37,7 @@
 | 13 | Migraciones y variables de entorno de producción (secretos solo en Coolify) | Hecho 2026-08-18 (5 vars en Coolify; `DATABASE_URL` inyectada vía tinker sin pasar por chat; migraciones drizzle aplicadas al cluster `praxia`) | APO-26 |
 | 14 | Cron loopback cada minuto → `/api/jobs/appointment-scheduler` con `SCHEDULER_SECRET` | Hecho 2026-08-18 (tarea `appointment-scheduler-loopback` en Coolify; primera ejecución success 23:40 UTC; 401 sin token / 200 con token verificados) | APO-26 |
 | 15 | Verificar TLS Full (strict) y baseline WAF en el zone | Pendiente | APO-26 |
-| 16 | Diseñar skip-rule para el callback de Twilio (se activa con APO-25) | Pendiente | APO-26 |
+| 16 | Diseñar skip-rule para el callback de Twilio (se activa con APO-25) | Diseñado 2026-08-18 (ADR 0003: skip de SBFM/rate-limit por ruta exacta, sin allowlist de IPs — Twilio no publica rangos de webhook; autenticidad por `X-Twilio-Signature` en origen) | APO-26 |
 | 17 | Notificaciones de Coolify por correo (Resend) para deploys/backups fallidos | Pendiente | APO-26 |
 | 18 | Health checks y monitoreo externo de `app.usepraxia.com` | Pendiente | APO-26 |
 | 19 | Actualizar estado de infraestructura con los hechos verificados (Meta in review, OVH Canadá, Twilio $20, Coolify v4.3.7) | Hecho 2026-08-18 | `docs/infrastructure/estado-infraestructura-produccion-2026-08-17.md` |
