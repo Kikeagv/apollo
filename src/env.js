@@ -17,7 +17,9 @@ export const env = createEnv({
       .enum(["development", "test", "production"])
       .default("development"),
     APPOINTMENT_SCHEDULER_DELIVERY: z.enum(["simulated"]).default("simulated"),
-    IDENTITY_EMAIL_DELIVERY: z.enum(["simulated", "resend"]).default("simulated"),
+    IDENTITY_EMAIL_DELIVERY: z
+      .enum(["simulated", "resend"])
+      .default("simulated"),
     RESEND_API_KEY: z.string().optional(),
     TURNSTILE_VERIFICATION: z
       .enum(["simulated", "cloudflare"])
