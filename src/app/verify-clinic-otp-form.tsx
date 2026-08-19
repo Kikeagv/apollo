@@ -39,12 +39,18 @@ export function VerifyClinicOtpForm() {
       <label className="block text-sm">
         Código de verificación
         <input
+          autoCapitalize="off"
           autoComplete="one-time-code"
+          autoCorrect="off"
           className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+          data-1p-ignore
+          data-form-type="other"
+          data-lpignore="true"
           inputMode="numeric"
           maxLength={12}
           name="otp"
           required
+          spellCheck={false}
         />
       </label>
       <button
