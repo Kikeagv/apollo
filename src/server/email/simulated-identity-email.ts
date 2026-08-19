@@ -5,29 +5,18 @@ import type {
   IdentityOtp,
 } from "~/server/email/identity-email";
 import type { DailyAgendaEmail } from "~/server/application/appointment-reminders";
+import type {
+  ClinicDoctorInvitationDelivery,
+  ClinicOwnerInvitationDelivery,
+} from "~/server/email/clinic-invitation-email";
 
-type ClinicOwnerInvitation = {
+type ClinicOwnerInvitation = ClinicOwnerInvitationDelivery & {
   activationUrl: string;
-  clinicName: string;
-  expiresAt: Date;
-  ownerEmail: string;
-  ownerName: string;
-  token: string;
 };
 
-type ClinicDoctorInvitation = {
+type ClinicDoctorInvitation = ClinicDoctorInvitationDelivery & {
   activationUrl: string;
-  clinicName: string;
-  expiresAt: Date;
-  recipientEmail: string;
-  recipientName: string;
-  token: string;
 };
-
-type ClinicOwnerInvitationDelivery = Omit<
-  ClinicOwnerInvitation,
-  "activationUrl"
->;
 
 const sentIdentityOtps: IdentityOtp[] = [];
 const sentIdentityPasswordBlockNotices: string[] = [];

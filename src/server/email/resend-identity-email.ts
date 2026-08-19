@@ -59,7 +59,7 @@ function otpText(otp: IdentityOtp) {
   ].join("\n\n");
 }
 
-async function sendResendEmail(
+export async function sendResendEmail(
   apiKey: string,
   input: { subject: string; text: string; to: string },
 ) {
@@ -78,7 +78,7 @@ async function sendResendEmail(
   });
   if (!response.ok) {
     throw new Error(
-      `Resend rechazó el correo de Identidad con estado ${response.status}`,
+      `Resend rechazó el correo con estado ${response.status}`,
     );
   }
 }

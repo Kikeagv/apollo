@@ -83,10 +83,7 @@ import {
   drizzleEscalationNotificationSettingsStore,
   drizzleVoiceTranscriptionSettingsStore,
 } from "~/server/db/simulated-whatsapp-booking-store";
-import {
-  sendSimulatedClinicDoctorInvitation,
-  sendSimulatedClinicOwnerInvitation,
-} from "~/server/email/simulated-identity-email";
+import { clinicInvitationEmailSender } from "~/server/email/clinic-invitation-email";
 import { simulatedAppointmentMessageSender } from "~/server/whatsapp/simulated-appointment-messages";
 import {
   getNoShowPolicy,
@@ -181,7 +178,7 @@ export const panaceaRouter = {
         },
         {
           sendInvitation: (invitation) =>
-            sendSimulatedClinicDoctorInvitation({
+            clinicInvitationEmailSender().sendDoctorInvitation({
               clinicName: invitation.clinicName,
               expiresAt: invitation.expiresAt,
               recipientEmail: invitation.email,
@@ -759,7 +756,8 @@ export const panaceaRouter = {
         },
         {
           registry: drizzleSyntheticClinicRegistration,
-          sendOwnerInvitation: sendSimulatedClinicOwnerInvitation,
+          sendOwnerInvitation: (invitation) =>
+            clinicInvitationEmailSender().sendOwnerInvitation(invitation),
         },
       ),
     ),
