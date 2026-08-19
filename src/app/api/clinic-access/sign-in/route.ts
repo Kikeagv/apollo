@@ -14,6 +14,7 @@ import {
   findPasswordBlock,
   registerPasswordFailure,
 } from "~/server/application/identity-password-block";
+import { env } from "~/env";
 import { auth } from "~/server/better-auth";
 import { db } from "~/server/db";
 import { drizzleIdentityPasswordBlockStore } from "~/server/db/identity-password-block-store";
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({ ...parsed.data, email }),
       headers: new Headers({
         "content-type": "application/json",
-        origin: new URL(request.url).origin,
+        origin: env.BETTER_AUTH_URL,
       }),
       method: "POST",
     }),

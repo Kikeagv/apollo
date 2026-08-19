@@ -32,6 +32,11 @@ export const auth = betterAuth({
     expiresIn: 30 * 60,
     updateAge: 0,
   },
+  advanced: {
+    // Mejor-auth omite el chequeo de origen en entornos de test por defecto;
+    // en producción valida y el sign-in debe enviar origin: env.BETTER_AUTH_URL.
+    disableOriginCheck: false,
+  },
   plugins: [
     emailOTP({
       disableSignUp: true,

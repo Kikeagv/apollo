@@ -328,6 +328,36 @@ describe("inicio seguro persistente de Panacea", () => {
       }
     },
   );
+
+  databaseTest(
+    "acepta el inicio aunque el host de la petición difiera de BETTER_AUTH_URL",
+    async () => {
+      const fixture = await createFixture();
+
+      try {
+        const response = await signIn(
+          new Request(
+            "http://app.usepraxia.com:3000/api/clinic-access/sign-in",
+            {
+              body: JSON.stringify({
+                email: fixture.ownerEmail,
+                password: fixture.password,
+              }),
+              headers: {
+                "content-type": "application/json",
+                origin: "http://app.usepraxia.com:3000",
+              },
+              method: "POST",
+            },
+          ),
+        );
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ status: "otp-required" });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
 });
 
 function request(path: string, body: unknown, cookie?: string) {
