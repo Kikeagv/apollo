@@ -77,8 +77,6 @@ export async function sendResendEmail(
     method: "POST",
   });
   if (!response.ok) {
-    throw new Error(
-      `Resend rechazó el correo con estado ${response.status}`,
-    );
+    throw new Error(`Resend rechazó el correo con estado ${response.status}`);
   }
 }

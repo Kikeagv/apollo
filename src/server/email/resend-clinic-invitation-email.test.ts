@@ -23,14 +23,16 @@ describe("adaptador Resend de invitaciones de clínica", () => {
     expect(() => createResendClinicInvitationEmailSender({})).toThrow(
       "RESEND_API_KEY es obligatoria",
     );
-    expect(() => createResendClinicInvitationEmailSender({ apiKey: "" })).toThrow(
-      "RESEND_API_KEY es obligatoria",
-    );
+    expect(() =>
+      createResendClinicInvitationEmailSender({ apiKey: "" }),
+    ).toThrow("RESEND_API_KEY es obligatoria");
   });
 
   it("envía la invitación del médico propietario con el enlace de activación", async () => {
     const fetchMock = stubFetch();
-    const sender = createResendClinicInvitationEmailSender({ apiKey: "re_test" });
+    const sender = createResendClinicInvitationEmailSender({
+      apiKey: "re_test",
+    });
 
     await sender.sendOwnerInvitation({
       clinicName: "Clínica Aurora",
@@ -64,7 +66,9 @@ describe("adaptador Resend de invitaciones de clínica", () => {
 
   it("envía la invitación de un Médico adicional al destinatario", async () => {
     const fetchMock = stubFetch();
-    const sender = createResendClinicInvitationEmailSender({ apiKey: "re_test" });
+    const sender = createResendClinicInvitationEmailSender({
+      apiKey: "re_test",
+    });
 
     await sender.sendDoctorInvitation({
       clinicName: "Clínica Aurora",
@@ -92,7 +96,9 @@ describe("adaptador Resend de invitaciones de clínica", () => {
 
   it("propaga un rechazo del proveedor", async () => {
     stubFetch(429);
-    const sender = createResendClinicInvitationEmailSender({ apiKey: "re_test" });
+    const sender = createResendClinicInvitationEmailSender({
+      apiKey: "re_test",
+    });
 
     await expect(
       sender.sendOwnerInvitation({

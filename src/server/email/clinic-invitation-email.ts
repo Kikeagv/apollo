@@ -29,9 +29,7 @@ export type ClinicDoctorInvitationDelivery = {
  * el enlace de activación; nunca incluyen datos clínicos ni secretos.
  */
 export type ClinicInvitationEmailSender = {
-  sendOwnerInvitation(
-    invitation: ClinicOwnerInvitationDelivery,
-  ): Promise<void>;
+  sendOwnerInvitation(invitation: ClinicOwnerInvitationDelivery): Promise<void>;
   sendDoctorInvitation(
     invitation: ClinicDoctorInvitationDelivery,
   ): Promise<void>;
