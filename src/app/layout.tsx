@@ -8,8 +8,8 @@ import { TRPCReactProvider } from "~/trpc/react";
 import { PanaceaInteractivity } from "./panacea-interactivity";
 
 export const metadata: Metadata = {
-  title: "Panacea | Praxia",
-  description: "Panel operativo de Panacea",
+  title: "Praxia",
+  description: "Panel de Praxia",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 

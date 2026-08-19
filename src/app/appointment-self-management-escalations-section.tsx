@@ -17,7 +17,7 @@ export function AppointmentSelfManagementEscalationsSection() {
       <div>
         <h2 className="text-xl font-semibold">Escalamientos de Citas</h2>
         <p className="mt-1 text-sm text-slate-300">
-          Solicitudes de Asclepio que requieren resolución en Panacea.
+          Solicitudes que requieren la decisión de una persona de la Clínica.
         </p>
       </div>
       {escalations.data?.length === 0 ? (

@@ -26,11 +26,12 @@ export function ApoloOperations() {
     <main className="mx-auto min-h-screen max-w-2xl space-y-6 bg-slate-950 p-8 text-slate-100">
       <div>
         <p className="text-sm font-medium tracking-[0.2em] text-teal-300">
-          APOLO
+          PRAXIA
         </p>
         <h1 className="text-4xl font-semibold">Operación comercial</h1>
         <p className="mt-2 text-slate-300">
-          Este camino no abre Panacea ni concede acceso clínico por sí mismo.
+          Este camino no abre el panel clínico ni concede acceso clínico por sí
+          mismo.
         </p>
       </div>
       <label className="block text-sm">
@@ -43,7 +44,7 @@ export function ApoloOperations() {
           <option value="">Seleccione una Clínica</option>
           {clinics.data?.map((clinic) => (
             <option key={clinic.id} value={clinic.id}>
-              {clinic.name} — {clinic.subscriptionStatus}
+              {clinic.name} · {clinic.subscriptionStatus}
             </option>
           ))}
         </select>

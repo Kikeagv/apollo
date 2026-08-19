@@ -58,7 +58,7 @@ export function VerifyClinicOtpForm() {
         disabled={pending}
         type="submit"
       >
-        {pending ? "Verificando…" : "Verificar y abrir Panacea"}
+        {pending ? "Verificando…" : "Verificar y abrir Praxia"}
       </button>
       {error ? <p className="text-sm text-rose-300">{error}</p> : null}
     </form>

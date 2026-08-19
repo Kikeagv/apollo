@@ -13,8 +13,8 @@ export function NoShowPolicySection() {
       <div>
         <h2 className="text-xl font-semibold">Inasistencia por silencio</h2>
         <p className="mt-1 text-sm text-slate-300">
-          Tras el recordatorio de 20 horas, conserve la Cita y alerte Panacea, o
-          cancélela automáticamente si el Contacto no respondió.
+          Tras el recordatorio de 20 horas, conserve la Cita o cancélela
+          automáticamente si el Contacto no respondió.
         </p>
       </div>
       <fieldset className="space-y-2 text-sm">

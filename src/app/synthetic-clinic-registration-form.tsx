@@ -29,7 +29,7 @@ export function SyntheticClinicRegistrationForm() {
     <form className="space-y-4" onSubmit={submit}>
       <h2 className="text-xl font-semibold">Crear Clínica sintética</h2>
       <p className="text-sm text-slate-300">
-        Este recorrido está reservado para superadmins autenticados de Apolo.
+        Este recorrido está reservado para superadmins autenticados de Praxia.
       </p>
       <label className="block text-sm">
         Clínica

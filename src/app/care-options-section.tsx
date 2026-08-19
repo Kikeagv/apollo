@@ -112,7 +112,7 @@ export function CareOptionsSection() {
       </form>
       {doctorId !== "" && services.length === 0 ? (
         <p className="text-sm text-amber-300">
-          Este Médico sigue visible en Panacea, pero no tiene una Oferta activa.
+          Este Médico sigue visible, pero no tiene una Oferta activa.
         </p>
       ) : null}
       {options.error ? (

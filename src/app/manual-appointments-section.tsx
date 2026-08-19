@@ -643,9 +643,9 @@ function appointmentEventLabel(type: AppointmentEventType) {
     case "reservation-confirmed":
       return "Reserva confirmada";
     case "rescheduled":
-      return "Cita reprogramada por Asclepio";
+      return "Cita reprogramada automáticamente";
     case "self-management-escalated":
-      return "Solicitud de autogestión escalada a Panacea";
+      return "Solicitud de autogestión escalada a una persona";
     case "manual-confirmation-sent":
       return "Confirmación por WhatsApp enviada";
     case "manual-confirmation-failed":

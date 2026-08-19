@@ -10,7 +10,7 @@ export function SupportAccessSection() {
 
   return (
     <section className="space-y-2 rounded-xl border border-amber-500/70 bg-amber-950/30 p-5">
-      <h2 className="text-xl font-semibold">Soporte de Apolo</h2>
+      <h2 className="text-xl font-semibold">Soporte de Praxia</h2>
       <p className="text-sm text-slate-200">
         Un operador autorizado puede consultar la información administrativa de
         esta Clínica en la sesión indicada. El acceso queda auditado.

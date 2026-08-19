@@ -21,7 +21,7 @@ export function EscalationNotificationSettingsSection() {
       <div>
         <h2 className="text-xl font-semibold">Aviso de Escalamiento</h2>
         <p className="mt-1 text-sm text-slate-300">
-          Panacea siempre conserva la tarea; este aviso simulado es adicional.
+          La tarea siempre queda registrada; este aviso simulado es adicional.
         </p>
       </div>
       <label className="block text-sm">

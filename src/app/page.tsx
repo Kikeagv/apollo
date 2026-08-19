@@ -63,14 +63,14 @@ export default async function Home({
         <p className="text-sm font-medium tracking-[0.2em] text-teal-300">
           PRAXIA
         </p>
-        <h1 className="text-4xl font-semibold">Panacea</h1>
+        <h1 className="text-4xl font-semibold">Praxia</h1>
         {context ? (
           <>
             <ClinicSessionActivity />
             <p className="text-lg">{context.clinicName}</p>
             <p>
               Aún no hay información para mostrar en esta Clínica. Esta es su
-              Panacea vacía.
+              área de trabajo.
             </p>
             <SupportAccessSection />
             {profile ? <DoctorProfileSetup initialProfile={profile} /> : null}
@@ -101,7 +101,7 @@ export default async function Home({
         ) : session && verificar === "otp" ? (
           <>
             <p>
-              Confirme el inicio desde este navegador antes de abrir Panacea.
+              Confirme el inicio desde este navegador antes de abrir Praxia.
             </p>
             <VerifyClinicOtpForm />
           </>

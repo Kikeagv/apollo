@@ -70,11 +70,11 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
 
     await page.getByLabel("Código de verificación").fill(e2eOtp);
     await page
-      .getByRole("button", { name: "Verificar y abrir Panacea" })
+      .getByRole("button", { name: "Verificar y abrir Praxia" })
       .click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByText(fixture.clinicName)).toBeVisible();
-    await expect(page.getByText("Esta es su Panacea vacía.")).toBeVisible();
+    await expect(page.getByText("Esta es su área de trabajo.")).toBeVisible();
     await waitForPanaceaInteractivity(page);
 
     await page

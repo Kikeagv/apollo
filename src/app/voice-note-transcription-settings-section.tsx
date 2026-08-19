@@ -15,8 +15,8 @@ export function VoiceNoteTranscriptionSettingsSection() {
       <div>
         <h2 className="text-xl font-semibold">Transcripción de nota de voz</h2>
         <p className="mt-1 text-sm text-slate-300">
-          Asclepio usa el adaptador simulado de forma temporal. Si falla o está
-          desactivado, crea un Escalamiento para atención humana.
+          La transcripción usa el adaptador simulado de forma temporal. Si falla
+          o está desactivado, crea un Escalamiento para atención humana.
         </p>
       </div>
       <label className="block text-sm">

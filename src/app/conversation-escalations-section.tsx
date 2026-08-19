@@ -16,7 +16,7 @@ export function ConversationEscalationsSection() {
       <div>
         <h2 className="text-xl font-semibold">Escalamientos</h2>
         <p className="mt-1 text-sm text-slate-300">
-          Conversaciones que Asclepio dejó a una persona de la Clínica.
+          Conversaciones que requieren la atención de una persona de la Clínica.
         </p>
       </div>
       {escalations.data?.length === 0 ? (
