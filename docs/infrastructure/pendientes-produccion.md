@@ -6,8 +6,8 @@
 ## Decisiones tomadas el 18 de agosto de 2026
 
 - **APO-26** (`Desplegar el perímetro y recuperación verificable de Apolo`) está reclamado, asignado a Enrique y en In Progress.
-- **Plan Cloudflare: Pro activo en live** (decisión de agosto de 2026). El plan se reevalúa al llegar a 5-10 clientes. Queda pendiente configurar con Pro disponible: la regla de rate limit de login (10/min), Super Bot Fight Mode y el Managed Ruleset completo + OWASP.
-  - La regla WAF de login ya se puede configurar hoy (cierra el backstop contra intentos distribuidos); los límites por minuto/15 min a nivel de aplicación (APO-56) siguen como defensa en profundidad.
+- **Plan Cloudflare: Pro activo en live** (decisión de agosto de 2026). El plan se reevalúa al llegar a 5-10 clientes. Queda pendiente configurar con Pro disponible: **Managed Ruleset completo + OWASP** y **Super Bot Fight Mode** (confirmado 2026-08-18: Managed Rules no existen en Free — la página muestra "Upgrade plan").
+  - La regla WAF de login (rate limit, 2 req/10 s ≈ 12/min por IP, Block 10 s) ya está **configurada hoy** (fila 15); cierra el backstop contra intentos distribuidos. Los límites por minuto/15 min a nivel de aplicación (APO-56) siguen como defensa en profundidad.
 - **Base de datos:** PostgreSQL **16** en la VPS (contenedor gestionado por Coolify; Coolify 4.3.9 no ofrece la 15), sin puerto público. Backup doble: lógico diario (pg_dump) + físico con archivo WAL (pgBackRest) hacia R2. BD administrada queda descartada para el piloto; se revisa al escalar.
 - **Nombres aprobados:** proyecto/BD `praxia`, bucket `praxia-production-backups`.
 - **AC4 de APO-26 movido a ticket de aplicación** (restablecimiento de contraseña + Turnstile + límites por IP + correo Resend de Identidad). Ver `## Tickets creados`.
@@ -36,7 +36,7 @@
 | 12 | Ruta de tunnel `app.usepraxia.com` → `localhost:80` | Hecho 2026-08-18 (ruta publicada en `praxia-ovh-prod`; DNS proxied) | APO-26 |
 | 13 | Migraciones y variables de entorno de producción (secretos solo en Coolify) | Hecho 2026-08-18 (5 vars en Coolify; `DATABASE_URL` inyectada vía tinker sin pasar por chat; migraciones drizzle aplicadas al cluster `praxia`) | APO-26 |
 | 14 | Cron loopback cada minuto → `/api/jobs/appointment-scheduler` con `SCHEDULER_SECRET` | Hecho 2026-08-18 (tarea `appointment-scheduler-loopback` en Coolify; primera ejecución success 23:40 UTC; 401 sin token / 200 con token verificados) | APO-26 |
-| 15 | Verificar TLS Full (strict) y baseline WAF en el zone | Pendiente | APO-26 |
+| 15 | Verificar TLS Full (strict) y baseline WAF en el zone | Hecho 2026-08-18: Configuration Rule `app.usepraxia.com — TLS Full (strict)` (expresión `http.host eq "app.usepraxia.com"`, action SSL) creada y **Active** — modo Strict pendiente de confirmación visual del fundador (selector no commitea vía accesibilidad en Helium); HTTPS 200 y 301 HTTP→HTTPS sin 526. Managed Rules **no disponibles en Free** (requieren Pro): baseline WAF = rate limit rule `Login + recuperación: 10/min por IP` (expresión sign-in + request-password-reset, **2 req/10 s ≈ 12/min por IP**, Action **Block**, duración 10 s, Status Active, `1/1`). Managed Ruleset + OWASP al pasar a Pro | APO-26 |
 | 16 | Diseñar skip-rule para el callback de Twilio (se activa con APO-25) | Diseñado 2026-08-18 (ADR 0003: skip de SBFM/rate-limit por ruta exacta, sin allowlist de IPs — Twilio no publica rangos de webhook; autenticidad por `X-Twilio-Signature` en origen) | APO-26 |
 | 17 | Notificaciones de Coolify por correo (Resend) para deploys/backups fallidos | Pendiente | APO-26 |
 | 18 | Health checks y monitoreo externo de `app.usepraxia.com` | Pendiente | APO-26 |
@@ -47,7 +47,7 @@
 
 | # | Pendiente | Estado | Referencia |
 |---:|---|---|---|
-| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Hecho y desplegado 2026-08-18 (commit `019621a`, deploy Success con healthcheck; migración 0044 aplicada al cluster `praxia`; smoke 200/400 con Turnstile real validando en servidor). Secretos en Coolify: `IDENTITY_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, `TURNSTILE_VERIFICATION=cloudflare`, `TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`. Widget Turnstile `praxia-app` (`app.usepraxia.com`) en Cloudflare; clave Resend `praxia-app-identity` (solo envío, solo `usepraxia.com`). Pendiente: configurar la regla WAF de rate limit de login (Pro activo) y smoke interactivo del desafío | APO-56 |
+| 21 | Restablecimiento de contraseña, Turnstile en servidor, límite 5/IP/15 min, bloqueo tras 5 contraseñas y correo real de Identidad por Resend | Hecho y desplegado 2026-08-18 (commit `019621a`, deploy Success con healthcheck; migración 0044 aplicada al cluster `praxia`; smoke 200/400 con Turnstile real validando en servidor). Secretos en Coolify: `IDENTITY_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, `TURNSTILE_VERIFICATION=cloudflare`, `TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`. Widget Turnstile `praxia-app` (`app.usepraxia.com`) en Cloudflare; clave Resend `praxia-app-identity` (solo envío, solo `usepraxia.com`). Regla WAF de rate limit de login configurada (2026-08-18, ver fila 15). Pendiente: smoke interactivo del desafío | APO-56 |
 
 ## Pendientes externos y de fase
 
