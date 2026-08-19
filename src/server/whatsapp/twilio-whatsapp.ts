@@ -59,7 +59,10 @@ export function createTwilioWhatsAppSenders(): TwilioWhatsAppSenders {
     env.TWILIO_ACCOUNT_SID,
     "TWILIO_ACCOUNT_SID",
   );
-  const authToken = requireTwilioSecret(env.TWILIO_AUTH_TOKEN, "TWILIO_AUTH_TOKEN");
+  const authToken = requireTwilioSecret(
+    env.TWILIO_AUTH_TOKEN,
+    "TWILIO_AUTH_TOKEN",
+  );
   const fromE164 = requireTwilioSecret(
     env.TWILIO_WHATSAPP_FROM,
     "TWILIO_WHATSAPP_FROM",
