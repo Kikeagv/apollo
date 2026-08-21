@@ -16,6 +16,10 @@ _Avoid_: Praxia cuando se habla de componentes internos
 El agente interno de agendamiento por WhatsApp. Ante un paciente se identifica como asistente de la clínica, no como Asclepio ni Praxia.
 _Avoid_: bot de Praxia
 
+**Asistente de la clínica por WhatsApp**:
+La forma pública de describir a Asclepio ante clínicas y pacientes. Puede reservar, reprogramar y cancelar Citas de forma autónoma dentro de las reglas de la Clínica; cuando una solicitud requiere decisión humana, la entrega al equipo y deja de intervenir.
+_Avoid_: agente de Praxia, Asclepio ante pacientes, bot de Praxia
+
 **Panacea**:
 El CRM y panel interno para operar agenda, pacientes y, en fases posteriores, expediente.
 _Avoid_: Praxia cuando se habla del panel
