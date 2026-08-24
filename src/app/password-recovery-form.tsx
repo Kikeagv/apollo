@@ -3,6 +3,16 @@
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import {
+  Field,
+  FieldContent,
+  FieldGroup,
+  FieldLabel,
+} from "~/components/ui/field";
+import { Input } from "~/components/ui/input";
+import { Button } from "~/components/ui/button";
+
 import { TurnstileField } from "./turnstile-field";
 
 type RecoveryStep = "code" | "done" | "request";
@@ -105,12 +115,15 @@ export function PasswordRecoveryForm({
   if (step === "done") {
     return (
       <div className="space-y-4">
-        <p className="text-sm text-slate-300">
-          Contraseña restablecida. Sus sesiones y dispositivos confiables
-          quedaron revocados; inicie sesión de nuevo.
-        </p>
+        <Alert className="border-emerald-200 bg-emerald-50 text-emerald-950">
+          <AlertTitle>Contraseña restablecida</AlertTitle>
+          <AlertDescription className="text-emerald-900">
+            Sus sesiones y dispositivos confiables quedaron revocados; inicie
+            sesión de nuevo.
+          </AlertDescription>
+        </Alert>
         <Link
-          className="inline-block rounded bg-teal-300 px-4 py-2 font-medium text-slate-950"
+          className="text-primary decoration-primary/40 hover:decoration-primary focus-visible:ring-ring/30 inline-flex min-h-10 items-center rounded-lg font-medium underline underline-offset-4 transition-colors focus-visible:ring-3 focus-visible:outline-none"
           href="/"
         >
           Volver a iniciar sesión
@@ -121,92 +134,125 @@ export function PasswordRecoveryForm({
 
   if (step === "code") {
     return (
-      <form className="space-y-4" onSubmit={resetPassword}>
-        <p className="text-sm text-slate-300">
+      <form
+        aria-busy={pending}
+        className="space-y-6"
+        key="recovery-code"
+        onSubmit={resetPassword}
+      >
+        <p className="text-muted-foreground text-sm leading-6 text-pretty">
           Si el correo corresponde a una Identidad, recibirá un código de un
           solo uso. Ingrese el código y su nueva contraseña.
         </p>
-        <label className="block text-sm">
-          Código de verificación
-          <input
-            autoCapitalize="off"
-            autoComplete="one-time-code"
-            autoCorrect="off"
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            data-1p-ignore
-            data-form-type="other"
-            data-lpignore="true"
-            inputMode="numeric"
-            maxLength={12}
-            name="otp"
-            required
-            spellCheck={false}
-          />
-        </label>
-        <label className="block text-sm">
-          Nueva contraseña
-          <input
-            autoComplete="new-password"
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            minLength={8}
-            name="password"
-            required
-            type="password"
-          />
-        </label>
-        <label className="block text-sm">
-          Repita la contraseña
-          <input
-            autoComplete="new-password"
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-            minLength={8}
-            name="passwordConfirmation"
-            required
-            type="password"
-          />
-        </label>
-        <button
-          className="rounded bg-teal-300 px-4 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={pending}
-          type="submit"
-        >
+        <FieldGroup className="gap-4">
+          <Field>
+            <FieldLabel htmlFor="recovery-otp">
+              Código de verificación
+            </FieldLabel>
+            <FieldContent>
+              <Input
+                autoCapitalize="off"
+                autoComplete="one-time-code"
+                autoCorrect="off"
+                data-1p-ignore
+                data-form-type="other"
+                data-lpignore="true"
+                id="recovery-otp"
+                inputMode="numeric"
+                maxLength={12}
+                name="otp"
+                required
+                spellCheck={false}
+              />
+            </FieldContent>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="recovery-password">
+              Nueva contraseña
+            </FieldLabel>
+            <FieldContent>
+              <Input
+                autoComplete="new-password"
+                id="recovery-password"
+                minLength={8}
+                name="password"
+                required
+                type="password"
+              />
+            </FieldContent>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="recovery-password-confirmation">
+              Repita la contraseña
+            </FieldLabel>
+            <FieldContent>
+              <Input
+                autoComplete="new-password"
+                id="recovery-password-confirmation"
+                minLength={8}
+                name="passwordConfirmation"
+                required
+                type="password"
+              />
+            </FieldContent>
+          </Field>
+        </FieldGroup>
+        <Button disabled={pending} type="submit">
           {pending ? "Restableciendo…" : "Restablecer contraseña"}
-        </button>
-        {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+        </Button>
+        {error ? (
+          <Alert variant="destructive">
+            <AlertTitle>No se pudo restablecer la contraseña</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
       </form>
     );
   }
 
   return (
-    <form className="space-y-4" onSubmit={requestCode}>
-      <p className="text-sm text-slate-300">
+    <form
+      aria-busy={pending}
+      className="space-y-6"
+      key="recovery-request"
+      onSubmit={requestCode}
+    >
+      <p className="text-muted-foreground text-sm leading-6 text-pretty">
         Ingrese el correo de su Identidad. Enviaremos un código para restablecer
         la contraseña.
       </p>
-      <label className="block text-sm">
-        Correo
-        <input
-          autoComplete="email"
-          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-          name="email"
-          required
-          type="email"
-        />
-      </label>
+      <FieldGroup className="gap-4">
+        <Field>
+          <FieldLabel htmlFor="recovery-email">Correo</FieldLabel>
+          <FieldContent>
+            <Input
+              autoComplete="email"
+              id="recovery-email"
+              name="email"
+              required
+              type="email"
+            />
+          </FieldContent>
+        </Field>
+      </FieldGroup>
       <TurnstileField siteKey={turnstileSiteKey} />
-      <button
-        className="rounded bg-teal-300 px-4 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={pending}
-        type="submit"
-      >
+      <Button disabled={pending} type="submit">
         {pending ? "Enviando…" : "Enviar código"}
-      </button>
+      </Button>
       <p>
-        <Link className="text-sm text-teal-300 underline" href="/">
+        <Link
+          className="text-primary decoration-primary/40 hover:decoration-primary focus-visible:ring-ring/30 text-sm font-medium underline underline-offset-4 transition-colors focus-visible:rounded-sm focus-visible:ring-3 focus-visible:outline-none"
+          href="/"
+        >
           Volver a iniciar sesión
         </Link>
       </p>
-      {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertTitle>No se pudo enviar el código</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
     </form>
   );
 }

@@ -1,6 +1,8 @@
 "use client";
 
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
+import { Button } from "~/components/ui/button";
+import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
 import { api } from "~/trpc/react";
 
@@ -12,41 +14,48 @@ export function ConversationEscalationsSection() {
   });
 
   return (
-    <section className="space-y-3 rounded-xl border border-slate-700 p-5">
-      <div>
-        <h2 className="text-xl font-semibold">Escalamientos</h2>
-        <p className="mt-1 text-sm text-slate-300">
-          Conversaciones que requieren la atención de una persona de la Clínica.
-        </p>
-      </div>
-      {escalations.data?.length === 0 ? (
-        <p className="text-sm text-slate-400">
-          No hay Escalamientos pendientes.
-        </p>
-      ) : null}
-      <ul className="space-y-2 text-sm">
-        {escalations.data?.map((escalation) => (
-          <li
-            className="rounded border border-slate-800 p-3"
-            key={escalation.id}
-          >
-            <p>
-              {escalation.contact.name}: {triggerLabel(escalation.trigger)}.
+    <section className="space-y-5">
+      <Card>
+        <CardHeader className="border-border border-b">
+          <h2 className="text-xl font-semibold">Escalamientos</h2>
+          <p className="text-muted-foreground leading-6 text-pretty">
+            Conversaciones que requieren la atención de una persona de la
+            Clínica.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-6">
+          {escalations.data?.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              No hay Escalamientos pendientes.
             </p>
-            <p className="text-slate-400">
-              Recibido: {formatDate(escalation.createdAt)}
-            </p>
-            <button
-              className="mt-2 rounded bg-teal-300 px-3 py-1 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={resolve.isPending}
-              onClick={() => resolve.mutate({ escalationId: escalation.id })}
-              type="button"
-            >
-              {resolve.isPending ? "Cerrando…" : "Cerrar Escalamiento"}
-            </button>
-          </li>
-        ))}
-      </ul>
+          ) : null}
+          <ul className="space-y-2 text-sm">
+            {escalations.data?.map((escalation) => (
+              <li
+                className="border-border space-y-2 rounded-lg border p-3"
+                key={escalation.id}
+              >
+                <p>
+                  {escalation.contact.name}: {triggerLabel(escalation.trigger)}.
+                </p>
+                <p className="text-muted-foreground">
+                  Recibido: {formatDate(escalation.createdAt)}
+                </p>
+                <Button
+                  disabled={resolve.isPending}
+                  onClick={() =>
+                    resolve.mutate({ escalationId: escalation.id })
+                  }
+                  size="sm"
+                  type="button"
+                >
+                  {resolve.isPending ? "Cerrando…" : "Cerrar Escalamiento"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
     </section>
   );
 }

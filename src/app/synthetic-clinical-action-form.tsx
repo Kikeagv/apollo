@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+import { Alert, AlertDescription } from "~/components/ui/alert";
+import { Button } from "~/components/ui/button";
+import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { api } from "~/trpc/react";
 
 /** Acción de comprobación disponible solo dentro de una Sesión de Clínica. */
@@ -14,21 +17,30 @@ export function SyntheticClinicalActionForm() {
   });
 
   return (
-    <section className="space-y-3 rounded-xl border border-slate-700 p-4">
-      <h2 className="text-lg font-medium">Comprobación clínica</h2>
-      <p className="text-sm text-slate-300">
-        Registre una acción sintética para comprobar el aislamiento de esta
-        Clínica.
-      </p>
-      <button
-        className="rounded-md bg-teal-400 px-4 py-2 font-medium text-slate-950 disabled:opacity-60"
-        disabled={action.isPending}
-        onClick={() => action.mutate()}
-        type="button"
-      >
-        {action.isPending ? "Registrando…" : "Registrar acción sintética"}
-      </button>
-      {message === undefined ? null : <p role="status">{message}</p>}
+    <section className="space-y-5">
+      <Card>
+        <CardHeader className="border-border border-b">
+          <h2 className="text-lg font-medium">Comprobación clínica</h2>
+          <p className="text-muted-foreground leading-6 text-pretty">
+            Registre una acción sintética para comprobar el aislamiento de esta
+            Clínica.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-6">
+          <Button
+            disabled={action.isPending}
+            onClick={() => action.mutate()}
+            type="button"
+          >
+            {action.isPending ? "Registrando…" : "Registrar acción sintética"}
+          </Button>
+          {message === undefined ? null : (
+            <Alert role="status">
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
@@ -53,12 +54,13 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await page.getByRole("button", { name: "Activar cuenta" }).click();
     await expect(
       page.getByText(
-        "La cuenta se activó. Ya puede iniciar sesión con su correo y contraseña.",
+        "La cuenta se activó. En unos segundos la llevaremos al inicio de sesión.",
       ),
     ).toBeVisible();
 
     await page.goto("/");
     await waitForPanaceaInteractivity(page);
+    await expectNoAccessibilityViolations(page, 'form[aria-busy="false"]');
     await page.getByLabel("Correo").fill(fixture.ownerEmail);
     await page.getByLabel("Contraseña", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Iniciar sesión" }).click();
@@ -75,6 +77,13 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByText(fixture.clinicName)).toBeVisible();
     await expect(page.getByText("Esta es su área de trabajo.")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Fichas administrativas" }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(
+      page,
+      'section[aria-labelledby="administrative-records-title"]',
+    );
     await waitForPanaceaInteractivity(page);
 
     await page
@@ -87,6 +96,14 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await fixture.cleanup();
   }
 });
+
+async function expectNoAccessibilityViolations(page: Page, selector: string) {
+  const accessibilityScanResults = await new AxeBuilder({ page })
+    .include(selector)
+    .analyze();
+
+  expect(accessibilityScanResults.violations).toEqual([]);
+}
 
 test("el alta de perfil no envía el formulario antes de hidratar Panacea", async ({
   browser,
@@ -876,7 +893,7 @@ async function activateAndOpenPanacea(
   await page.getByRole("button", { name: "Activar cuenta" }).click();
   await expect(
     page.getByText(
-      "La cuenta se activó. Ya puede iniciar sesión con su correo y contraseña.",
+      "La cuenta se activó. En unos segundos la llevaremos al inicio de sesión.",
     ),
   ).toBeVisible();
 

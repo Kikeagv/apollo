@@ -58,12 +58,14 @@ export default async function Home({
         });
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
-      <section className="w-full max-w-xl space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl">
-        <p className="text-sm font-medium tracking-[0.2em] text-teal-300">
+    <main className="bg-background text-foreground flex min-h-screen items-center justify-center px-4 py-10 sm:px-6">
+      <section className="border-border bg-card w-full max-w-xl space-y-6 rounded-xl border p-6 shadow-sm sm:p-8">
+        <p className="text-primary text-sm font-semibold tracking-[0.16em]">
           PRAXIA
         </p>
-        <h1 className="text-4xl font-semibold">Praxia</h1>
+        <h1 className="text-4xl font-semibold tracking-tight text-balance">
+          Praxia
+        </h1>
         {context ? (
           <>
             <ClinicSessionActivity />

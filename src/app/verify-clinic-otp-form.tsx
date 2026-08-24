@@ -2,6 +2,16 @@
 
 import { type FormEvent, useState } from "react";
 
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import {
+  Field,
+  FieldContent,
+  FieldGroup,
+  FieldLabel,
+} from "~/components/ui/field";
+import { Input } from "~/components/ui/input";
+import { Button } from "~/components/ui/button";
+
 export function VerifyClinicOtpForm() {
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
@@ -31,36 +41,41 @@ export function VerifyClinicOtpForm() {
   }
 
   return (
-    <form className="space-y-4" onSubmit={submit}>
-      <p className="text-sm text-slate-300">
+    <form aria-busy={pending} className="space-y-6" onSubmit={submit}>
+      <p className="text-muted-foreground text-sm leading-6 text-pretty">
         Enviamos un código de un solo uso a su correo. Este navegador quedará
         confiable por 30 días.
       </p>
-      <label className="block text-sm">
-        Código de verificación
-        <input
-          autoCapitalize="off"
-          autoComplete="one-time-code"
-          autoCorrect="off"
-          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
-          data-1p-ignore
-          data-form-type="other"
-          data-lpignore="true"
-          inputMode="numeric"
-          maxLength={12}
-          name="otp"
-          required
-          spellCheck={false}
-        />
-      </label>
-      <button
-        className="rounded bg-teal-300 px-4 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={pending}
-        type="submit"
-      >
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="clinic-otp">Código de verificación</FieldLabel>
+          <FieldContent>
+            <Input
+              autoCapitalize="off"
+              autoComplete="one-time-code"
+              autoCorrect="off"
+              data-1p-ignore
+              data-form-type="other"
+              data-lpignore="true"
+              id="clinic-otp"
+              inputMode="numeric"
+              maxLength={12}
+              name="otp"
+              required
+              spellCheck={false}
+            />
+          </FieldContent>
+        </Field>
+      </FieldGroup>
+      <Button disabled={pending} type="submit">
         {pending ? "Verificando…" : "Verificar y abrir Praxia"}
-      </button>
-      {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+      </Button>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertTitle>No se pudo verificar el código</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
     </form>
   );
 }

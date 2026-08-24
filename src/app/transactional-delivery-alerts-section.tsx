@@ -1,6 +1,8 @@
 "use client";
 
 import { api } from "~/trpc/react";
+import { Button } from "~/components/ui/button";
+import { Card, CardContent, CardHeader } from "~/components/ui/card";
 
 /** Bandeja de Panacea para Entregas que agotaron su política de reintentos. */
 export function TransactionalDeliveryAlertsSection() {
@@ -10,39 +12,48 @@ export function TransactionalDeliveryAlertsSection() {
   });
 
   return (
-    <section className="space-y-3 rounded-xl border border-amber-700/60 p-5">
-      <div>
-        <h2 className="text-xl font-semibold">Entregas pendientes</h2>
-        <p className="mt-1 text-sm text-slate-300">
-          Mensajes administrativos que no pudieron entregarse tras cinco
-          intentos.
-        </p>
-      </div>
-      {alerts.data?.length === 0 ? (
-        <p className="text-sm text-slate-400">
-          No hay Entregas que requieran atención.
-        </p>
-      ) : null}
-      <ul className="space-y-2 text-sm">
-        {alerts.data?.map((alert) => (
-          <li className="rounded border border-slate-800 p-3" key={alert.id}>
-            <p>
-              {alert.delivery.kind === "appointment-reminder"
-                ? "Recordatorio de Cita"
-                : "Agenda diaria"}
-              {alert.delivery.lastError ? `: ${alert.delivery.lastError}` : "."}
+    <section className="space-y-5">
+      <Card>
+        <CardHeader className="border-border border-b">
+          <h2 className="text-xl font-semibold">Entregas pendientes</h2>
+          <p className="text-muted-foreground leading-6 text-pretty">
+            Mensajes administrativos que no pudieron entregarse tras cinco
+            intentos.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-6">
+          {alerts.data?.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              No hay Entregas que requieran atención.
             </p>
-            <button
-              className="mt-2 rounded bg-teal-300 px-3 py-1 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={resolve.isPending}
-              onClick={() => resolve.mutate({ alertId: alert.id })}
-              type="button"
-            >
-              {resolve.isPending ? "Cerrando…" : "Marcar como resuelta"}
-            </button>
-          </li>
-        ))}
-      </ul>
+          ) : null}
+          <ul className="space-y-2 text-sm">
+            {alerts.data?.map((alert) => (
+              <li
+                className="border-border space-y-2 rounded-lg border p-3"
+                key={alert.id}
+              >
+                <p>
+                  {alert.delivery.kind === "appointment-reminder"
+                    ? "Recordatorio de Cita"
+                    : "Agenda diaria"}
+                  {alert.delivery.lastError
+                    ? `: ${alert.delivery.lastError}`
+                    : "."}
+                </p>
+                <Button
+                  disabled={resolve.isPending}
+                  onClick={() => resolve.mutate({ alertId: alert.id })}
+                  size="sm"
+                  type="button"
+                >
+                  {resolve.isPending ? "Cerrando…" : "Marcar como resuelta"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
     </section>
   );
 }

@@ -50,6 +50,7 @@ export function CareOptionsSection() {
         <label className="block text-sm">
           Médico
           <select
+            aria-label="Médico para consultar opciones"
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
             name="doctorId"
             onChange={(event) => setDoctorId(event.target.value)}
@@ -67,6 +68,7 @@ export function CareOptionsSection() {
         <label className="block text-sm">
           Servicio
           <select
+            aria-label="Servicio para consultar opciones"
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
             disabled={doctorId === "" || services.length === 0}
             name="serviceId"
@@ -83,6 +85,7 @@ export function CareOptionsSection() {
         <label className="block text-sm">
           Desde
           <input
+            aria-label="Fecha inicial de opciones"
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
             defaultValue={today()}
             name="from"
@@ -93,6 +96,7 @@ export function CareOptionsSection() {
         <label className="block text-sm">
           Hasta
           <input
+            aria-label="Fecha final de opciones"
             className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
             defaultValue={today()}
             name="to"

@@ -121,6 +121,7 @@ export function AvailabilitySection({
       <form className="space-y-2" onSubmit={saveSchedule}>
         <div className="grid gap-2 sm:grid-cols-2">
           <select
+            aria-label="Médico del horario"
             className="rounded border border-slate-700 bg-slate-950 p-2"
             name="doctorId"
             required
@@ -132,6 +133,7 @@ export function AvailabilitySection({
             ))}
           </select>
           <input
+            aria-label="Fecha de inicio del horario"
             className="rounded border border-slate-700 bg-slate-950 p-2"
             name="effectiveFrom"
             required
@@ -209,6 +211,7 @@ export function AvailabilitySection({
       </form>
       <form className="grid gap-2 sm:grid-cols-2" onSubmit={saveBlock}>
         <select
+          aria-label="Médico del bloqueo"
           className="rounded border border-slate-700 bg-slate-950 p-2"
           name="doctorId"
           required
@@ -220,17 +223,20 @@ export function AvailabilitySection({
           ))}
         </select>
         <input
+          aria-label="Etiqueta privada del bloqueo"
           className="rounded border border-slate-700 bg-slate-950 p-2"
           name="privateLabel"
           placeholder="Etiqueta privada (opcional)"
         />
         <input
+          aria-label="Inicio del bloqueo"
           className="rounded border border-slate-700 bg-slate-950 p-2"
           name="startsAt"
           required
           type="datetime-local"
         />
         <input
+          aria-label="Fin del bloqueo"
           className="rounded border border-slate-700 bg-slate-950 p-2"
           name="endsAt"
           required
@@ -247,6 +253,7 @@ export function AvailabilitySection({
       {canManageAll ? (
         <form className="grid gap-2" onSubmit={saveBulkBlock}>
           <select
+            aria-label="Médicos del bloqueo masivo"
             className="rounded border border-slate-700 bg-slate-950 p-2"
             multiple
             name="doctorIds"
@@ -260,17 +267,20 @@ export function AvailabilitySection({
           </select>
           <div className="grid gap-2 sm:grid-cols-3">
             <input
+              aria-label="Etiqueta privada del bloqueo masivo"
               className="rounded border border-slate-700 bg-slate-950 p-2"
               name="privateLabel"
               placeholder="Etiqueta privada"
             />
             <input
+              aria-label="Inicio del bloqueo masivo"
               className="rounded border border-slate-700 bg-slate-950 p-2"
               name="startsAt"
               required
               type="datetime-local"
             />
             <input
+              aria-label="Fin del bloqueo masivo"
               className="rounded border border-slate-700 bg-slate-950 p-2"
               name="endsAt"
               required

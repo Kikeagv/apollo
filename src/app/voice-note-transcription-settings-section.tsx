@@ -1,6 +1,7 @@
 "use client";
 
 import { api } from "~/trpc/react";
+import { Card, CardContent, CardHeader } from "~/components/ui/card";
 
 /** Control explícito del propietario para permitir notas de voz en Asclepio. */
 export function VoiceNoteTranscriptionSettingsSection() {
@@ -11,23 +12,32 @@ export function VoiceNoteTranscriptionSettingsSection() {
   const enabled = settings.data?.enabled ?? false;
 
   return (
-    <section className="space-y-3 rounded-xl border border-slate-700 p-5">
-      <div>
-        <h2 className="text-xl font-semibold">Transcripción de nota de voz</h2>
-        <p className="mt-1 text-sm text-slate-300">
-          La transcripción usa el adaptador simulado de forma temporal. Si falla
-          o está desactivado, crea un Escalamiento para atención humana.
-        </p>
-      </div>
-      <label className="block text-sm">
-        <input
-          checked={enabled}
-          disabled={settings.isLoading || save.isPending}
-          onChange={(event) => save.mutate({ enabled: event.target.checked })}
-          type="checkbox"
-        />{" "}
-        Permitir transcribir notas de voz
-      </label>
+    <section className="space-y-5">
+      <Card>
+        <CardHeader className="border-border border-b">
+          <h2 className="text-xl font-semibold">
+            Transcripción de nota de voz
+          </h2>
+          <p className="text-muted-foreground leading-6 text-pretty">
+            La transcripción usa el adaptador simulado de forma temporal. Si
+            falla o está desactivado, crea un Escalamiento para atención humana.
+          </p>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <label className="flex items-start gap-3 text-sm">
+            <input
+              checked={enabled}
+              className="accent-primary mt-0.5 size-4"
+              disabled={settings.isLoading || save.isPending}
+              onChange={(event) =>
+                save.mutate({ enabled: event.target.checked })
+              }
+              type="checkbox"
+            />
+            <span>Permitir transcribir notas de voz</span>
+          </label>
+        </CardContent>
+      </Card>
     </section>
   );
 }
