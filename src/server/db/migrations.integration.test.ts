@@ -13,8 +13,8 @@ describe("migraciones de PostgreSQL", () => {
   databaseTest(
     "aplican desde una base vacía y preservan los Eventos de Cita como append-only",
     async () => {
-      const databaseName = `apo_43_${randomUUID().replaceAll("-", "")}`;
-      const roleName = `apo_43_${randomUUID().replaceAll("-", "")}`;
+      const databaseName = `apo_45_${randomUUID().replaceAll("-", "")}`;
+      const roleName = `apo_45_${randomUUID().replaceAll("-", "")}`;
       const password = randomUUID();
       const admin = postgres(process.env.DATABASE_URL!, { max: 1 });
       const migratedUrl = new URL(process.env.DATABASE_URL!);
@@ -161,6 +161,74 @@ describe("migraciones de PostgreSQL", () => {
           ).rejects.toThrow(/permission denied/i);
         } finally {
           await restricted.end();
+        }
+
+        const activeClinicId = randomUUID();
+        const suspendedClinicId = randomUUID();
+        const schedulerDb = postgres(migratedUrl.toString(), { max: 1 });
+        const schedulerRestricted = postgres(restrictedUrl.toString(), {
+          max: 1,
+        });
+        await schedulerDb`
+          insert into "pg-drizzle_clinic" (id, name, subscription_status)
+          values
+            (${activeClinicId}, 'Clínica activa', 'active'),
+            (${suspendedClinicId}, 'Clínica suspendida', 'suspended')
+        `;
+        try {
+          await schedulerRestricted.begin(async (transaction) => {
+            await transaction`select set_config(
+              'app.appointment_scheduler', 'true', true
+            )`;
+            await transaction`
+              insert into "pg-drizzle_transactional_delivery" (
+                clinic_id,
+                kind,
+                idempotency_key,
+                payload,
+                next_attempt_at,
+                retain_until
+              ) values (
+                ${activeClinicId},
+                'daily-agenda-pdf',
+                ${randomUUID()},
+                '{}'::jsonb,
+                now(),
+                now()
+              )
+            `;
+          });
+          await expect(
+            schedulerRestricted.begin(async (transaction) => {
+              await transaction`select set_config(
+                'app.appointment_scheduler', 'true', true
+              )`;
+              return transaction`
+                insert into "pg-drizzle_transactional_delivery" (
+                  clinic_id,
+                  kind,
+                  idempotency_key,
+                  payload,
+                  next_attempt_at,
+                  retain_until
+                ) values (
+                  ${suspendedClinicId},
+                  'daily-agenda-pdf',
+                  ${randomUUID()},
+                  '{}'::jsonb,
+                  now(),
+                  now()
+                )
+              `;
+            }),
+          ).rejects.toThrow(/row-level security/i);
+        } finally {
+          await schedulerRestricted.end();
+          await schedulerDb`
+            delete from "pg-drizzle_clinic"
+            where id in (${activeClinicId}, ${suspendedClinicId})
+          `;
+          await schedulerDb.end();
         }
       } finally {
         await admin.unsafe(`drop role if exists "${roleName}"`);
