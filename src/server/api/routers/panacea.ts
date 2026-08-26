@@ -36,6 +36,7 @@ import {
   cancelManualAppointment,
   createManualAppointment,
   listPanaceaCalendar,
+  listPanaceaCalendarDoctors,
   listCancelledManualAppointments,
   listManualAppointmentFormData,
   listManualAppointments,
@@ -522,6 +523,16 @@ export const panaceaRouter = {
         drizzleManualAppointmentStore,
       ),
     ),
+
+  listPanaceaCalendarDoctors: clinicProcedure.query(({ ctx }) =>
+    listPanaceaCalendarDoctors(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzleManualAppointmentStore,
+    ),
+  ),
 
   listManualAppointments: clinicProcedure.query(({ ctx }) =>
     listManualAppointments(

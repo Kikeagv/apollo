@@ -62,6 +62,7 @@ export type AgendaAppointment = {
     type: AppointmentEventType;
   }[];
   id: string;
+  occupiedUntil: Date;
   origin: "manual" | "reservation" | null;
   outsideSchedule: boolean;
   patient: { id: string; name: string };
@@ -81,6 +82,11 @@ export type CalendarBlock = {
 };
 
 export type CalendarEntry = AgendaAppointment | CalendarBlock;
+
+export type AgendaDoctor = {
+  id: string;
+  name: string;
+};
 
 export type PanaceaCalendarInput = {
   clinicId: string;
@@ -156,6 +162,13 @@ export type ManualAppointmentReader = {
 /** Separa el Calendario de Panacea de los contratos públicos de Asclepio. */
 export type PanaceaCalendarReader = {
   listCalendar(input: PanaceaCalendarInput): Promise<CalendarEntry[]>;
+};
+
+export type PanaceaCalendarDoctorReader = {
+  listCalendarDoctors(input: {
+    clinicId: string;
+    identityId: string;
+  }): Promise<AgendaDoctor[]>;
 };
 
 export class ManualAppointmentUnavailableError extends Error {
@@ -281,6 +294,14 @@ export async function listPanaceaCalendar(
     );
   }
   return store.listCalendar(input);
+}
+
+/** Consulta los Médicos de la Clínica que el Calendario puede filtrar. */
+export async function listPanaceaCalendarDoctors(
+  input: { clinicId: string; identityId: string },
+  store: PanaceaCalendarDoctorReader,
+) {
+  return store.listCalendarDoctors(input);
 }
 
 /** Consulta las Citas manuales canceladas para detalle y ficha administrativa. */

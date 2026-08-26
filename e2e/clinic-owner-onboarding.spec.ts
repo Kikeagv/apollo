@@ -405,11 +405,12 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
     ]);
     await reloadPanacea(page);
     const calendar = section(page, "Calendario");
+    const agendaList = calendar.locator('[data-calendar-list="true"]');
     await calendar.locator('input[type="date"]').fill(careDate);
-    const anaBlock = calendar.getByRole("button", {
+    const anaBlock = agendaList.getByRole("button", {
       name: /Bloqueo.*Capacitación de Ana/,
     });
-    const brunoBlock = calendar.getByRole("button", {
+    const brunoBlock = agendaList.getByRole("button", {
       name: /Bloqueo.*Capacitación de Bruno/,
     });
     await expect(anaBlock).toBeVisible();
@@ -525,10 +526,13 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
     });
 
     const calendar = section(page, "Calendario");
-    const navigationsDuringAppointmentCreation: string[] = [];
-    page.on("framenavigated", (frame) => {
-      if (frame === page.mainFrame()) {
-        navigationsDuringAppointmentCreation.push(frame.url());
+    const nativeNavigationsDuringAppointmentCreation: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.isNavigationRequest() &&
+        request.frame() === page.mainFrame()
+      ) {
+        nativeNavigationsDuringAppointmentCreation.push(request.url());
       }
     });
 
@@ -564,7 +568,7 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
       await expect(
         calendar.getByRole("link", { name: "Abrir ficha del Contacto" }),
       ).toBeVisible();
-      expect(navigationsDuringAppointmentCreation).toEqual([]);
+      expect(nativeNavigationsDuringAppointmentCreation).toEqual([]);
     }
   } finally {
     await fixture.cleanup();
@@ -606,32 +610,36 @@ test("el Calendario cancela una Cita activa y conserva su historial", async ({
       startsAt: "08:00",
     });
 
-    const activeAppointment = calendar.getByRole("button", {
+    const agendaList = calendar.locator('[data-calendar-list="true"]');
+    const activeAppointment = agendaList.getByRole("button", {
       name: new RegExp(`8:00.*${patientName}`),
     });
     await calendar.getByRole("button", { name: "Semana" }).click();
     await calendar.getByLabel("Médico").selectOption({ label: doctorName });
     await expect(activeAppointment).toBeVisible();
     await calendar.getByRole("button", { name: "Día" }).click();
-    const activeDayAppointment = calendar
-      .locator('div[class="grid gap-2"]')
-      .getByRole("button", {
-        name: new RegExp(`8:00.*${patientName}`),
-      });
+    const activeDayAppointment = agendaList.getByRole("button", {
+      name: new RegExp(`8:00.*${patientName}`),
+    });
     await expect(activeDayAppointment).toBeVisible();
 
     await activeDayAppointment.click();
     const appointmentDetail = calendar
       .getByRole("heading", { name: "Detalle de la Cita" })
-      .locator("..");
+      .locator("xpath=../..");
     await appointmentDetail
       .getByRole("button", { name: "Cancelar Cita" })
+      .click();
+    const cancellationDialog = page.getByRole("alertdialog");
+    await expect(cancellationDialog).toBeVisible();
+    await cancellationDialog
+      .getByRole("button", { name: "Confirmar cancelación" })
       .click();
     await expect(activeDayAppointment).not.toBeVisible();
 
     const cancelledAppointment = calendar
       .getByRole("heading", { name: "Citas canceladas" })
-      .locator("..")
+      .locator("xpath=../..")
       .getByRole("button", { name: new RegExp(patientName) });
     await cancelledAppointment.click();
     await expect(appointmentDetail).toContainText("Cancelada");
@@ -677,7 +685,7 @@ test("el Calendario solo ofrece cancelar Citas manuales futuras", async ({
       startsAt: "08:00",
     });
     await expect(
-      calendar.getByRole("button", {
+      calendar.locator('[data-calendar-list="true"]').getByRole("button", {
         name: new RegExp(`8:00.*${patientName}`),
       }),
     ).toBeVisible();
@@ -718,19 +726,20 @@ test("el Calendario solo ofrece cancelar Citas manuales futuras", async ({
     await reloadPanacea(page);
     await calendar.locator('input[type="date"]').fill(careDate);
 
-    const manualAppointment = calendar.getByRole("button", {
+    const agendaList = calendar.locator('[data-calendar-list="true"]');
+    const manualAppointment = agendaList.getByRole("button", {
       name: new RegExp(`8:00.*${patientName}`),
     });
     await manualAppointment.click();
     const appointmentDetail = calendar
       .getByRole("heading", { name: "Detalle de la Cita" })
-      .locator("..");
+      .locator("xpath=../..");
     await expect(appointmentDetail).toContainText(patientName);
     await expect(
       appointmentDetail.getByRole("button", { name: "Cancelar Cita" }),
     ).toBeVisible();
 
-    const reservationAppointment = calendar.getByRole("button", {
+    const reservationAppointment = agendaList.getByRole("button", {
       name: new RegExp(`8:40.*${patientName}`),
     });
     await reservationAppointment.click();
@@ -778,7 +787,7 @@ test("el Calendario rechaza una Cita que se traslapa con capacidad ocupada", asy
       startsAt: "08:00",
     });
     await expect(
-      calendar.getByRole("button", {
+      calendar.locator('[data-calendar-list="true"]').getByRole("button", {
         name: new RegExp(`8:00.*${patientName}`),
       }),
     ).toBeVisible();
@@ -793,7 +802,7 @@ test("el Calendario rechaza una Cita que se traslapa con capacidad ocupada", asy
       calendar.getByText("La Agenda ya no autoriza esta Cita manual"),
     ).toBeVisible();
     await expect(
-      calendar.getByRole("button", {
+      calendar.locator('[data-calendar-list="true"]').getByRole("button", {
         name: new RegExp(`8:15.*${patientName}`),
       }),
     ).not.toBeVisible();
@@ -849,6 +858,7 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
     );
 
     const calendar = section(page, "Calendario");
+    const agendaList = calendar.locator('[data-calendar-list="true"]');
     await registerInlinePatient(calendar, { contactName, patientName });
 
     await calendar.locator('input[type="date"]').fill(careDate);
@@ -858,14 +868,14 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
     });
     await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
 
-    const scheduledAppointment = calendar.getByRole("button", {
+    const scheduledAppointment = agendaList.getByRole("button", {
       name: new RegExp(`8:00.*${patientName}`),
     });
-    const calendarBlock = calendar.getByRole("button", {
+    const calendarBlock = agendaList.getByRole("button", {
       name: /Bloqueo.*Capacitación Calendario/,
     });
     await calendar.getByRole("button", { name: "Semana" }).click();
-    await expect(calendar.locator('[class*="xl:grid-cols-7"]')).toBeVisible();
+    await expect(calendar.locator('[data-calendar-view="week"]')).toBeVisible();
     await expect(scheduledAppointment).toContainText(serviceName);
     await expect(scheduledAppointment).toContainText(doctorName);
     await expect(calendarBlock).toContainText(doctorName);
@@ -875,8 +885,9 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
     await expect(calendarBlock).toBeVisible();
     await calendar.getByRole("button", { name: "Día" }).click();
     await expect(
-      calendar.locator('[class*="xl:grid-cols-7"]'),
+      calendar.locator('[data-calendar-view="week"]'),
     ).not.toBeVisible();
+    await expect(calendar.locator('[data-calendar-view="day"]')).toBeVisible();
     await expect(scheduledAppointment).toBeVisible();
     await expect(calendarBlock).toBeVisible();
 
@@ -885,10 +896,14 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
       .getByRole("heading", {
         name: "Detalle de la Cita",
       })
-      .locator("..");
+      .locator("xpath=../..");
     await expect(appointmentDetail).toContainText(patientName);
     await expect(appointmentDetail).toContainText(contactName);
     await expect(appointmentDetail).toContainText(serviceName);
+    await page.goBack();
+    await expect(appointmentDetail).not.toBeVisible();
+    await scheduledAppointment.click();
+    await expect(appointmentDetail).toContainText(patientName);
 
     await calendar.locator('input[name="startsAt"]').fill(`${careDate}T09:35`);
     await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
@@ -897,7 +912,7 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
         "La Cita no cabe por completo en el Horario vigente. Confirme la excepción para crearla sin modificar los demás controles de capacidad.",
       ),
     ).toBeVisible();
-    const outsideScheduleAppointment = calendar.getByRole("button", {
+    const outsideScheduleAppointment = agendaList.getByRole("button", {
       name: new RegExp(`9:35.*${patientName}`),
     });
     await expect(outsideScheduleAppointment).not.toBeVisible();

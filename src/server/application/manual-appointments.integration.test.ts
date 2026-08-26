@@ -7,6 +7,7 @@ import {
   cancelManualAppointment,
   createManualAppointment,
   listPanaceaCalendar,
+  listPanaceaCalendarDoctors,
   listCancelledManualAppointments,
   listManualAppointmentFormData,
   listManualAppointments,
@@ -858,6 +859,33 @@ describe("Citas manuales persistentes", () => {
         if (block === undefined) throw new Error("No se creó el Bloqueo");
 
         await expect(
+          listPanaceaCalendarDoctors(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([{ id: fixture.doctorId, name: "Dra. Sol" }]);
+        await expect(
+          listPanaceaCalendarDoctors(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.ownerIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([{ id: fixture.doctorId, name: "Dra. Sol" }]);
+        await expect(
+          listPanaceaCalendarDoctors(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.doctorIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([{ id: fixture.doctorId, name: "Dra. Sol" }]);
+        await expect(
           listPanaceaCalendar(
             {
               clinicId: fixture.clinicId,
@@ -869,7 +897,11 @@ describe("Citas manuales persistentes", () => {
             drizzleManualAppointmentStore,
           ),
         ).resolves.toEqual([
-          expect.objectContaining({ id: appointment.id }),
+          expect.objectContaining({
+            endsAt: new Date("2026-08-10T14:30:00.000Z"),
+            id: appointment.id,
+            occupiedUntil: new Date("2026-08-10T14:35:00.000Z"),
+          }),
           expect.objectContaining({
             id: block.id,
             privateLabel: "Capacitación interna",
@@ -888,6 +920,15 @@ describe("Citas manuales persistentes", () => {
           ),
         ).resolves.toEqual([]);
         await expect(
+          listPanaceaCalendarDoctors(
+            {
+              clinicId: fixture.otherClinicId,
+              identityId: fixture.otherOwnerIdentityId,
+            },
+            drizzleManualAppointmentStore,
+          ),
+        ).resolves.toEqual([]);
+        await expect(
           listPanaceaCalendar(
             {
               clinicId: fixture.clinicId,
@@ -899,6 +940,10 @@ describe("Citas manuales persistentes", () => {
             drizzleManualAppointmentStore,
           ),
         ).resolves.toEqual([
+          expect.objectContaining({
+            id: appointment.id,
+            occupiedUntil: new Date("2026-08-10T14:35:00.000Z"),
+          }),
           expect.objectContaining({
             id: block.id,
             privateLabel: "Capacitación interna",

@@ -10,6 +10,7 @@ import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import {
   type CreateManualAppointmentInput,
   type PanaceaCalendarInput,
+  type PanaceaCalendarDoctorReader,
   type PanaceaCalendarReader,
   type ManualAppointmentCanceller,
   type ManualAppointmentCreator,
@@ -41,7 +42,8 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   ManualAppointmentMessageDeliveryRecorder &
   ManualAppointmentReader &
   AppointmentReminderStore &
-  PanaceaCalendarReader = {
+  PanaceaCalendarReader &
+  PanaceaCalendarDoctorReader = {
   async create(input) {
     return inClinicTransaction(input, async (transaction) => {
       await setCalendarOperation(transaction);
@@ -382,6 +384,10 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   async listCalendar(input) {
     return readPanaceaCalendar(input);
   },
+
+  async listCalendarDoctors(input) {
+    return readCalendarDoctors(input);
+  },
 };
 
 async function readManualAppointmentFormData(input: {
@@ -502,6 +508,7 @@ async function readAppointments(
         durationMinutes: appointments.durationMinutes,
         endsAt: appointments.endsAt,
         id: appointments.id,
+        occupiedUntil: appointments.occupiedUntil,
         origin: appointments.origin,
         outsideSchedule: appointments.outsideSchedule,
         patientId: patients.id,
@@ -549,7 +556,10 @@ async function readAppointments(
             : undefined,
           period === undefined
             ? undefined
-            : gt(appointments.endsAt, period.from),
+            : or(
+                gt(appointments.endsAt, period.from),
+                gt(appointments.occupiedUntil, period.from),
+              ),
           period === undefined
             ? undefined
             : lt(appointments.startsAt, period.to),
@@ -616,10 +626,7 @@ async function readAppointments(
         name: appointment.doctorName ?? "Médico sin nombre público",
       },
       durationMinutes: appointment.durationMinutes,
-      endsAt: addMinutes(
-        appointment.startsAt,
-        appointment.durationMinutes ?? 0,
-      ),
+      endsAt: appointment.endsAt,
       events: events
         .filter((event) => event.appointmentId === appointment.id)
         .map(({ appointmentId: _, recipientContactId, ...event }) => {
@@ -639,6 +646,7 @@ async function readAppointments(
           };
         }),
       id: appointment.id,
+      occupiedUntil: appointment.occupiedUntil ?? appointment.endsAt,
       origin: appointment.origin,
       outsideSchedule: appointment.outsideSchedule,
       patient: { id: appointment.patientId, name: appointment.patientName },
@@ -658,6 +666,42 @@ async function readPanaceaCalendar(input: PanaceaCalendarInput) {
   return [...activeAppointments, ...blocks].sort(
     (left, right) => left.startsAt.valueOf() - right.startsAt.valueOf(),
   );
+}
+
+async function readCalendarDoctors(input: {
+  clinicId: string;
+  identityId: string;
+}) {
+  return inClinicTransaction(input, async (transaction) => {
+    await setCalendarOperation(transaction);
+    const doctorsInClinic = await transaction
+      .select({
+        id: doctors.id,
+        name: doctors.publicName,
+      })
+      .from(doctors)
+      .innerJoin(
+        clinicUsers,
+        and(
+          eq(doctors.clinicId, clinicUsers.clinicId),
+          eq(doctors.clinicUserId, clinicUsers.id),
+        ),
+      )
+      .where(
+        and(
+          eq(doctors.clinicId, input.clinicId),
+          eq(doctors.active, true),
+          eq(clinicUsers.active, true),
+          inArray(clinicUsers.role, ["owner", "doctor"]),
+        ),
+      )
+      .orderBy(asc(doctors.publicName), asc(doctors.createdAt));
+
+    return doctorsInClinic.map((doctor) => ({
+      id: doctor.id,
+      name: doctor.name ?? "Médico sin nombre público",
+    }));
+  });
 }
 
 async function readAvailabilityBlocks(input: PanaceaCalendarInput) {

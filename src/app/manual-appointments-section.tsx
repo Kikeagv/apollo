@@ -1,8 +1,49 @@
 "use client";
 
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
+import {
+  calendarDates,
+  calendarEntryEnd,
+  calendarGridBounds,
+  calendarPeriodFor,
+  calendarSegments,
+  type CalendarEntrySegment,
+  parseCalendarDate,
+  type CalendarView,
+} from "~/domain/panacea-calendar";
+import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "~/components/ui/native-select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "~/components/ui/sheet";
 import type {
   AgendaAppointment,
   AppointmentEventType,
@@ -13,7 +54,6 @@ import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
-type CalendarView = "day" | "week";
 type CalendarAppointment = AgendaAppointment;
 
 type ManualAppointmentRequest = {
@@ -27,17 +67,43 @@ type ManualAppointmentRequest = {
 
 /** Calendario operativo y alta de Citas manuales autorizadas por la Agenda. */
 export function ManualAppointmentsSection() {
-  const [calendarDate, setCalendarDate] = useState(today());
-  const [doctorId, setDoctorId] = useState("");
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const urlQuery = searchParams.toString();
+  const urlCalendarDate = parseCalendarDate(searchParams.get("date"), today());
+  const urlDoctorId = searchParams.get("doctor") ?? "";
+  const urlSelectedId = searchParams.get("selected") ?? undefined;
+  const urlView = parseCalendarView(searchParams.get("view"));
+  const [calendarDate, setCalendarDate] = useState(urlCalendarDate);
+  const [doctorId, setDoctorId] = useState(urlDoctorId);
+  const [selectedId, setSelectedId] = useState(urlSelectedId);
+  const [view, setView] = useState<CalendarView>(urlView);
   const [outsideScheduleConfirmation, setOutsideScheduleConfirmation] =
     useState<ManualAppointmentRequest>();
-  const [selectedId, setSelectedId] = useState<string>();
   const [patientId, setPatientId] = useState("");
   const [recordRegistrationOpen, setRecordRegistrationOpen] = useState(false);
   const [recordRegistrationResult, setRecordRegistrationResult] =
     useState<string>();
   const [sendConfirmation, setSendConfirmation] = useState(false);
-  const [view, setView] = useState<CalendarView>("week");
+  useEffect(() => {
+    if (urlQuery !== window.location.search.slice(1)) return;
+    setCalendarDate(urlCalendarDate);
+    setDoctorId(urlDoctorId);
+    setSelectedId(urlSelectedId);
+    setView(urlView);
+  }, [urlCalendarDate, urlDoctorId, urlQuery, urlSelectedId, urlView]);
+  useEffect(() => {
+    function syncCalendarStateFromHistory() {
+      const params = new URLSearchParams(window.location.search);
+      setCalendarDate(parseCalendarDate(params.get("date"), today()));
+      setDoctorId(params.get("doctor") ?? "");
+      setSelectedId(params.get("selected") ?? undefined);
+      setView(parseCalendarView(params.get("view")));
+    }
+    window.addEventListener("popstate", syncCalendarStateFromHistory);
+    return () =>
+      window.removeEventListener("popstate", syncCalendarStateFromHistory);
+  }, []);
   const formData = api.panacea.listManualAppointmentFormData.useQuery();
   const registerAdministrativeRecords =
     api.panacea.registerAdministrativeRecordsForManualAppointment.useMutation({
@@ -52,9 +118,9 @@ export function ManualAppointmentsSection() {
     });
   const cancelledAppointments =
     api.panacea.listCancelledManualAppointments.useQuery();
-  const visibleDates =
-    view === "week" ? calendarWeek(calendarDate) : [calendarDate];
-  const calendarPeriod = calendarPeriodFor(visibleDates);
+  const calendarDoctors = api.panacea.listPanaceaCalendarDoctors.useQuery();
+  const visibleDates = calendarDates(calendarDate, view);
+  const calendarPeriod = calendarPeriodFor(calendarDate, view);
   const calendarAgenda = api.panacea.listPanaceaCalendar.useQuery({
     doctorId: doctorId || undefined,
     ...calendarPeriod,
@@ -67,7 +133,7 @@ export function ManualAppointmentsSection() {
     },
     onSuccess: async (appointment) => {
       setOutsideScheduleConfirmation(undefined);
-      setSelectedId(appointment.id);
+      updateCalendarUrl({ selectedId: appointment.id }, "push");
       await calendarAgenda.refetch();
     },
   });
@@ -85,6 +151,9 @@ export function ManualAppointmentsSection() {
   ].find((appointment) => appointment.id === selectedId);
   const doctors = useMemo(() => {
     const doctorsById = new Map<string, { id: string; name: string }>();
+    for (const doctor of calendarDoctors.data ?? []) {
+      doctorsById.set(doctor.id, doctor);
+    }
     for (const offer of formData.data?.offers ?? []) {
       doctorsById.set(offer.doctorId, {
         id: offer.doctorId,
@@ -95,24 +164,68 @@ export function ManualAppointmentsSection() {
       doctorsById.set(entry.doctor.id, entry.doctor);
     }
     return [...doctorsById.values()];
-  }, [calendarAgenda.data, formData.data]);
+  }, [calendarAgenda.data, calendarDoctors.data, formData.data]);
   const calendarEntries = calendarAgenda.data ?? [];
   const selectedPatient = formData.data?.patients.find(
     (patient) => patient.id === patientId,
   );
   const queryError =
-    formData.error ?? cancelledAppointments.error ?? calendarAgenda.error;
+    formData.error ??
+    cancelledAppointments.error ??
+    calendarAgenda.error ??
+    calendarDoctors.error;
   const isLoading =
     formData.isLoading ||
     cancelledAppointments.isLoading ||
-    calendarAgenda.isLoading;
+    calendarAgenda.isLoading ||
+    calendarDoctors.isLoading;
 
   function refetchCalendar() {
     void Promise.all([
       formData.refetch(),
       cancelledAppointments.refetch(),
       calendarAgenda.refetch(),
+      calendarDoctors.refetch(),
     ]);
+  }
+
+  function updateCalendarUrl(
+    changes: {
+      date?: string;
+      doctorId?: string;
+      selectedId?: string | undefined;
+      view?: CalendarView;
+    },
+    navigation: "push" | "replace" = "replace",
+  ) {
+    const nextDate =
+      changes.date === undefined
+        ? calendarDate
+        : parseCalendarDate(changes.date, calendarDate);
+    const nextDoctorId = changes.doctorId ?? doctorId;
+    const nextView = changes.view ?? view;
+    const params = new URLSearchParams(window.location.search);
+    setCalendarParam(params, "date", nextDate, today());
+    setCalendarParam(params, "view", nextView, "week");
+    setCalendarParam(params, "doctor", nextDoctorId, "");
+    if ("selectedId" in changes) {
+      setCalendarParam(params, "selected", changes.selectedId ?? "", "");
+    }
+    const query = params.toString();
+    const nextUrl = query ? `${pathname}?${query}` : pathname;
+    const historyNavigation =
+      navigation === "push" && changes.selectedId === selectedId
+        ? "replace"
+        : navigation;
+    if (historyNavigation === "push") {
+      window.history.pushState(null, "", nextUrl);
+    } else {
+      window.history.replaceState(null, "", nextUrl);
+    }
+    if (changes.date !== undefined) setCalendarDate(nextDate);
+    if (changes.doctorId !== undefined) setDoctorId(nextDoctorId);
+    if ("selectedId" in changes) setSelectedId(changes.selectedId);
+    if (changes.view !== undefined) setView(nextView);
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -147,10 +260,10 @@ export function ManualAppointmentsSection() {
   }
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-700 p-5">
+    <section className="border-border space-y-4 rounded-xl border p-5">
       <div>
         <h2 className="text-xl font-semibold">Calendario</h2>
-        <p className="mt-1 text-sm text-slate-300">
+        <p className="text-muted-foreground mt-1 text-sm">
           Opere Citas manuales y consulte la agenda de la Clínica.
         </p>
       </div>
@@ -163,355 +276,771 @@ export function ManualAppointmentsSection() {
       ) : isLoading ? (
         <PanaceaQueryLoading label="Cargando datos del Calendario" />
       ) : null}
-      <form className="grid gap-2 sm:grid-cols-2" onSubmit={submit}>
-        <label className="text-sm">
-          Paciente
-          <select
-            className={inputClass}
-            disabled={formData.data?.patients.length === 0}
-            name="patientId"
-            onChange={(event) => setPatientId(event.target.value)}
-            required
-            value={patientId}
-          >
-            <option value="">Seleccione un Paciente</option>
-            {formData.data?.patients.map((patient) => (
-              <option key={patient.id} value={patient.id}>
-                {patient.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          Oferta de servicio
-          <select
-            className={inputClass}
-            disabled={formData.data?.offers.length === 0}
-            name="serviceOfferId"
-            required
-          >
-            <option value="">Seleccione una Oferta</option>
-            {formData.data?.offers.map((offer) => (
-              <option key={offer.serviceOfferId} value={offer.serviceOfferId}>
-                {offer.doctorName} · {offer.serviceName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-sm sm:col-span-2">
-          <input
-            checked={sendConfirmation}
-            onChange={(event) => setSendConfirmation(event.target.checked)}
-            type="checkbox"
-          />
-          Enviar confirmación inmediata por WhatsApp
-        </label>
-        {sendConfirmation ? (
-          <label className="text-sm sm:col-span-2">
-            Contacto destinatario
-            <select
-              className={inputClass}
-              disabled={selectedPatient === undefined}
-              name="notificationRecipientContactId"
-              required
-            >
-              <option value="">Seleccione un Contacto vinculado</option>
-              {selectedPatient?.contacts.map((contact) => (
-                <option key={contact.id} value={contact.id}>
-                  {contact.name} · {contact.phoneE164}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        <label className="text-sm">
-          Inicio
-          <input
-            className={inputClass}
-            name="startsAt"
-            required
-            type="datetime-local"
-          />
-        </label>
-        <button
-          className={buttonClass}
-          disabled={
-            create.isPending ||
-            registerAdministrativeRecords.isPending ||
-            formData.data?.patients.length === 0 ||
-            formData.data?.offers.length === 0
-          }
-          type="submit"
-        >
-          {create.isPending ? "Validando…" : "Crear Cita manual"}
-        </button>
-      </form>
-      <div className="rounded border border-slate-800 p-3">
-        <button
-          className={secondaryButtonClass}
-          onClick={() => setRecordRegistrationOpen((open) => !open)}
-          type="button"
-        >
-          {recordRegistrationOpen
-            ? "Cerrar registro de Paciente"
-            : "Registrar Paciente nuevo"}
-        </button>
-        {recordRegistrationOpen ? (
-          <form
-            className="mt-3 grid gap-2 sm:grid-cols-2"
-            onSubmit={registerRecords}
-          >
+      <details className="border-border bg-card rounded-xl border p-4" open>
+        <summary className="focus-visible:ring-ring/30 cursor-pointer rounded-lg py-1 text-sm font-semibold outline-none focus-visible:ring-3">
+          Nueva Cita manual
+          <span className="text-muted-foreground ml-2 font-normal">
+            Registrar una atención desde Panacea
+          </span>
+        </summary>
+        <div className="mt-4 space-y-4">
+          <form className="grid gap-2 sm:grid-cols-2" onSubmit={submit}>
             <label className="text-sm">
-              Nombre del Contacto
-              <input className={inputClass} name="contactName" required />
+              Paciente
+              <NativeSelect
+                className={inputClass}
+                disabled={formData.data?.patients.length === 0}
+                name="patientId"
+                onChange={(event) => setPatientId(event.target.value)}
+                required
+                value={patientId}
+              >
+                <NativeSelectOption value="">
+                  Seleccione un Paciente
+                </NativeSelectOption>
+                {formData.data?.patients.map((patient) => (
+                  <NativeSelectOption key={patient.id} value={patient.id}>
+                    {patient.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
             </label>
             <label className="text-sm">
-              Teléfono E.164 del Contacto
-              <input
+              Oferta de servicio
+              <NativeSelect
                 className={inputClass}
-                name="phone"
-                placeholder="+50371234567"
+                disabled={formData.data?.offers.length === 0}
+                name="serviceOfferId"
                 required
-                type="tel"
+              >
+                <NativeSelectOption value="">
+                  Seleccione una Oferta
+                </NativeSelectOption>
+                {formData.data?.offers.map((offer) => (
+                  <NativeSelectOption
+                    key={offer.serviceOfferId}
+                    value={offer.serviceOfferId}
+                  >
+                    {offer.doctorName} · {offer.serviceName}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </label>
+            <label className="flex items-center gap-2 text-sm sm:col-span-2">
+              <input
+                checked={sendConfirmation}
+                onChange={(event) => setSendConfirmation(event.target.checked)}
+                type="checkbox"
               />
+              Enviar confirmación inmediata por WhatsApp
             </label>
+            {sendConfirmation ? (
+              <label className="text-sm sm:col-span-2">
+                Contacto destinatario
+                <NativeSelect
+                  className={inputClass}
+                  disabled={selectedPatient === undefined}
+                  name="notificationRecipientContactId"
+                  required
+                >
+                  <NativeSelectOption value="">
+                    Seleccione un Contacto vinculado
+                  </NativeSelectOption>
+                  {selectedPatient?.contacts.map((contact) => (
+                    <NativeSelectOption key={contact.id} value={contact.id}>
+                      {contact.name} · {contact.phoneE164}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </label>
+            ) : null}
             <label className="text-sm">
-              Nombre del Paciente
-              <input className={inputClass} name="patientName" required />
-            </label>
-            <label className="text-sm">
-              Fecha de nacimiento del Paciente
+              Inicio
               <input
                 className={inputClass}
-                name="birthDate"
+                name="startsAt"
                 required
-                type="date"
+                type="datetime-local"
               />
             </label>
             <button
               className={buttonClass}
-              disabled={registerAdministrativeRecords.isPending}
+              disabled={
+                create.isPending ||
+                registerAdministrativeRecords.isPending ||
+                formData.data?.patients.length === 0 ||
+                formData.data?.offers.length === 0
+              }
               type="submit"
             >
-              {registerAdministrativeRecords.isPending
-                ? "Registrando…"
-                : "Registrar Contacto y Paciente"}
+              {create.isPending ? "Validando…" : "Crear Cita manual"}
             </button>
           </form>
-        ) : null}
-      </div>
-      {recordRegistrationResult ? (
-        <p className="text-sm text-teal-300">{recordRegistrationResult}</p>
-      ) : null}
-      {formData.data?.patients.length === 0 ? (
-        <p className="text-sm text-amber-300">
-          Registre y vincule al menos un Contacto antes de crear la Cita.
-        </p>
-      ) : null}
-      {create.error || registerAdministrativeRecords.error ? (
-        <p className="text-sm text-rose-300">
-          {(create.error ?? registerAdministrativeRecords.error)?.message}
-        </p>
-      ) : null}
-      {outsideScheduleConfirmation ? (
-        <div className="space-y-2 rounded border border-amber-500/70 p-3 text-sm text-amber-100">
-          <p>
-            La Cita no cabe por completo en el Horario vigente. Confirme la
-            excepción para crearla sin modificar los demás controles de
-            capacidad.
-          </p>
-          <button
-            className={secondaryButtonClass}
-            disabled={create.isPending}
-            onClick={() =>
-              create.mutate({
-                ...outsideScheduleConfirmation,
-                outsideScheduleConfirmed: true,
-              })
-            }
-            type="button"
-          >
-            Confirmar Cita fuera de horario
-          </button>
-        </div>
-      ) : null}
-      {cancelledAppointments.data?.length ? (
-        <div className="space-y-2 rounded border border-slate-800 p-3 text-sm">
-          <h3 className="font-medium">Citas canceladas</h3>
-          <ul className="space-y-1">
-            {cancelledAppointments.data.map((appointment) => (
-              <li key={appointment.id}>
+          <div className="border-border rounded-lg border p-3">
+            <button
+              className={secondaryButtonClass}
+              onClick={() => setRecordRegistrationOpen((open) => !open)}
+              type="button"
+            >
+              {recordRegistrationOpen
+                ? "Cerrar registro de Paciente"
+                : "Registrar Paciente nuevo"}
+            </button>
+            {recordRegistrationOpen ? (
+              <form
+                className="mt-3 grid gap-2 sm:grid-cols-2"
+                onSubmit={registerRecords}
+              >
+                <label className="text-sm">
+                  Nombre del Contacto
+                  <input className={inputClass} name="contactName" required />
+                </label>
+                <label className="text-sm">
+                  Teléfono E.164 del Contacto
+                  <input
+                    className={inputClass}
+                    name="phone"
+                    placeholder="+50371234567"
+                    required
+                    type="tel"
+                  />
+                </label>
+                <label className="text-sm">
+                  Nombre del Paciente
+                  <input className={inputClass} name="patientName" required />
+                </label>
+                <label className="text-sm">
+                  Fecha de nacimiento del Paciente
+                  <input
+                    className={inputClass}
+                    name="birthDate"
+                    required
+                    type="date"
+                  />
+                </label>
                 <button
-                  className="text-left text-amber-300 underline-offset-2 hover:underline"
-                  onClick={() => setSelectedId(appointment.id)}
-                  type="button"
+                  className={buttonClass}
+                  disabled={registerAdministrativeRecords.isPending}
+                  type="submit"
                 >
-                  {formatClinicDate(appointment.startsAt)} ·{" "}
-                  {appointment.patient.name} · {appointment.service.name}
+                  {registerAdministrativeRecords.isPending
+                    ? "Registrando…"
+                    : "Registrar Contacto y Paciente"}
                 </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="text-sm">
-              Fecha
-              <input
-                className={inputClass}
-                onChange={(event) => setCalendarDate(event.target.value)}
-                type="date"
-                value={calendarDate}
-              />
-            </label>
-            <label className="text-sm">
-              Médico
-              <select
-                className={inputClass}
-                onChange={(event) => setDoctorId(event.target.value)}
-                value={doctorId}
-              >
-                <option value="">Todos los Médicos</option>
-                {doctors.map((doctor) => (
-                  <option key={doctor.id} value={doctor.id}>
-                    {doctor.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="flex gap-1">
+              </form>
+            ) : null}
+          </div>
+          {recordRegistrationResult ? (
+            <p
+              aria-live="polite"
+              className="text-primary text-sm"
+              role="status"
+            >
+              {recordRegistrationResult}
+            </p>
+          ) : null}
+          {formData.data?.patients.length === 0 ? (
+            <p className="text-sm text-amber-800">
+              Registre y vincule al menos un Contacto antes de crear la Cita.
+            </p>
+          ) : null}
+          {create.error || registerAdministrativeRecords.error ? (
+            <p className="text-destructive text-sm" role="alert">
+              {(create.error ?? registerAdministrativeRecords.error)?.message}
+            </p>
+          ) : null}
+          {outsideScheduleConfirmation ? (
+            <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p>
+                La Cita no cabe por completo en el Horario vigente. Confirme la
+                excepción para crearla sin modificar los demás controles de
+                capacidad.
+              </p>
               <button
-                className={
-                  view === "week" ? activeButtonClass : secondaryButtonClass
+                className={secondaryButtonClass}
+                disabled={create.isPending}
+                onClick={() =>
+                  create.mutate({
+                    ...outsideScheduleConfirmation,
+                    outsideScheduleConfirmed: true,
+                  })
                 }
-                onClick={() => setView("week")}
                 type="button"
               >
-                Semana
-              </button>
-              <button
-                className={
-                  view === "day" ? activeButtonClass : secondaryButtonClass
-                }
-                onClick={() => setView("day")}
-                type="button"
-              >
-                Día
+                Confirmar Cita fuera de horario
               </button>
             </div>
+          ) : null}
+        </div>
+      </details>
+      <section aria-labelledby="agenda-heading" className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-primary text-xs font-semibold tracking-[0.14em] uppercase">
+              Operación diaria de agenda
+            </p>
+            <h3 className="mt-1 text-xl font-semibold" id="agenda-heading">
+              Agenda de la Clínica
+            </h3>
+            <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
+              Citas activas y Bloqueos posicionados por el período que ocupa
+              cada Médico.
+            </p>
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border p-1">
+            <Button
+              aria-label="Ir al período anterior"
+              onClick={() =>
+                updateCalendarUrl({
+                  date: shiftCalendarDate(calendarDate, view, -1),
+                })
+              }
+              size="icon-lg"
+              type="button"
+              variant="ghost"
+            >
+              <ChevronLeft aria-hidden="true" />
+            </Button>
+            <span className="min-w-44 px-2 text-center text-sm font-medium tabular-nums">
+              {formatCalendarRange(visibleDates)}
+            </span>
+            <Button
+              aria-label="Ir al período siguiente"
+              onClick={() =>
+                updateCalendarUrl({
+                  date: shiftCalendarDate(calendarDate, view, 1),
+                })
+              }
+              size="icon-lg"
+              type="button"
+              variant="ghost"
+            >
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-sm font-medium" htmlFor="calendar-date">
+            Fecha
+            <input
+              className={inputClass}
+              id="calendar-date"
+              onChange={(event) =>
+                updateCalendarUrl({ date: event.target.value })
+              }
+              type="date"
+              value={calendarDate}
+            />
+          </label>
+          <div className="space-y-1 text-sm font-medium">
+            <span className="block" id="calendar-doctor-label">
+              Médico
+            </span>
+            <NativeSelect
+              aria-labelledby="calendar-doctor-label"
+              onChange={(event) =>
+                updateCalendarUrl({ doctorId: event.target.value })
+              }
+              value={doctorId}
+            >
+              <NativeSelectOption value="">
+                Todos los Médicos
+              </NativeSelectOption>
+              {doctors.map((doctor) => (
+                <NativeSelectOption key={doctor.id} value={doctor.id}>
+                  {doctor.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
           </div>
           <div
-            className={
-              view === "week"
-                ? "grid gap-2 sm:grid-cols-2 xl:grid-cols-7"
-                : "grid gap-2"
-            }
+            aria-label="Vista del Calendario"
+            className="border-border flex rounded-lg border p-1"
+            role="group"
           >
-            {visibleDates.map((date) => (
-              <div
-                className="min-h-32 rounded border border-slate-800 p-2"
-                key={date}
+            {(["week", "day"] as const).map((option) => (
+              <button
+                aria-pressed={view === option}
+                className={view === option ? activeTabClass : inactiveTabClass}
+                key={option}
+                onClick={() => updateCalendarUrl({ view: option })}
+                type="button"
               >
-                <h3 className="mb-2 text-sm font-medium">{formatDay(date)}</h3>
-                <ul className="space-y-2">
-                  {calendarEntries
-                    .filter((entry) => localDate(entry.startsAt) === date)
-                    .map((entry) =>
-                      isCalendarBlock(entry) ? (
-                        <li key={`block-${entry.id}`}>
-                          <button
-                            className="w-full rounded border border-amber-800 p-2 text-left text-sm hover:border-amber-300"
-                            onClick={() => setSelectedId(entry.id)}
-                            type="button"
-                          >
-                            <span className="block font-medium">
-                              {formatTime(entry.startsAt)} · Bloqueo
-                            </span>
-                            {entry.privateLabel ? (
-                              <span className="block text-amber-200">
-                                {entry.privateLabel}
-                              </span>
-                            ) : null}
-                            {doctorId === "" ? (
-                              <span className="block text-slate-400">
-                                {entry.doctor.name}
-                              </span>
-                            ) : null}
-                          </button>
-                        </li>
-                      ) : (
-                        <li key={`appointment-${entry.id}`}>
-                          <button
-                            className="w-full rounded border border-teal-800 p-2 text-left text-sm hover:border-teal-300"
-                            onClick={() => setSelectedId(entry.id)}
-                            type="button"
-                          >
-                            <span className="block font-medium">
-                              {formatTime(entry.startsAt)} ·{" "}
-                              {entry.patient.name}
-                            </span>
-                            <span className="block text-slate-300">
-                              {entry.service.name}
-                            </span>
-                            {entry.outsideSchedule ? (
-                              <span className="block text-amber-300">
-                                Fuera de horario
-                              </span>
-                            ) : null}
-                            {doctorId === "" ? (
-                              <span className="block text-slate-400">
-                                {entry.doctor.name}
-                              </span>
-                            ) : null}
-                          </button>
-                        </li>
-                      ),
-                    )}
-                </ul>
-              </div>
+                {option === "week" ? "Semana" : "Día"}
+              </button>
             ))}
           </div>
         </div>
-        {isCalendarBlock(selected) ? (
-          <AvailabilityBlockDetail block={selected} />
-        ) : (
-          <AppointmentDetail
-            appointment={selected}
-            cancelError={cancel.error?.message}
-            cancelling={cancel.isPending}
-            onCancel={(input) => {
-              if (selected !== undefined) {
-                cancel.mutate({
-                  appointmentId: selected.id,
-                  ...input,
-                });
-              }
-            }}
-          />
-        )}
-      </div>
-      {!isLoading && !queryError && calendarEntries.length === 0 ? (
-        <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
-          No hay Citas ni Bloqueos para este período.
-        </p>
-      ) : null}
+
+        {!isLoading && !queryError ? (
+          <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-4">
+            <div className="min-w-0 space-y-4">
+              {calendarEntries.length > 0 ? (
+                <>
+                  <CalendarTimeline
+                    dates={visibleDates}
+                    entries={calendarEntries}
+                    onSelect={(id) =>
+                      updateCalendarUrl({ selectedId: id }, "push")
+                    }
+                    showDoctor={doctorId === ""}
+                  />
+                  <CalendarAccessibleList
+                    entries={calendarEntries}
+                    onSelect={(id) =>
+                      updateCalendarUrl({ selectedId: id }, "push")
+                    }
+                    showDoctor={doctorId === ""}
+                  />
+                </>
+              ) : (
+                <div className="border-border bg-muted/30 rounded-xl border border-dashed p-8 text-center">
+                  <CalendarDays
+                    aria-hidden="true"
+                    className="text-muted-foreground mx-auto size-8"
+                  />
+                  <p className="mt-3 font-medium">
+                    No hay Citas activas ni Bloqueos en este período.
+                  </p>
+                  <p className="text-muted-foreground mt-1 text-sm">
+                    Pruebe otra fecha o quite el filtro de Médico.
+                  </p>
+                </div>
+              )}
+              <CancelledAppointmentsList
+                appointments={cancelledAppointments.data ?? []}
+                onSelect={(id) => updateCalendarUrl({ selectedId: id }, "push")}
+              />
+            </div>
+            <CalendarSelection
+              appointment={isCalendarBlock(selected) ? undefined : selected}
+              block={isCalendarBlock(selected) ? selected : undefined}
+              cancelError={cancel.error?.message}
+              cancelling={cancel.isPending}
+              onClose={() => updateCalendarUrl({ selectedId: undefined })}
+              onCancel={(input) => {
+                if (selected !== undefined && !isCalendarBlock(selected)) {
+                  cancel.mutate({ appointmentId: selected.id, ...input });
+                }
+              }}
+            />
+          </div>
+        ) : null}
+      </section>
     </section>
   );
 }
 
+function CalendarTimeline({
+  dates,
+  entries,
+  onSelect,
+  showDoctor,
+}: {
+  dates: readonly string[];
+  entries: readonly CalendarEntry[];
+  onSelect: (id: string) => void;
+  showDoctor: boolean;
+}) {
+  const bounds = calendarGridBounds(entries);
+  const segments = calendarSegments(entries, dates, bounds);
+  const hours = timelineHours(bounds);
+  const gridHeight = Math.max(
+    480,
+    ((bounds.endMinute - bounds.startMinute) / 60) * 64,
+  );
+  const columns = `repeat(${dates.length}, minmax(${dates.length === 1 ? "16rem" : "9rem"}, 1fr))`;
+
+  return (
+    <Card
+      className="overflow-hidden"
+      data-calendar-view={dates.length === 1 ? "day" : "week"}
+      size="sm"
+    >
+      <CardHeader className="bg-muted/30 border-b py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle>Cuadrícula temporal</CardTitle>
+            <CardDescription>
+              El período sombreado incluye duración y buffer de la Oferta
+              cotizada.
+            </CardDescription>
+          </div>
+          <div aria-label="Leyenda del Calendario" className="flex gap-2">
+            <Badge>Cita</Badge>
+            <Badge variant="warning">Bloqueo</Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto" tabIndex={-1}>
+          <div
+            className="min-w-[44rem]"
+            style={{ minWidth: dates.length === 1 ? "44rem" : undefined }}
+          >
+            <div
+              className="grid border-b"
+              style={{ gridTemplateColumns: `4.5rem ${columns}` }}
+            >
+              <div className="text-muted-foreground px-2 py-3 text-[0.7rem] font-semibold tracking-wide uppercase">
+                Hora
+              </div>
+              {dates.map((date) => (
+                <div className="border-l px-3 py-3" key={date}>
+                  <p className="text-sm font-semibold">{formatDay(date)}</p>
+                  <p className="text-muted-foreground text-xs">
+                    {formatCalendarDate(date)}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div
+              className="grid"
+              style={{ gridTemplateColumns: `4.5rem minmax(0, 1fr)` }}
+            >
+              <div
+                className="text-muted-foreground relative text-[0.7rem] tabular-nums"
+                style={{ height: gridHeight }}
+              >
+                {hours.map((minute) => (
+                  <span
+                    className="absolute right-2 -translate-y-1/2"
+                    key={minute}
+                    style={{
+                      top: `${((minute - bounds.startMinute) / (bounds.endMinute - bounds.startMinute)) * 100}%`,
+                    }}
+                  >
+                    {formatGridTime(minute)}
+                  </span>
+                ))}
+              </div>
+              <div className="relative" style={{ height: gridHeight }}>
+                <div
+                  className="pointer-events-none absolute inset-0 grid"
+                  style={{ gridTemplateColumns: columns }}
+                >
+                  {dates.map((date) => (
+                    <div className="border-l" key={date} />
+                  ))}
+                </div>
+                {hours.map((minute) => (
+                  <div
+                    aria-hidden="true"
+                    className="border-border/70 pointer-events-none absolute inset-x-0 border-t"
+                    key={minute}
+                    style={{
+                      top: `${((minute - bounds.startMinute) / (bounds.endMinute - bounds.startMinute)) * 100}%`,
+                    }}
+                  />
+                ))}
+                <div
+                  className="absolute inset-0 grid"
+                  style={{ gridTemplateColumns: columns }}
+                >
+                  {dates.map((date) => (
+                    <div className="relative" key={date}>
+                      {segments
+                        .filter((segment) => segment.date === date)
+                        .map((segment) => (
+                          <CalendarEntryCard
+                            key={`${segment.entry.id}-${segment.date}`}
+                            onSelect={onSelect}
+                            segment={segment}
+                            showDoctor={showDoctor}
+                          />
+                        ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CalendarEntryCard({
+  onSelect,
+  segment,
+  showDoctor,
+}: {
+  onSelect: (id: string) => void;
+  segment: CalendarEntrySegment<CalendarEntry>;
+  showDoctor: boolean;
+}) {
+  const entry = segment.entry;
+  const block = isCalendarBlock(entry);
+  const title = block
+    ? `Bloqueo${entry.privateLabel ? `: ${entry.privateLabel}` : ""}`
+    : `Cita de ${entry.patient.name}: ${entry.service.name}`;
+  const period = `${formatTime(entry.startsAt)} a ${formatTime(calendarEntryEnd(entry))}`;
+  const description = [
+    period,
+    title,
+    showDoctor ? entry.doctor.name : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <button
+      aria-label={description}
+      className={`focus-visible:ring-ring/40 absolute min-h-11 overflow-hidden rounded-lg border p-2 text-left text-xs shadow-sm transition-[background-color,border-color,box-shadow] outline-none focus-visible:ring-3 ${
+        block
+          ? "border-amber-300 bg-amber-50 text-amber-950 hover:border-amber-500"
+          : "border-primary/30 bg-primary/10 text-foreground hover:border-primary"
+      }`}
+      onClick={() => onSelect(entry.id)}
+      style={{
+        height: `${Math.max(segment.heightPercent, 4)}%`,
+        left: `calc(${(segment.lane / segment.laneCount) * 100}% + 0.25rem)`,
+        top: `${segment.topPercent}%`,
+        width: `calc(${100 / segment.laneCount}% - 0.5rem)`,
+      }}
+      type="button"
+    >
+      <span className="block truncate font-semibold">{title}</span>
+      <span className="text-muted-foreground block truncate tabular-nums">
+        {period}
+      </span>
+      {showDoctor ? (
+        <span className="text-muted-foreground block truncate">
+          {entry.doctor.name}
+        </span>
+      ) : null}
+      {!block && entry.outsideSchedule ? (
+        <span className="block truncate font-medium text-amber-800">
+          Fuera de horario
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function CalendarAccessibleList({
+  entries,
+  onSelect,
+  showDoctor,
+}: {
+  entries: readonly CalendarEntry[];
+  onSelect: (id: string) => void;
+  showDoctor: boolean;
+}) {
+  return (
+    <Card data-calendar-list="true" size="sm">
+      <CardHeader className="border-b py-4">
+        <CardTitle>Lista accesible de la Agenda</CardTitle>
+        <CardDescription>
+          La misma información está disponible como lista semántica para teclado
+          y tecnologías asistivas.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ol aria-label="Citas y Bloqueos del período" className="divide-y">
+          {entries.map((entry) => {
+            const block = isCalendarBlock(entry);
+            const title = block
+              ? `Bloqueo${entry.privateLabel ? `: ${entry.privateLabel}` : ""}`
+              : `${entry.patient.name} · ${entry.service.name}`;
+            return (
+              <li key={`${block ? "block" : "appointment"}-${entry.id}`}>
+                <button
+                  aria-label={`${formatClinicDate(entry.startsAt)} a ${formatTime(calendarEntryEnd(entry))} · ${title}${showDoctor ? ` · ${entry.doctor.name}` : ""}`}
+                  className="hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-ring/40 flex min-h-16 w-full items-center justify-between gap-4 px-4 py-3 text-left transition-[background-color] outline-none focus-visible:ring-3"
+                  onClick={() => onSelect(entry.id)}
+                  type="button"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {title}
+                    </span>
+                    <span className="text-muted-foreground block truncate text-xs">
+                      {showDoctor ? `${entry.doctor.name} · ` : ""}
+                      {block ? "Bloqueo" : "Cita"}
+                    </span>
+                    {!block && entry.outsideSchedule ? (
+                      <span className="block truncate text-xs font-medium text-amber-800">
+                        Fuera de horario
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="text-muted-foreground shrink-0 text-right text-xs tabular-nums">
+                    <span className="block">
+                      {formatClinicDate(entry.startsAt)}
+                    </span>
+                    <span className="block">
+                      hasta {formatTime(calendarEntryEnd(entry))}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CancelledAppointmentsList({
+  appointments,
+  onSelect,
+}: {
+  appointments: readonly CalendarAppointment[];
+  onSelect: (id: string) => void;
+}) {
+  if (appointments.length === 0) return null;
+
+  return (
+    <section
+      aria-labelledby="cancelled-appointments-heading"
+      className="border-border bg-card overflow-hidden rounded-xl border shadow-sm"
+    >
+      <div className="border-border border-b px-4 py-4">
+        <h4
+          className="text-base font-medium"
+          id="cancelled-appointments-heading"
+        >
+          Citas canceladas
+        </h4>
+        <p className="text-muted-foreground mt-1 text-sm">
+          No ocupan la cuadrícula, pero conservan su ficha y sus Eventos.
+        </p>
+      </div>
+      <ul className="divide-y" aria-label="Citas canceladas">
+        {appointments.map((appointment) => (
+          <li key={appointment.id}>
+            <button
+              className="hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-ring/40 flex min-h-16 w-full items-center justify-between gap-4 px-4 py-3 text-left transition-[background-color] outline-none focus-visible:ring-3"
+              onClick={() => onSelect(appointment.id)}
+              type="button"
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">
+                  {appointment.patient.name} · {appointment.service.name}
+                </span>
+                <span className="text-muted-foreground block truncate text-xs">
+                  {appointment.doctor.name} · Cancelada
+                </span>
+              </span>
+              <span className="text-muted-foreground shrink-0 text-right text-xs tabular-nums">
+                {formatClinicDate(appointment.startsAt)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function CalendarSelection({
+  appointment,
+  block,
+  cancelError,
+  cancelling,
+  onCancel,
+  onClose,
+}: {
+  appointment: CalendarAppointment | undefined;
+  block: CalendarBlock | undefined;
+  cancelError: string | undefined;
+  cancelling: boolean;
+  onCancel: (input: {
+    notificationRecipientContactId?: string;
+    reason?: string;
+  }) => void;
+  onClose: () => void;
+}) {
+  const selected = appointment ?? block;
+  const isMobile = useIsMobile();
+  const detail = block ? (
+    <AvailabilityBlockDetail block={block} />
+  ) : (
+    <AppointmentDetail
+      appointment={appointment}
+      cancelError={cancelError}
+      cancelling={cancelling}
+      onCancel={onCancel}
+    />
+  );
+  return (
+    <>
+      <div className="hidden lg:block">
+        {selected ? (
+          <div className="border-border bg-card rounded-xl border p-1 shadow-sm">
+            {detail}
+            <div className="border-border mt-4 border-t px-4 py-3">
+              <Button onClick={onClose} type="button" variant="ghost">
+                Cerrar detalle
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <aside className="border-border text-muted-foreground rounded-xl border border-dashed p-5 text-sm">
+            Seleccione una Cita o Bloqueo para conservar su detalle junto a la
+            Agenda.
+          </aside>
+        )}
+      </div>
+      <Sheet
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+        open={isMobile && selected !== undefined}
+      >
+        <SheetContent
+          className="w-[min(100vw,32rem)] overflow-y-auto p-0"
+          side="right"
+        >
+          <SheetHeader className="border-b">
+            <SheetTitle>
+              {block ? "Detalle del Bloqueo" : "Detalle de la Cita"}
+            </SheetTitle>
+            <SheetDescription>
+              Revise la información sin abandonar el contexto del Calendario.
+            </SheetDescription>
+          </SheetHeader>
+          {selected ? <div className="p-4">{detail}</div> : null}
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+}
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 1023px)");
+    const update = () => setIsMobile(mediaQuery.matches);
+    update();
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
+  }, []);
+
+  return isMobile;
+}
+
 function AvailabilityBlockDetail({ block }: { block: CalendarBlock }) {
   return (
-    <aside className="space-y-3 rounded border border-amber-800 p-3 text-sm">
-      <h3 className="font-semibold">Detalle del Bloqueo</h3>
+    <aside aria-label="Detalle del Bloqueo" className="space-y-4 p-4 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-semibold">Detalle del Bloqueo</h3>
+        <Badge variant="warning">Bloqueo</Badge>
+      </div>
       <dl className="space-y-1">
         <Detail label="Médico" value={block.doctor.name} />
         <Detail
           label="Horario"
           value={`${formatClinicDate(block.startsAt)} a ${formatTime(block.endsAt)}`}
         />
-        <Detail label="Etiqueta privada" value={block.privateLabel ?? ""} />
+        <Detail
+          label="Etiqueta privada"
+          value={block.privateLabel ?? "Sin etiqueta"}
+        />
       </dl>
     </aside>
   );
@@ -531,18 +1060,22 @@ function AppointmentDetail({
     reason?: string;
   }) => void;
 }) {
+  const [pendingCancellation, setPendingCancellation] = useState<{
+    notificationRecipientContactId?: string;
+    reason?: string;
+  }>();
   const [sendCancellation, setSendCancellation] = useState(false);
   if (appointment === undefined) {
     return (
-      <aside className="rounded border border-slate-800 p-3 text-sm text-slate-400">
+      <aside className="border-border text-muted-foreground rounded border p-3 text-sm">
         Seleccione una Cita para ver su detalle.
       </aside>
     );
   }
-  function cancelAppointment(event: FormEvent<HTMLFormElement>) {
+  function requestCancellation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    onCancel({
+    setPendingCancellation({
       notificationRecipientContactId: sendCancellation
         ? formValue(data, "notificationRecipientContactId")
         : undefined,
@@ -554,26 +1087,36 @@ function AppointmentDetail({
     appointment.status === "confirmed" &&
     appointment.startsAt > new Date();
   return (
-    <aside className="space-y-3 rounded border border-slate-700 p-3 text-sm">
-      <h3 className="font-semibold">Detalle de la Cita</h3>
+    <aside className="border-border bg-card space-y-4 rounded border p-4 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-semibold">Detalle de la Cita</h3>
+        <Badge
+          variant={appointment.status === "cancelled" ? "warning" : "default"}
+        >
+          {appointment.status === "cancelled" ? "Cancelada" : "Confirmada"}
+        </Badge>
+      </div>
       <dl className="space-y-1">
         <Detail label="Paciente" value={appointment.patient.name} />
-        <div className="flex gap-2">
-          <a
-            className="text-teal-300 underline-offset-2 hover:underline"
-            href={`/pacientes#patient-${appointment.patient.id}`}
-          >
-            Abrir ficha del Paciente
-          </a>
-          {appointment.contacts.map((contact) => (
+        <div>
+          <dt className="text-muted-foreground">Fichas relacionadas</dt>
+          <dd className="flex flex-wrap gap-2">
             <a
-              className="text-teal-300 underline-offset-2 hover:underline"
-              href={`/pacientes#contact-${contact.id}`}
-              key={contact.id}
+              className="text-primary underline-offset-2 hover:underline"
+              href={`/pacientes#patient-${appointment.patient.id}`}
             >
-              Abrir ficha del Contacto
+              Abrir ficha del Paciente
             </a>
-          ))}
+            {appointment.contacts.map((contact) => (
+              <a
+                className="text-primary underline-offset-2 hover:underline"
+                href={`/pacientes#contact-${contact.id}`}
+                key={contact.id}
+              >
+                Abrir ficha del Contacto
+              </a>
+            ))}
+          </dd>
         </div>
         <Detail
           label="Contacto"
@@ -587,12 +1130,25 @@ function AppointmentDetail({
           label="Horario"
           value={`${formatClinicDate(appointment.startsAt)} a ${formatTime(appointment.endsAt)}`}
         />
-        <Detail label="Precio cotizado" value={`US$ ${appointment.priceUsd}`} />
         <Detail
-          label="Estado"
+          label="Período ocupado"
+          value={`${formatClinicDate(appointment.startsAt)} a ${formatTime(calendarEntryEnd(appointment))}`}
+        />
+        <Detail
+          label="Precio cotizado"
           value={
-            appointment.status === "cancelled" ? "Cancelada" : "Confirmada"
+            appointment.priceUsd === null
+              ? "Sin precio cotizado"
+              : `US$ ${appointment.priceUsd}`
           }
+        />
+        <Detail
+          label="Duración cotizada"
+          value={formatMinutes(appointment.durationMinutes)}
+        />
+        <Detail
+          label="Buffer cotizado"
+          value={formatMinutes(appointment.bufferMinutes)}
         />
         {appointment.outsideSchedule ? (
           <Detail label="Capacidad" value="Cita fuera de horario" />
@@ -600,7 +1156,7 @@ function AppointmentDetail({
       </dl>
       <div>
         <h4 className="font-medium">Eventos de Cita</h4>
-        <ul className="mt-1 space-y-1 text-slate-300">
+        <ul className="text-muted-foreground mt-1 space-y-1">
           {appointment.events.map((event) => (
             <li key={`${event.type}-${event.occurredAt.toString()}`}>
               {appointmentEventLabel(event.type)}
@@ -614,7 +1170,7 @@ function AppointmentDetail({
         </ul>
       </div>
       {canCancel ? (
-        <form className="grid gap-2" onSubmit={cancelAppointment}>
+        <form className="grid gap-2" onSubmit={requestCancellation}>
           <label className="text-sm">
             Razón de cancelación (opcional)
             <input className={inputClass} maxLength={500} name="reason" />
@@ -630,35 +1186,72 @@ function AppointmentDetail({
           {sendCancellation ? (
             <label className="text-sm">
               Contacto destinatario
-              <select
+              <NativeSelect
                 className={inputClass}
                 name="notificationRecipientContactId"
                 required
               >
-                <option value="">Seleccione un Contacto vinculado</option>
+                <NativeSelectOption value="">
+                  Seleccione un Contacto vinculado
+                </NativeSelectOption>
                 {appointment.contacts.map((contact) => (
-                  <option key={contact.id} value={contact.id}>
+                  <NativeSelectOption key={contact.id} value={contact.id}>
                     {contact.name} · {contact.phoneE164}
-                  </option>
+                  </NativeSelectOption>
                 ))}
-              </select>
+              </NativeSelect>
             </label>
           ) : null}
-          <button
-            className="w-fit rounded bg-rose-300 px-3 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+          <Button
+            className="w-fit"
             disabled={cancelling}
+            size="lg"
             type="submit"
+            variant="destructive"
           >
-            {cancelling ? "Cancelando…" : "Cancelar Cita"}
-          </button>
+            Cancelar Cita
+          </Button>
         </form>
       ) : null}
       {appointment.status === "confirmed" && !canCancel ? (
-        <p className="text-slate-400">
+        <p className="text-muted-foreground">
           Esta Cita ya inició o pasó y no puede cancelarse.
         </p>
       ) : null}
-      {cancelError ? <p className="text-rose-300">{cancelError}</p> : null}
+      {cancelError ? (
+        <p className="text-destructive" role="alert">
+          {cancelError}
+        </p>
+      ) : null}
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!open) setPendingCancellation(undefined);
+        }}
+        open={pendingCancellation !== undefined}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>¿Cancelar esta Cita?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Se cancelará la Cita de {appointment.patient.name} para{" "}
+            {appointment.service.name}. Dejará de ocupar la Agenda, pero su
+            ficha y sus Eventos se conservarán para consulta.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Volver</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={cancelling}
+              onClick={() => {
+                if (pendingCancellation === undefined) return;
+                const input = pendingCancellation;
+                setPendingCancellation(undefined);
+                onCancel(input);
+              }}
+            >
+              {cancelling ? "Cancelando…" : "Confirmar cancelación"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </aside>
   );
 }
@@ -689,42 +1282,64 @@ function appointmentEventLabel(type: AppointmentEventType) {
 function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-slate-400">{label}</dt>
+      <dt className="text-muted-foreground">{label}</dt>
       <dd>{value || "Sin Contacto vinculado"}</dd>
     </div>
   );
 }
 
-function calendarWeek(date: string) {
-  const value = new Date(`${date}T00:00:00.000Z`);
-  value.setUTCDate(value.getUTCDate() - value.getUTCDay());
-  return Array.from({ length: 7 }, (_, index) => {
-    const day = new Date(value);
-    day.setUTCDate(day.getUTCDate() + index);
-    return day.toISOString().slice(0, 10);
-  });
+function parseCalendarView(value: string | null): CalendarView {
+  return value === "day" ? "day" : "week";
 }
 
-function calendarPeriodFor(dates: string[]) {
+function setCalendarParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | undefined,
+  defaultValue: string,
+) {
+  if (value === undefined || value === defaultValue) {
+    params.delete(key);
+  } else {
+    params.set(key, value);
+  }
+}
+
+function shiftCalendarDate(date: string, view: CalendarView, amount: number) {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + amount * (view === "week" ? 7 : 1));
+  return value.toISOString().slice(0, 10);
+}
+
+function formatCalendarRange(dates: readonly string[]) {
   const firstDate = dates[0];
   const lastDate = dates.at(-1);
-  if (firstDate === undefined || lastDate === undefined) {
-    throw new Error("El Calendario requiere al menos un día visible");
-  }
-  return {
-    from: clinicMidnight(firstDate),
-    to: clinicMidnight(nextLocalDate(lastDate)),
-  };
+  if (firstDate === undefined || lastDate === undefined) return "Sin fechas";
+  if (firstDate === lastDate) return formatCalendarDate(firstDate);
+  return `${formatCalendarDate(firstDate)} — ${formatCalendarDate(lastDate)}`;
 }
 
-function clinicMidnight(date: string) {
-  return new Date(`${date}T00:00:00${CLINIC_UTC_OFFSET}`);
+function formatCalendarDate(value: string) {
+  return new Intl.DateTimeFormat("es-SV", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: CLINIC_TIMEZONE,
+  }).format(new Date(`${value}T12:00:00${CLINIC_UTC_OFFSET}`));
 }
 
-function nextLocalDate(date: string) {
-  const value = new Date(`${date}T00:00:00.000Z`);
-  value.setUTCDate(value.getUTCDate() + 1);
-  return value.toISOString().slice(0, 10);
+function timelineHours(bounds: { endMinute: number; startMinute: number }) {
+  return Array.from(
+    { length: Math.floor((bounds.endMinute - bounds.startMinute) / 60) + 1 },
+    (_, index) => bounds.startMinute + index * 60,
+  );
+}
+
+function formatGridTime(minute: number) {
+  const hour = Math.floor(minute / 60) % 24;
+  const period = hour < 12 ? "a. m." : "p. m.";
+  const twelveHour = hour % 12 || 12;
+  return `${twelveHour}:${String(minute % 60).padStart(2, "0")} ${period}`;
 }
 
 function isCalendarBlock(
@@ -762,6 +1377,11 @@ function formatTime(value: Date | string) {
   }).format(new Date(value));
 }
 
+function formatMinutes(value: number | null) {
+  if (value === null) return "Sin dato";
+  return `${value} min`;
+}
+
 function localDate(value: Date | string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     day: "2-digit",
@@ -779,10 +1399,12 @@ function today() {
 }
 
 const inputClass =
-  "mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2";
+  "border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:ring-ring/30 mt-1 min-h-10 w-full rounded border px-3 py-2 outline-none focus-visible:ring-3";
 const buttonClass =
-  "w-fit self-end rounded bg-teal-300 px-4 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50";
-const activeButtonClass =
-  "rounded bg-teal-300 px-3 py-2 text-sm font-medium text-slate-950";
+  "bg-primary text-primary-foreground hover:bg-primary/80 focus-visible:ring-ring/30 min-h-11 w-fit self-end rounded px-4 py-2 font-medium outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButtonClass =
-  "rounded border border-slate-600 px-3 py-2 text-sm";
+  "border-border hover:bg-muted focus-visible:ring-ring/30 min-h-11 rounded border px-3 py-2 text-sm outline-none focus-visible:ring-3";
+const activeTabClass =
+  "focus-visible:ring-ring/30 focus-visible:ring-3 focus-visible:outline-none min-h-11 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground";
+const inactiveTabClass =
+  "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/30 focus-visible:ring-3 focus-visible:outline-none min-h-11 rounded-md px-3 py-2 text-sm font-medium";

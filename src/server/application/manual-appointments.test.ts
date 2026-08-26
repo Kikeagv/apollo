@@ -4,6 +4,7 @@ import {
   cancelManualAppointment,
   createManualAppointment,
   listPanaceaCalendar,
+  listPanaceaCalendarDoctors,
   listCancelledManualAppointments,
   listManualAppointmentFormData,
   listManualAppointments,
@@ -276,6 +277,21 @@ describe("consultar la Agenda", () => {
 });
 
 describe("consultar el Calendario de Panacea", () => {
+  it("consulta los Médicos visibles para mantener el mismo filtro en semana y día", async () => {
+    const input = { clinicId: "clinic-1", identityId: "operator-1" };
+    const doctors = [
+      { id: "doctor-1", name: "Dra. Sol" },
+      { id: "doctor-2", name: "Dr. Luis" },
+    ];
+    const listCalendarDoctors = vi.fn().mockResolvedValue(doctors);
+
+    await expect(
+      listPanaceaCalendarDoctors(input, { listCalendarDoctors }),
+    ).resolves.toEqual(doctors);
+
+    expect(listCalendarDoctors).toHaveBeenCalledWith(input);
+  });
+
   it("pide al almacén Citas activas y Bloqueos que intersectan el período y el Médico elegido", async () => {
     const input = {
       clinicId: "clinic-1",
