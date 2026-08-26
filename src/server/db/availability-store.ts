@@ -254,10 +254,29 @@ export async function listAvailabilityConfiguration(input: {
   identityId: string;
 }) {
   return inClinicTransaction(input, async (transaction) => {
+    const membership = await transaction.query.clinicUsers.findFirst({
+      columns: { id: true, role: true },
+      where: and(
+        eq(clinicUsers.clinicId, input.clinicId),
+        eq(clinicUsers.identityId, input.identityId),
+        eq(clinicUsers.active, true),
+      ),
+    });
+    if (membership === undefined || membership.role === "secretary") {
+      return undefined;
+    }
+
+    const doctorWhere =
+      membership.role === "owner"
+        ? eq(doctors.clinicId, input.clinicId)
+        : and(
+            eq(doctors.clinicId, input.clinicId),
+            eq(doctors.clinicUserId, membership.id),
+          );
     const managedDoctors = await transaction
       .select({ id: doctors.id, publicName: doctors.publicName })
       .from(doctors)
-      .where(eq(doctors.clinicId, input.clinicId));
+      .where(doctorWhere);
     const doctorIds = managedDoctors.map((doctor) => doctor.id);
     if (doctorIds.length === 0)
       return { blocks: [], doctors: [], schedules: [] };

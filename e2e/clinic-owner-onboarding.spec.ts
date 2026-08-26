@@ -22,6 +22,7 @@ import {
   appointments,
   clinics,
   configurationAuditEvents,
+  clinicSupportSessions,
   doctors,
   identityAuditEvents,
   services,
@@ -36,6 +37,8 @@ import { drizzleSyntheticClinicRegistration } from "../src/server/db/synthetic-c
 
 const e2eOtp = "246810";
 const password = "Contraseña-segura-E2E";
+
+test.setTimeout(60_000);
 
 test("el médico propietario activa, verifica su navegador y abre Panacea", async ({
   page,
@@ -74,18 +77,86 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await page
       .getByRole("button", { name: "Verificar y abrir Praxia" })
       .click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/calendario$/);
     await expect(page.getByText(fixture.clinicName)).toBeVisible();
-    await expect(page.getByText("Esta es su área de trabajo.")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Calendario" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Pacientes", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Pendientes", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Configuración", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Fichas administrativas" }),
+    ).not.toBeVisible();
+    await expect(page.getByText("Médico propietario")).toBeVisible();
+    await expect(page.getByLabel("Sesión de clínica activa")).toBeVisible();
+    await expectNoAccessibilityViolations(page, "[data-sidebar=sidebar]");
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
+    await waitForPanaceaInteractivity(page);
+
+    await page.getByRole("link", { name: "Pacientes", exact: true }).click();
+    await expect(page).toHaveURL(/\/pacientes$/);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Pacientes" }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Fichas administrativas" }),
     ).toBeVisible();
-    await expectNoAccessibilityViolations(
-      page,
-      'section[aria-labelledby="administrative-records-title"]',
-    );
-    await waitForPanaceaInteractivity(page);
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
 
+    await page.getByRole("link", { name: "Pendientes", exact: true }).click();
+    await expect(page).toHaveURL(/\/pendientes$/);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Pendientes" }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
+
+    await page
+      .getByRole("link", { name: "Configuración", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/configuracion$/);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Configuración" }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
+
+    await page.getByRole("link", { name: "Calendario", exact: true }).click();
+    await expect(page).toHaveURL(/\/calendario$/);
+    await page.getByRole("button", { name: "Colapsar navegación" }).click();
+    await expect(
+      page.locator('[data-sidebar-state="collapsed"]'),
+    ).toBeVisible();
+    await expect(page.locator('a[title="Pacientes"]')).toBeVisible();
+    await page.getByRole("button", { name: "Expandir navegación" }).click();
+
+    await page.setViewportSize({ height: 844, width: 390 });
+    await expect(
+      page.getByRole("button", { name: "Abrir navegación" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Abrir navegación" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(
+      page.getByRole("dialog").getByRole("link", {
+        name: "Configuración",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(page, '[role="dialog"]');
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Abrir navegación" }),
+    ).toBeFocused();
+    await page.setViewportSize({ height: 720, width: 1280 });
+
+    await page.goto("/technical/comprobacion-clinica");
+    await waitForPanaceaInteractivity(page);
     await page
       .getByRole("button", { name: "Registrar acción sintética" })
       .click();
@@ -105,7 +176,7 @@ async function expectNoAccessibilityViolations(page: Page, selector: string) {
   expect(accessibilityScanResults.violations).toEqual([]);
 }
 
-test("el alta de perfil no envía el formulario antes de hidratar Panacea", async ({
+test("las rutas de Panacea conservan una carga segura sin JavaScript", async ({
   browser,
   page,
 }) => {
@@ -123,19 +194,60 @@ test("el alta de perfil no envía el formulario antes de hidratar Panacea", asyn
     });
     try {
       const preHydrationPage = await preHydrationContext.newPage();
-      await preHydrationPage.goto("/");
+      await preHydrationPage.goto("/configuracion/equipo");
 
-      const profile = section(preHydrationPage, "Configuración inicial");
-      const submit = profile.getByRole("button", {
-        name: "Guardar perfil",
-      });
-      await expect(submit).toBeDisabled();
-      await submit.click({ force: true });
-      await expect(preHydrationPage).toHaveURL(/\/$/);
-      await expect(profile).toBeVisible();
+      await expect(preHydrationPage).toHaveURL(/\/configuracion\/equipo$/);
+      await expect(
+        preHydrationPage.getByRole("status", { name: "Cargando Equipo" }),
+      ).toBeVisible();
+      await expect(
+        preHydrationPage.getByRole("button", { name: "Guardar perfil" }),
+      ).not.toBeAttached();
     } finally {
       await preHydrationContext.close();
     }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("el shell muestra el soporte activo y lo retira al vencer", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    await inSuperadminTransaction(fixture.superadminIdentityId, (transaction) =>
+      transaction.insert(clinicSupportSessions).values({
+        clinicId: fixture.clinicId(),
+        expiresAt: new Date(Date.now() + 60_000),
+        reason: "Revisar el alcance de soporte E2E",
+        superadminIdentityId: fixture.superadminIdentityId,
+      }),
+    );
+    await reloadPanacea(page);
+
+    const supportAlert = page.locator('[data-support-session-alert="true"]');
+    await expect(supportAlert).toContainText("Sesión de soporte activa");
+    await expect(supportAlert).toContainText(
+      "Revisar el alcance de soporte E2E",
+    );
+    await expect(supportAlert).toContainText("Accesos auditados: 0");
+    await expectNoAccessibilityViolations(page, '[role="alert"]');
+
+    await inSuperadminTransaction(fixture.superadminIdentityId, (transaction) =>
+      transaction
+        .update(clinicSupportSessions)
+        .set({ expiresAt: new Date(Date.now() - 1_000) })
+        .where(eq(clinicSupportSessions.clinicId, fixture.clinicId())),
+    );
+    await reloadPanacea(page);
+    await expect(supportAlert).not.toBeVisible();
   } finally {
     await fixture.cleanup();
   }
@@ -158,6 +270,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       fixture.ownerEmail,
     );
 
+    await goToPanaceaRoute(page, "/configuracion/equipo");
     const profile = section(page, "Configuración inicial");
     await profile.getByLabel("Nombre público").fill(ownerName);
     await profile
@@ -167,6 +280,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
     await expect(profile.getByText("Perfil de Médico guardado.")).toBeVisible();
     await reloadPanacea(page);
 
+    await goToPanaceaRoute(page, "/configuracion/servicios");
     const catalog = section(page, "Catálogo de Servicios");
     const createServiceForm = catalog
       .getByRole("button", { name: "Crear Servicio" })
@@ -226,6 +340,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
         false,
       );
 
+      await goToPanaceaRoute(invitedPage, "/configuracion");
       const invitedProfile = section(invitedPage, "Configuración inicial");
       await invitedProfile.getByLabel("Nombre público").fill(invitedDoctorName);
       await invitedProfile
@@ -311,7 +426,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       ownerIdentityId,
       publicName: invitedDoctorName,
     });
-    await reloadPanacea(page);
+    await goToPanaceaRoute(page, "/configuracion/servicios");
     const catalogAfterAppointment = section(page, "Catálogo de Servicios");
     const service = catalogAfterAppointment
       .locator("article")
@@ -324,6 +439,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       catalogAfterAppointment.getByText("Cita confirmada", { exact: false }),
     ).toBeVisible();
     await expect(invitedOffer).toBeVisible();
+    await goToPanaceaRoute(page, "/configuracion/equipo");
     const doctorsSection = section(page, "Médicos");
     await doctorsSection
       .locator("li")
@@ -804,6 +920,7 @@ async function configureCalendarScenario(input: {
   serviceDescription: string;
   serviceName: string;
 }) {
+  await goToPanaceaRoute(input.page, "/configuracion/equipo");
   const profile = section(input.page, "Configuración inicial");
   await profile.getByLabel("Nombre público").fill(input.doctorName);
   await profile.getByLabel("Especialidad principal").fill("Medicina general");
@@ -811,6 +928,7 @@ async function configureCalendarScenario(input: {
   await expect(profile.getByText("Perfil de Médico guardado.")).toBeVisible();
   await reloadPanacea(input.page);
 
+  await goToPanaceaRoute(input.page, "/configuracion/servicios");
   const catalog = section(input.page, "Catálogo de Servicios");
   const createServiceForm = catalog
     .getByRole("button", { name: "Crear Servicio" })
@@ -828,6 +946,9 @@ async function configureCalendarScenario(input: {
   await createServiceForm
     .getByRole("button", { name: "Crear Servicio" })
     .click();
+  await expect(
+    catalog.getByText(`Servicio ${input.serviceName} creado.`),
+  ).toBeVisible();
   await saveSchedule(input.page, input.careDate, input.doctorName);
 }
 
@@ -909,8 +1030,8 @@ async function signInAndOpenPanacea(page: Page, email: string) {
   await expect(page.getByLabel("Código de verificación")).toBeVisible();
   await waitForPanaceaInteractivity(page);
   await page.getByLabel("Código de verificación").fill(e2eOtp);
-  await page.getByRole("button", { name: "Verificar y abrir Panacea" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await page.getByRole("button", { name: "Verificar y abrir Praxia" }).click();
+  await expect(page).toHaveURL(/\/calendario$/);
   await waitForPanaceaInteractivity(page);
 }
 
@@ -926,11 +1047,17 @@ async function reloadPanacea(page: Page) {
   await waitForPanaceaInteractivity(page);
 }
 
+async function goToPanaceaRoute(page: Page, route: string) {
+  await page.goto(route);
+  await waitForPanaceaInteractivity(page);
+}
+
 async function saveSchedule(
   page: Page,
   effectiveFrom: string,
   doctorName: string,
 ) {
+  await goToPanaceaRoute(page, "/configuracion/disponibilidad");
   const availability = section(page, "Horarios y Bloqueos");
   await availability.locator('select[name="doctorId"]').first().selectOption({
     label: doctorName,
@@ -943,6 +1070,7 @@ async function saveSchedule(
   await expect(
     availability.getByText("Horario vigente actualizado para opciones nuevas."),
   ).toBeVisible();
+  await goToPanaceaRoute(page, "/calendario");
 }
 
 async function expectCareOptions(
@@ -952,6 +1080,7 @@ async function expectCareOptions(
   date: string,
   available: boolean,
 ) {
+  await goToPanaceaRoute(page, "/configuracion/disponibilidad");
   const careOptions = section(page, "Opciones de atención");
   await careOptions.locator('select[name="doctorId"]').selectOption({
     label: doctorName,
@@ -971,6 +1100,7 @@ async function expectCareOptions(
       careOptions.getByText("No hay Opciones de atención para ese rango."),
     ).toBeVisible();
   }
+  await goToPanaceaRoute(page, "/calendario");
 }
 
 async function configureInvitedDoctor(input: {
@@ -1210,6 +1340,7 @@ async function createFixture() {
       invitationToken,
       invitedDoctorEmail,
       ownerEmail,
+      superadminIdentityId: superadminId,
       async ownerIdentityId() {
         const owner = await db.query.user.findFirst({
           columns: { id: true },

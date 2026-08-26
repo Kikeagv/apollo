@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 
+import { env } from "~/env";
 import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
 import { inviteAdditionalDoctor } from "~/server/application/doctor-invitations";
 import { completeOwnDoctorProfile } from "~/server/application/doctor-profile";
@@ -23,6 +25,7 @@ import {
   setVoiceTranscriptionSettings,
 } from "~/server/application/voice-note-transcription-settings";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
+import { canAccessPanaceaTechnicalSurface } from "~/server/application/panacea-technical-surface";
 import {
   configureEffectiveSchedule,
   createAvailabilityBlock,
@@ -457,12 +460,19 @@ export const panaceaRouter = {
       ),
     ),
 
-  listAvailabilityConfiguration: clinicProcedure.query(async ({ ctx }) =>
-    listAvailabilityConfiguration({
+  listAvailabilityConfiguration: clinicProcedure.query(async ({ ctx }) => {
+    const availability = await listAvailabilityConfiguration({
       clinicId: ctx.clinic.clinicId,
       identityId: ctx.clinic.identityId,
-    }),
-  ),
+    });
+    if (availability === undefined) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "La Identidad no puede consultar esta disponibilidad",
+      });
+    }
+    return availability;
+  }),
 
   listCareOptions: clinicProcedure
     .input(
@@ -762,10 +772,18 @@ export const panaceaRouter = {
       ),
     ),
 
-  performSyntheticClinicalAction: clinicProcedure.mutation(({ ctx }) =>
-    performSyntheticClinicalAction({
+  performSyntheticClinicalAction: clinicProcedure.mutation(({ ctx }) => {
+    if (
+      !canAccessPanaceaTechnicalSurface({
+        nodeEnv: env.NODE_ENV,
+        role: ctx.clinic.role,
+      })
+    ) {
+      throw new TRPCError({ code: "NOT_FOUND" });
+    }
+    return performSyntheticClinicalAction({
       clinicId: ctx.clinic.clinicId,
       identityId: ctx.clinic.identityId,
-    }),
-  ),
+    });
+  }),
 };

@@ -8,6 +8,14 @@ export type SupportSession = {
   superadminIdentityId: string;
 };
 
+export function activeSupportSessions<
+  T extends Pick<SupportSession, "expiresAt">,
+>(sessions: readonly T[], now: Date) {
+  return sessions.filter(
+    (session) => session.expiresAt.getTime() > now.getTime(),
+  );
+}
+
 export function assertSupportSessionIsUsable(
   session: SupportSession | undefined,
   input: { clinicId: string; superadminIdentityId: string },

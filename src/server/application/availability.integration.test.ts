@@ -194,6 +194,12 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
           ),
         ).resolves.toEqual([]);
         await expect(
+          listAvailabilityConfiguration({
+            clinicId: fixture.clinicId,
+            identityId: secretaryIdentityId,
+          }),
+        ).resolves.toBeUndefined();
+        await expect(
           calculateCareOptions(
             {
               clinicId: fixture.clinicId,
@@ -366,6 +372,9 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
           clinicId: fixture.clinicId,
           identityId: fixture.ownerIdentityId,
         });
+        if (ownerView === undefined) {
+          throw new Error("Falta la vista del propietario");
+        }
         expect(
           ownerView.blocks.every(
             (block) => block.privateLabel === "Vacaciones",
@@ -375,11 +384,17 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
           clinicId: fixture.clinicId,
           identityId: fixture.doctorIdentityId,
         });
+        if (doctorView === undefined) {
+          throw new Error("Falta la vista de disponibilidad");
+        }
         expect(
           doctorView.blocks.some(
             (block) => block.doctorId === fixture.ownerDoctorId,
           ),
         ).toBe(false);
+        expect(doctorView.doctors.map((doctor) => doctor.id)).toEqual([
+          fixture.otherDoctorId,
+        ]);
         await inClinicTransaction(
           {
             clinicId: fixture.otherClinicId,

@@ -167,6 +167,9 @@ describe("suscripción y soporte persistentes", () => {
             .where(eq(clinicSupportSessions.id, supportSession.id)),
         );
         await expect(
+          listVisibleClinicSupportSessions(fixture.owner),
+        ).resolves.toEqual([]);
+        await expect(
           readAuditedSupportClinicSummary({
             clinicId: fixture.clinicId,
             superadminIdentityId: fixture.superadminId,

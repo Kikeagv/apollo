@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 import { api } from "~/trpc/react";
 import { CapacityConflicts } from "./capacity-conflicts";
 import { formNumberValue, formValue } from "./form-values";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 export function ServiceCatalogSection({
   canCreateServices,
@@ -37,6 +38,7 @@ export function ServiceCatalogSection({
       void catalog.refetch();
     },
   });
+  const queryError = catalog.error;
 
   function createService(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -86,6 +88,15 @@ export function ServiceCatalogSection({
           Cada Servicio comienza con una Oferta activa de un Médico elegible.
         </p>
       </div>
+      {queryError ? (
+        <PanaceaQueryError
+          error={queryError}
+          onRetry={() => void catalog.refetch()}
+          title="Servicios"
+        />
+      ) : catalog.isLoading ? (
+        <PanaceaQueryLoading label="Cargando Servicios" />
+      ) : null}
       {canCreateServices ? (
         <form className="grid gap-3 sm:grid-cols-2" onSubmit={createService}>
           <label className="block text-sm">
@@ -168,6 +179,13 @@ export function ServiceCatalogSection({
       {canCreateServices && catalog.data?.doctors.length === 0 ? (
         <p className="text-sm text-amber-300">
           Invite y active al menos un Médico antes de crear un Servicio.
+        </p>
+      ) : null}
+      {!catalog.isLoading &&
+      !queryError &&
+      catalog.data?.services.length === 0 ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+          No hay Servicios configurados todavía.
         </p>
       ) : null}
       {result ? <p className="text-sm text-teal-300">{result}</p> : null}

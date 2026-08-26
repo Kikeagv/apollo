@@ -5,11 +5,13 @@ import { type FormEvent, useState } from "react";
 import { api } from "~/trpc/react";
 import { CapacityConflicts } from "./capacity-conflicts";
 import { formValue } from "./form-values";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 export function DoctorsSection() {
   const [result, setResult] = useState<string>();
   const invitations = api.panacea.listDoctorInvitations.useQuery();
   const doctors = api.panacea.listDoctors.useQuery();
+  const queryError = doctors.error ?? invitations.error;
   const invite = api.panacea.inviteAdditionalDoctor.useMutation({
     onSuccess: (invitation) => {
       setResult(`Invitación enviada a ${invitation.recipientName}.`);
@@ -35,13 +37,27 @@ export function DoctorsSection() {
   }
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-700 p-5">
+    <section
+      aria-busy={deactivate.isPending}
+      className="space-y-4 rounded-xl border border-slate-700 p-5"
+    >
       <div>
         <h2 className="text-xl font-semibold">Médicos</h2>
         <p className="mt-1 text-sm text-slate-300">
           Invite Médicos para que completen su perfil antes de atender Citas.
         </p>
       </div>
+      {queryError ? (
+        <PanaceaQueryError
+          error={queryError}
+          onRetry={() =>
+            void Promise.all([doctors.refetch(), invitations.refetch()])
+          }
+          title="Equipo"
+        />
+      ) : doctors.isLoading || invitations.isLoading ? (
+        <PanaceaQueryLoading label="Cargando Equipo" />
+      ) : null}
       <form className="grid gap-3 sm:grid-cols-2" onSubmit={submit}>
         <label className="block text-sm">
           Nombre

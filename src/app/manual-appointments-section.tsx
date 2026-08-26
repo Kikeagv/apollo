@@ -11,6 +11,7 @@ import type {
 } from "~/server/application/manual-appointments";
 import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 type CalendarView = "day" | "week";
 type CalendarAppointment = AgendaAppointment;
@@ -99,6 +100,20 @@ export function ManualAppointmentsSection() {
   const selectedPatient = formData.data?.patients.find(
     (patient) => patient.id === patientId,
   );
+  const queryError =
+    formData.error ?? cancelledAppointments.error ?? calendarAgenda.error;
+  const isLoading =
+    formData.isLoading ||
+    cancelledAppointments.isLoading ||
+    calendarAgenda.isLoading;
+
+  function refetchCalendar() {
+    void Promise.all([
+      formData.refetch(),
+      cancelledAppointments.refetch(),
+      calendarAgenda.refetch(),
+    ]);
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -139,6 +154,15 @@ export function ManualAppointmentsSection() {
           Opere Citas manuales y consulte la agenda de la Clínica.
         </p>
       </div>
+      {queryError ? (
+        <PanaceaQueryError
+          error={queryError}
+          onRetry={refetchCalendar}
+          title="Calendario"
+        />
+      ) : isLoading ? (
+        <PanaceaQueryLoading label="Cargando datos del Calendario" />
+      ) : null}
       <form className="grid gap-2 sm:grid-cols-2" onSubmit={submit}>
         <label className="text-sm">
           Paciente
@@ -468,6 +492,11 @@ export function ManualAppointmentsSection() {
           />
         )}
       </div>
+      {!isLoading && !queryError && calendarEntries.length === 0 ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+          No hay Citas ni Bloqueos para este período.
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -532,14 +561,14 @@ function AppointmentDetail({
         <div className="flex gap-2">
           <a
             className="text-teal-300 underline-offset-2 hover:underline"
-            href={`#patient-${appointment.patient.id}`}
+            href={`/pacientes#patient-${appointment.patient.id}`}
           >
             Abrir ficha del Paciente
           </a>
           {appointment.contacts.map((contact) => (
             <a
               className="text-teal-300 underline-offset-2 hover:underline"
-              href={`#contact-${contact.id}`}
+              href={`/pacientes#contact-${contact.id}`}
               key={contact.id}
             >
               Abrir ficha del Contacto

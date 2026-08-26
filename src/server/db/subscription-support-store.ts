@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 
 import {
   assertSupportSessionIsUsable,
@@ -114,7 +114,10 @@ export async function listVisibleClinicSupportSessions(input: {
           id: true,
           reason: true,
         },
-        where: eq(clinicSupportSessions.clinicId, input.clinicId),
+        where: and(
+          eq(clinicSupportSessions.clinicId, input.clinicId),
+          gt(clinicSupportSessions.expiresAt, new Date()),
+        ),
       }),
       transaction.query.apoloAuditEvents.findMany({
         columns: { occurredAt: true, supportSessionId: true },

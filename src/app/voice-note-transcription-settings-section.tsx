@@ -2,6 +2,7 @@
 
 import { api } from "~/trpc/react";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 /** Control explícito del propietario para permitir notas de voz en Asclepio. */
 export function VoiceNoteTranscriptionSettingsSection() {
@@ -24,18 +25,28 @@ export function VoiceNoteTranscriptionSettingsSection() {
           </p>
         </CardHeader>
         <CardContent className="pt-6">
-          <label className="flex items-start gap-3 text-sm">
-            <input
-              checked={enabled}
-              className="accent-primary mt-0.5 size-4"
-              disabled={settings.isLoading || save.isPending}
-              onChange={(event) =>
-                save.mutate({ enabled: event.target.checked })
-              }
-              type="checkbox"
+          {settings.error ? (
+            <PanaceaQueryError
+              error={settings.error}
+              onRetry={() => void settings.refetch()}
+              title="transcripción de nota de voz"
             />
-            <span>Permitir transcribir notas de voz</span>
-          </label>
+          ) : settings.isLoading ? (
+            <PanaceaQueryLoading label="Cargando transcripción de nota de voz" />
+          ) : (
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                checked={enabled}
+                className="accent-primary mt-0.5 size-4"
+                disabled={save.isPending}
+                onChange={(event) =>
+                  save.mutate({ enabled: event.target.checked })
+                }
+                type="checkbox"
+              />
+              <span>Permitir transcribir notas de voz</span>
+            </label>
+          )}
         </CardContent>
       </Card>
     </section>

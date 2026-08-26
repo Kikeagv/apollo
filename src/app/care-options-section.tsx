@@ -6,6 +6,7 @@ import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import type { CareOptionsRequest } from "~/server/application/care-options";
 import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 type CareOptionsSearch = Omit<CareOptionsRequest, "clinicId" | "identityId">;
 
@@ -25,6 +26,12 @@ export function CareOptionsSection() {
         (offer) => offer.active && offer.doctorId === doctorId,
       ),
     ) ?? [];
+  const queryError = configuration.error ?? catalog.error;
+  const isLoading = configuration.isLoading || catalog.isLoading;
+
+  function refetchConfiguration() {
+    void Promise.all([configuration.refetch(), catalog.refetch()]);
+  }
 
   function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -46,6 +53,20 @@ export function CareOptionsSection() {
           slots materializados.
         </p>
       </div>
+      {queryError ? (
+        <PanaceaQueryError
+          error={queryError}
+          onRetry={refetchConfiguration}
+          title="Opciones de atención"
+        />
+      ) : isLoading ? (
+        <PanaceaQueryLoading label="Cargando Opciones de atención" />
+      ) : null}
+      {!isLoading && !queryError && configuration.data?.doctors.length === 0 ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+          No hay Médicos con capacidad para consultar todavía.
+        </p>
+      ) : null}
       <form className="grid gap-3 sm:grid-cols-2" onSubmit={search}>
         <label className="block text-sm">
           Médico
@@ -120,7 +141,13 @@ export function CareOptionsSection() {
         </p>
       ) : null}
       {options.error ? (
-        <p className="text-sm text-rose-300">{options.error.message}</p>
+        <PanaceaQueryError
+          error={options.error}
+          onRetry={() => void options.refetch()}
+          title="Opciones de atención"
+        />
+      ) : request && options.isFetching ? (
+        <PanaceaQueryLoading label="Calculando Opciones de atención" />
       ) : null}
       {request && options.data?.length === 0 ? (
         <p className="text-sm text-slate-300">

@@ -295,7 +295,32 @@ export async function listServiceCatalog(input: {
   identityId: string;
 }) {
   return inClinicTransaction(input, async (transaction) => {
-    if (!(await canManageOffers(transaction, input))) return undefined;
+    const membership = await transaction.query.clinicUsers.findFirst({
+      columns: { id: true, role: true },
+      where: and(
+        eq(clinicUsers.clinicId, input.clinicId),
+        eq(clinicUsers.identityId, input.identityId),
+        eq(clinicUsers.active, true),
+        inArray(clinicUsers.role, ["owner", "doctor"]),
+      ),
+    });
+    if (membership === undefined) return undefined;
+
+    const doctorWhere =
+      membership.role === "owner"
+        ? and(
+            eq(doctors.clinicId, input.clinicId),
+            eq(doctors.active, true),
+            eq(clinicUsers.active, true),
+            inArray(clinicUsers.role, ["owner", "doctor"]),
+          )
+        : and(
+            eq(doctors.clinicId, input.clinicId),
+            eq(doctors.clinicUserId, membership.id),
+            eq(doctors.active, true),
+            eq(clinicUsers.active, true),
+            inArray(clinicUsers.role, ["owner", "doctor"]),
+          );
 
     const [catalogServices, catalogOffers, catalogDoctors] = await Promise.all([
       transaction.query.services.findMany({
@@ -325,22 +350,22 @@ export async function listServiceCatalog(input: {
             eq(doctors.clinicUserId, clinicUsers.id),
           ),
         )
-        .where(
-          and(
-            eq(doctors.clinicId, input.clinicId),
-            eq(doctors.active, true),
-            eq(clinicUsers.active, true),
-            inArray(clinicUsers.role, ["owner", "doctor"]),
-          ),
-        ),
+        .where(doctorWhere),
     ]);
+
+    const visibleServices =
+      membership.role === "owner"
+        ? catalogServices
+        : catalogServices.filter((service) =>
+            catalogOffers.some((offer) => offer.serviceId === service.id),
+          );
 
     return {
       doctors: catalogDoctors.map((doctor) => ({
         id: doctor.id,
         publicName: doctor.publicName ?? "Médico sin nombre público",
       })),
-      services: catalogServices.map((service) => ({
+      services: visibleServices.map((service) => ({
         ...service,
         offers: catalogOffers
           .filter((offer) => offer.serviceId === service.id)

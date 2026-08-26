@@ -1,45 +1,111 @@
 "use client";
 
+import { ShieldAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { Button } from "~/components/ui/button";
+import { activeSupportSessions } from "~/server/application/subscription-support";
 import { api } from "~/trpc/react";
 
 /** Hace visible en Panacea toda sesión de soporte de Apolo para la Clínica. */
 export function SupportAccessSection() {
-  const sessions = api.panacea.listVisibleSupportSessions.useQuery();
+  const sessions = api.panacea.listVisibleSupportSessions.useQuery(undefined, {
+    refetchInterval: 30_000,
+  });
+  const [now, setNow] = useState(() => Date.now());
 
-  if (sessions.data?.length === 0) return null;
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  if (sessions.isLoading) {
+    return (
+      <div
+        aria-busy="true"
+        className="text-muted-foreground flex items-center gap-2 text-sm"
+        role="status"
+      >
+        <span
+          aria-hidden="true"
+          className="bg-primary size-2 rounded-full motion-safe:animate-pulse"
+        />
+        Comprobando sesiones de soporte…
+      </div>
+    );
+  }
+
+  if (sessions.error) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>No se pudo comprobar el soporte activo</AlertTitle>
+        <AlertDescription className="flex flex-wrap items-center gap-3">
+          <span>{sessions.error.message}</span>
+          <Button
+            onClick={() => void sessions.refetch()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Reintentar
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const visibleSessions = activeSupportSessions(
+    sessions.data ?? [],
+    new Date(now),
+  );
+
+  if (visibleSessions.length === 0) return null;
 
   return (
-    <section className="space-y-2 rounded-xl border border-amber-500/70 bg-amber-950/30 p-5">
-      <h2 className="text-xl font-semibold">Soporte de Praxia</h2>
-      <p className="text-sm text-slate-200">
-        Un operador autorizado puede consultar la información administrativa de
-        esta Clínica en la sesión indicada. El acceso queda auditado.
-      </p>
-      <ul className="space-y-2 text-sm">
-        {sessions.data?.map((session) => (
-          <li
-            className="rounded border border-amber-700/60 p-3"
-            key={session.id}
-          >
-            <p>{session.reason}</p>
-            <p className="mt-1 text-slate-300">
-              Vence: {new Date(session.expiresAt).toLocaleString("es-SV")}
-            </p>
-            <p className="mt-1 text-slate-300">
-              Accesos auditados: {session.accesses.length}
-            </p>
-            {session.accesses.length > 0 ? (
-              <ul className="mt-1 list-inside list-disc text-slate-300">
-                {session.accesses.map((accessedAt) => (
-                  <li key={accessedAt.toISOString()}>
-                    {new Date(accessedAt).toLocaleString("es-SV")}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </section>
+    <Alert
+      className="border-amber-300 bg-amber-50 text-amber-950"
+      data-support-session-alert="true"
+    >
+      <ShieldAlert aria-hidden="true" className="text-amber-700" />
+      <AlertTitle>Sesión de soporte activa</AlertTitle>
+      <AlertDescription className="space-y-3 text-amber-950/80">
+        <p>
+          Un operador autorizado puede consultar información administrativa de
+          esta Clínica. El acceso queda auditado.
+        </p>
+        <ul className="space-y-2">
+          {visibleSessions.map((session) => (
+            <li className="border-l-2 border-amber-200 pl-3" key={session.id}>
+              <p className="font-medium text-amber-950">{session.reason}</p>
+              <p>
+                Vence: {formatSupportDate(session.expiresAt)} · Accesos
+                auditados: {session.accesses.length}
+              </p>
+              {session.accesses.length > 0 ? (
+                <ul
+                  aria-label="Tiempos de acceso auditados"
+                  className="list-inside list-disc text-amber-950/70"
+                >
+                  {session.accesses.map((accessedAt) => (
+                    <li key={`${session.id}-${accessedAt.toISOString()}`}>
+                      {formatSupportDate(accessedAt)}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </AlertDescription>
+    </Alert>
   );
+}
+
+function formatSupportDate(value: Date | string) {
+  return new Intl.DateTimeFormat("es-SV", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/El_Salvador",
+  }).format(new Date(value));
 }

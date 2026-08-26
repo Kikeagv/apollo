@@ -32,7 +32,7 @@ export function VerifyClinicOtpForm() {
         setError(result.error ?? "El OTP no es válido.");
         return;
       }
-      window.location.assign("/");
+      window.location.assign("/calendario");
     } catch {
       setError("No se pudo verificar el OTP.");
     } finally {

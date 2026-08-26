@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import { api } from "~/trpc/react";
 import { formValue, formValues } from "./form-values";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 const weekdays = [
   "Domingo",
@@ -118,6 +119,22 @@ export function AvailabilitySection({
           La Clínica interpreta toda disponibilidad en {CLINIC_TIMEZONE}.
         </p>
       </div>
+      {availability.error ? (
+        <PanaceaQueryError
+          error={availability.error}
+          onRetry={() => void availability.refetch()}
+          title="Disponibilidad"
+        />
+      ) : availability.isLoading ? (
+        <PanaceaQueryLoading label="Cargando Disponibilidad" />
+      ) : null}
+      {!availability.isLoading &&
+      !availability.error &&
+      availability.data?.doctors.length === 0 ? (
+        <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+          No hay Médicos con disponibilidad configurable todavía.
+        </p>
+      ) : null}
       <form className="space-y-2" onSubmit={saveSchedule}>
         <div className="grid gap-2 sm:grid-cols-2">
           <select

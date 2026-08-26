@@ -42,7 +42,7 @@ export function ClinicSignInForm() {
         return;
       }
       window.location.assign(
-        result.status === "otp-required" ? "/?verificar=otp" : "/",
+        result.status === "otp-required" ? "/?verificar=otp" : "/calendario",
       );
     } catch {
       setError("No se pudo iniciar sesión.");

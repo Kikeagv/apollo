@@ -4,6 +4,7 @@ import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { api } from "~/trpc/react";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 /** Bandeja mínima de Panacea para solicitudes que requieren decisión humana. */
 export function AppointmentSelfManagementEscalationsSection() {
@@ -24,7 +25,15 @@ export function AppointmentSelfManagementEscalationsSection() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4 pt-6">
-          {escalations.data?.length === 0 ? (
+          {escalations.error ? (
+            <PanaceaQueryError
+              error={escalations.error}
+              onRetry={() => void escalations.refetch()}
+              title="Escalamientos de Citas"
+            />
+          ) : escalations.isLoading ? (
+            <PanaceaQueryLoading label="Cargando Escalamientos de Citas" />
+          ) : escalations.data?.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               No hay Escalamientos pendientes.
             </p>

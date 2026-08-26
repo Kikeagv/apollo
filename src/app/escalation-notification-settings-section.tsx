@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { Field, FieldContent, FieldLabel } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
 import { api } from "~/trpc/react";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 /** Control del Médico propietario para el aviso adicional de Escalamiento. */
 export function EscalationNotificationSettingsSection() {
@@ -29,39 +30,54 @@ export function EscalationNotificationSettingsSection() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4 pt-6">
-          <label className="flex items-start gap-3 text-sm">
-            <input
-              checked={enabled}
-              className="accent-primary mt-0.5 size-4"
-              disabled={save.isPending || phone.length === 0}
-              onChange={(event) =>
-                save.mutate({
-                  enabled: event.target.checked,
-                  secretaryPhoneE164: phone || null,
-                })
-              }
-              type="checkbox"
+          {settings.error ? (
+            <PanaceaQueryError
+              error={settings.error}
+              onRetry={() => void settings.refetch()}
+              title="avisos de Escalamiento"
             />
-            <span>Avisar a secretaria por WhatsApp simulado</span>
-          </label>
-          <Field>
-            <FieldLabel htmlFor="secretary-phone">
-              Número de secretaria (E.164)
-            </FieldLabel>
-            <FieldContent>
-              <Input
-                disabled={save.isPending}
-                id="secretary-phone"
-                onBlur={() =>
-                  save.mutate({ enabled, secretaryPhoneE164: phone || null })
-                }
-                onChange={(event) => setPhone(event.target.value)}
-                placeholder="+50370000000"
-                type="tel"
-                value={phone}
-              />
-            </FieldContent>
-          </Field>
+          ) : settings.isLoading ? (
+            <PanaceaQueryLoading label="Cargando avisos de Escalamiento" />
+          ) : (
+            <>
+              <label className="flex items-start gap-3 text-sm">
+                <input
+                  checked={enabled}
+                  className="accent-primary mt-0.5 size-4"
+                  disabled={save.isPending || phone.length === 0}
+                  onChange={(event) =>
+                    save.mutate({
+                      enabled: event.target.checked,
+                      secretaryPhoneE164: phone || null,
+                    })
+                  }
+                  type="checkbox"
+                />
+                <span>Avisar a secretaria por WhatsApp simulado</span>
+              </label>
+              <Field>
+                <FieldLabel htmlFor="secretary-phone">
+                  Número de secretaria (E.164)
+                </FieldLabel>
+                <FieldContent>
+                  <Input
+                    disabled={save.isPending}
+                    id="secretary-phone"
+                    onBlur={() =>
+                      save.mutate({
+                        enabled,
+                        secretaryPhoneE164: phone || null,
+                      })
+                    }
+                    onChange={(event) => setPhone(event.target.value)}
+                    placeholder="+50370000000"
+                    type="tel"
+                    value={phone}
+                  />
+                </FieldContent>
+              </Field>
+            </>
+          )}
         </CardContent>
       </Card>
     </section>

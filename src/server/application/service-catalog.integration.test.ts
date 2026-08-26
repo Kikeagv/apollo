@@ -436,6 +436,19 @@ describe("catálogo y Ofertas de servicio persistentes", () => {
             (offer) => !offer.active && offer.id === firstOffer.id,
           ),
         ).toBe(true);
+        const doctorCatalog = await listServiceCatalog({
+          clinicId: fixture.aurora.clinicId,
+          identityId: fixture.aurora.additionalIdentityId,
+        });
+        expect(doctorCatalog?.doctors.map((doctor) => doctor.id)).toEqual([
+          additionalDoctorId,
+        ]);
+        expect(doctorCatalog?.services).toHaveLength(1);
+        expect(
+          doctorCatalog?.services[0]?.offers.every(
+            (offer) => offer.doctorId === additionalDoctorId,
+          ),
+        ).toBe(true);
 
         const audit = await inClinicTransaction(fixture.aurora, (transaction) =>
           transaction.query.configurationAuditEvents.findMany({

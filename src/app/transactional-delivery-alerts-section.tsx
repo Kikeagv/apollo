@@ -3,6 +3,7 @@
 import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
+import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 /** Bandeja de Panacea para Entregas que agotaron su política de reintentos. */
 export function TransactionalDeliveryAlertsSection() {
@@ -22,7 +23,15 @@ export function TransactionalDeliveryAlertsSection() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4 pt-6">
-          {alerts.data?.length === 0 ? (
+          {alerts.error ? (
+            <PanaceaQueryError
+              error={alerts.error}
+              onRetry={() => void alerts.refetch()}
+              title="Entregas pendientes"
+            />
+          ) : alerts.isLoading ? (
+            <PanaceaQueryLoading label="Cargando Entregas pendientes" />
+          ) : alerts.data?.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               No hay Entregas que requieran atención.
             </p>
