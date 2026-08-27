@@ -191,25 +191,12 @@ function PanaceaHeader({
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <SidebarTrigger className="md:hidden" />
         <div className="min-w-0">
-          <p className="text-muted-foreground text-[0.68rem] font-semibold tracking-[0.12em] uppercase">
-            Clínica
-          </p>
           <p className="truncate text-sm font-semibold sm:text-base">
             {clinic.clinicName}
           </p>
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-        <div
-          aria-label="Sesión de clínica activa"
-          className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-800 sm:px-3"
-        >
-          <span
-            aria-hidden="true"
-            className="size-1.5 rounded-full bg-emerald-600"
-          />
-          Sesión activa
-        </div>
         <span className="text-muted-foreground text-xs sm:text-sm">
           {panaceaRoleLabel(clinic.role)}
         </span>

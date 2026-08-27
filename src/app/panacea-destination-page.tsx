@@ -19,7 +19,7 @@ export function PanaceaDestinationPage({
             {eyebrow}
           </p>
         ) : null}
-        <h1 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+        <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
           {title}
         </h1>
         {description ? (

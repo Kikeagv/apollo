@@ -301,14 +301,7 @@ export function ManualAppointmentsSection() {
   }
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">Calendario</h2>
-        <Button onClick={() => openAppointmentDialog()} size="lg" type="button">
-          <Plus aria-hidden="true" />
-          Nueva Cita manual
-        </Button>
-      </div>
+    <section aria-label="Calendario" className="space-y-5">
       {queryError ? (
         <PanaceaQueryError
           error={queryError}
@@ -540,10 +533,14 @@ export function ManualAppointmentsSection() {
         </DialogContent>
       </Dialog>
       <section aria-labelledby="agenda-heading" className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-xl font-semibold" id="agenda-heading">
-            Agenda de la Clínica
-          </h3>
+        <h2 className="sr-only" id="agenda-heading">
+          Agenda
+        </h2>
+        <div
+          aria-label="Navegación y acciones del Calendario"
+          className="flex flex-wrap items-center justify-between gap-3"
+          role="toolbar"
+        >
           <div className="flex items-center gap-2">
             <Button
               onClick={() => updateCalendarUrl({ date: today() })}
@@ -588,9 +585,21 @@ export function ManualAppointmentsSection() {
               </Button>
             </div>
           </div>
+          <Button
+            onClick={() => openAppointmentDialog()}
+            size="lg"
+            type="button"
+          >
+            <Plus aria-hidden="true" />
+            Nueva Cita manual
+          </Button>
         </div>
 
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        <div
+          aria-label="Filtros y vista del Calendario"
+          className="flex flex-wrap items-end gap-3"
+          role="group"
+        >
           <label className="text-sm font-medium" htmlFor="calendar-date">
             Ir a fecha
             <input

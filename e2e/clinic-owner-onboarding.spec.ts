@@ -79,6 +79,7 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
       .click();
     await expect(page).toHaveURL(/\/calendario$/);
     await expect(page.getByText(fixture.clinicName)).toBeVisible();
+    await expect(page.getByText("Clínica", { exact: true })).toHaveCount(0);
     await expect(
       page.getByRole("heading", { level: 1, name: "Calendario" }),
     ).toBeVisible();
@@ -95,7 +96,7 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
       page.getByRole("heading", { name: "Fichas administrativas" }),
     ).not.toBeVisible();
     await expect(page.getByText("Médico propietario")).toBeVisible();
-    await expect(page.getByLabel("Sesión de clínica activa")).toBeVisible();
+    await expect(page.getByLabel("Sesión de clínica activa")).toHaveCount(0);
     await expectNoAccessibilityViolations(page, "[data-sidebar=sidebar]");
     await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
     await waitForPanaceaInteractivity(page);
@@ -180,17 +181,36 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
       fixture.ownerEmail,
     );
 
-    const calendar = section(page, "Calendario");
-    await expect(page.getByText("Panacea", { exact: true })).not.toBeVisible();
+    const calendar = calendarSection(page);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Calendario" }),
+    ).toBeVisible();
+    await expect(
+      calendar.getByRole("heading", { level: 2, name: "Calendario" }),
+    ).toHaveCount(0);
+    await expect(
+      calendar.getByRole("heading", { level: 3, name: "Agenda de la Clínica" }),
+    ).toHaveCount(0);
+    await expect(
+      calendar.getByRole("toolbar", {
+        name: "Navegación y acciones del Calendario",
+      }),
+    ).toBeVisible();
+    await expect(
+      calendar.getByRole("group", {
+        name: "Filtros y vista del Calendario",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("Panacea", { exact: true })).toHaveCount(0);
     await expect(
       page.getByText("Operación diaria de agenda", { exact: true }),
-    ).not.toBeVisible();
+    ).toHaveCount(0);
     await expect(
       page.getByText(
         "Consulte la semana completa, cambie a la vista diaria y gestione la Operación diaria de agenda.",
         { exact: true },
       ),
-    ).not.toBeVisible();
+    ).toHaveCount(0);
 
     await expect(
       calendar.getByRole("button", { name: "Nueva Cita manual", exact: true }),
@@ -497,7 +517,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       ),
     ]);
     await reloadPanacea(page);
-    const calendar = section(page, "Calendario");
+    const calendar = calendarSection(page);
     const agendaList = calendar.locator('[data-calendar-list="true"]');
     await calendar.locator('input[type="date"]').fill(careDate);
     const anaBlock = agendaList.getByRole("button", {
@@ -618,7 +638,7 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
       serviceName,
     });
 
-    const calendar = section(page, "Calendario");
+    const calendar = calendarSection(page);
     const nativeNavigationsDuringAppointmentCreation: string[] = [];
     page.on("request", (request) => {
       if (
@@ -696,7 +716,7 @@ test("el Calendario cancela una Cita activa y conserva su historial", async ({
       serviceName,
     });
 
-    const calendar = section(page, "Calendario");
+    const calendar = calendarSection(page);
     await registerInlinePatient(calendar, page, {
       careDate,
       contactName: "Contacto con historial",
@@ -772,7 +792,7 @@ test("el Calendario solo ofrece cancelar Citas manuales futuras", async ({
       serviceName,
     });
 
-    const calendar = section(page, "Calendario");
+    const calendar = calendarSection(page);
     await registerInlinePatient(calendar, page, {
       careDate,
       contactName: "Contacto de orígenes",
@@ -875,7 +895,7 @@ test("el Calendario rechaza una Cita que se traslapa con capacidad ocupada", asy
       serviceName,
     });
 
-    const calendar = section(page, "Calendario");
+    const calendar = calendarSection(page);
     await registerInlinePatient(calendar, page, {
       careDate,
       contactName: "Contacto sin traslape",
@@ -973,7 +993,7 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
       drizzleAvailabilityStore,
     );
 
-    const calendar = section(page, "Calendario");
+    const calendar = calendarSection(page);
     const agendaList = calendar.locator('[data-calendar-list="true"]');
     await registerInlinePatient(calendar, page, {
       careDate,
@@ -1174,6 +1194,10 @@ async function createManualAppointmentInCalendar(
   await appointmentDialog
     .getByRole("button", { name: "Crear Cita manual" })
     .click();
+}
+
+function calendarSection(page: Page) {
+  return page.getByRole("region", { name: "Calendario" });
 }
 
 function section(page: Page, heading: string) {
