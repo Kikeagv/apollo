@@ -228,11 +228,6 @@ function PanaceaHeader({
               </span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled>
-              <ShieldCheck aria-hidden="true" className="mr-2 size-4" />
-              Sesión de clínica activa
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
             <DropdownMenuItem disabled={isSigningOut} onClick={signOut}>
               <LogOut aria-hidden="true" className="mr-2 size-4" />
               {isSigningOut ? "Cerrando sesión…" : "Cerrar sesión"}

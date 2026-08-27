@@ -97,6 +97,14 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     ).not.toBeVisible();
     await expect(page.getByText("Médico propietario")).toBeVisible();
     await expect(page.getByLabel("Sesión de clínica activa")).toHaveCount(0);
+    await page.getByRole("button", { name: /Cuenta de/ }).click();
+    const accountMenu = page.getByRole("menu");
+    await expect(accountMenu).toBeVisible();
+    await expect(
+      accountMenu.getByText("Sesión de clínica activa", { exact: true }),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(accountMenu).not.toBeVisible();
     await expectNoAccessibilityViolations(page, "[data-sidebar=sidebar]");
     await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
     await waitForPanaceaInteractivity(page);
