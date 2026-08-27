@@ -131,7 +131,7 @@ function Sidebar({
   return (
     <aside
       className={cn(
-        "border-border bg-card text-card-foreground relative hidden h-svh shrink-0 flex-col transition-[width] duration-200 ease-out md:flex",
+        "border-border bg-card text-card-foreground sticky top-0 z-40 hidden h-svh shrink-0 flex-col transition-[width] duration-200 ease-out md:flex",
         state === "expanded" ? "w-64" : "w-16",
         className,
       )}

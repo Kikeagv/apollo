@@ -189,6 +189,28 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
       fixture.ownerEmail,
     );
 
+    const sidebar = page.locator('aside[data-sidebar="sidebar"]');
+    await expect(sidebar).toBeVisible();
+    await page.setViewportSize({ height: 400, width: 1280 });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollHeight > window.innerHeight,
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(() => {
+      window.scrollTo({ behavior: "instant", top: document.body.scrollHeight });
+    });
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY))
+      .toBeGreaterThan(0);
+    await expect
+      .poll(async () => (await sidebar.boundingBox())?.y ?? -1)
+      .toBe(0);
+    await page.evaluate(() => window.scrollTo({ behavior: "instant", top: 0 }));
+    await page.setViewportSize({ height: 720, width: 1280 });
+
     const calendar = calendarSection(page);
     await expect(
       page.getByRole("heading", { level: 1, name: "Calendario" }),
