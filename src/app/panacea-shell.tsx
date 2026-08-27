@@ -113,9 +113,6 @@ function PanaceaNavigation({
           </span>
           <span className={state === "collapsed" ? "sr-only" : "min-w-0"}>
             <span className="block truncate text-sm font-semibold">Praxia</span>
-            <span className="text-muted-foreground block truncate text-xs">
-              Panacea
-            </span>
           </span>
         </Link>
       </SidebarHeader>

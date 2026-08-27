@@ -168,10 +168,103 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
   }
 });
 
-async function expectNoAccessibilityViolations(page: Page, selector: string) {
-  const accessibilityScanResults = await new AxeBuilder({ page })
-    .include(selector)
-    .analyze();
+test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+
+    const calendar = section(page, "Calendario");
+    await expect(page.getByText("Panacea", { exact: true })).not.toBeVisible();
+    await expect(
+      page.getByText("Operación diaria de agenda", { exact: true }),
+    ).not.toBeVisible();
+    await expect(
+      page.getByText(
+        "Consulte la semana completa, cambie a la vista diaria y gestione la Operación diaria de agenda.",
+        { exact: true },
+      ),
+    ).not.toBeVisible();
+
+    await expect(
+      calendar.getByRole("button", { name: "Nueva Cita manual", exact: true }),
+    ).toBeVisible();
+    await expect(calendar.locator('[data-calendar-view="week"]')).toBeVisible();
+    await expect(calendar.locator('[data-calendar-day="true"]')).toHaveCount(7);
+    await expect(
+      calendar.locator('[data-calendar-grid-hour="true"]'),
+    ).not.toHaveCount(0);
+
+    const emptyCalendarDay = calendar
+      .getByRole("button", {
+        name: /Crear Cita en .* desde la cuadrícula temporal/,
+      })
+      .first();
+    await emptyCalendarDay.press("Enter");
+    const contextualAppointmentDialog = page.getByRole("dialog", {
+      name: "Nueva Cita manual",
+    });
+    await expect(contextualAppointmentDialog).toBeVisible();
+    await expect(
+      contextualAppointmentDialog.locator('input[name="startsAt"]'),
+    ).toHaveValue(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    await contextualAppointmentDialog
+      .getByRole("button", { name: "Cancelar" })
+      .click();
+
+    await calendar
+      .getByRole("button", { name: "Nueva Cita manual", exact: true })
+      .click();
+    const appointmentDialog = page.getByRole("dialog", {
+      name: "Nueva Cita manual",
+    });
+    await expect(appointmentDialog).toBeVisible();
+    await expect(appointmentDialog.getByLabel("Paciente")).toBeVisible();
+    await expect(
+      appointmentDialog.getByLabel("Oferta de servicio"),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(page, '[role="dialog"]', {
+      disableRules: ["color-contrast"],
+    });
+    await expectNoAccessibilityViolations(page, '[data-calendar-view="week"]', {
+      disableRules: ["color-contrast"],
+    });
+
+    await appointmentDialog
+      .getByLabel("Enviar confirmación inmediata por WhatsApp")
+      .check();
+    await appointmentDialog.getByRole("button", { name: "Cerrar" }).click();
+    await expect(appointmentDialog).not.toBeVisible();
+
+    await calendar
+      .getByRole("button", { name: "Nueva Cita manual", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("dialog", { name: "Nueva Cita manual" })
+        .getByLabel("Enviar confirmación inmediata por WhatsApp"),
+    ).not.toBeChecked();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+async function expectNoAccessibilityViolations(
+  page: Page,
+  selector: string,
+  options: { disableRules?: string[] } = {},
+) {
+  const scan = new AxeBuilder({ page }).include(selector);
+  if (options.disableRules !== undefined) {
+    scan.disableRules(options.disableRules);
+  }
+  const accessibilityScanResults = await scan.analyze();
 
   expect(accessibilityScanResults.violations).toEqual([]);
 }
@@ -550,10 +643,15 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
         startsAt: "08:30",
       },
     ]) {
-      await registerInlinePatient(calendar, appointment);
-      await expect(calendar.getByLabel("Paciente")).toHaveValue(/.+/);
+      await registerInlinePatient(calendar, page, {
+        ...appointment,
+        careDate,
+      });
+      await expect(page.getByRole("dialog").getByLabel("Paciente")).toHaveValue(
+        /.+/,
+      );
 
-      await createManualAppointmentInCalendar(calendar, {
+      await createManualAppointmentInCalendar(calendar, page, {
         careDate,
         doctorName,
         serviceName,
@@ -599,11 +697,12 @@ test("el Calendario cancela una Cita activa y conserva su historial", async ({
     });
 
     const calendar = section(page, "Calendario");
-    await registerInlinePatient(calendar, {
+    await registerInlinePatient(calendar, page, {
+      careDate,
       contactName: "Contacto con historial",
       patientName,
     });
-    await createManualAppointmentInCalendar(calendar, {
+    await createManualAppointmentInCalendar(calendar, page, {
       careDate,
       doctorName,
       serviceName,
@@ -674,11 +773,12 @@ test("el Calendario solo ofrece cancelar Citas manuales futuras", async ({
     });
 
     const calendar = section(page, "Calendario");
-    await registerInlinePatient(calendar, {
+    await registerInlinePatient(calendar, page, {
+      careDate,
       contactName: "Contacto de orígenes",
       patientName,
     });
-    await createManualAppointmentInCalendar(calendar, {
+    await createManualAppointmentInCalendar(calendar, page, {
       careDate,
       doctorName,
       serviceName,
@@ -776,11 +876,12 @@ test("el Calendario rechaza una Cita que se traslapa con capacidad ocupada", asy
     });
 
     const calendar = section(page, "Calendario");
-    await registerInlinePatient(calendar, {
+    await registerInlinePatient(calendar, page, {
+      careDate,
       contactName: "Contacto sin traslape",
       patientName,
     });
-    await createManualAppointmentInCalendar(calendar, {
+    await createManualAppointmentInCalendar(calendar, page, {
       careDate,
       doctorName,
       serviceName,
@@ -792,20 +893,35 @@ test("el Calendario rechaza una Cita que se traslapa con capacidad ocupada", asy
       }),
     ).toBeVisible();
 
-    await createManualAppointmentInCalendar(calendar, {
+    await createManualAppointmentInCalendar(calendar, page, {
       careDate,
       doctorName,
       serviceName,
       startsAt: "08:15",
     });
+    const appointmentDialog = page.getByRole("dialog", {
+      name: "Nueva Cita manual",
+    });
     await expect(
-      calendar.getByText("La Agenda ya no autoriza esta Cita manual"),
+      appointmentDialog.getByText("La Agenda ya no autoriza esta Cita manual"),
     ).toBeVisible();
     await expect(
       calendar.locator('[data-calendar-list="true"]').getByRole("button", {
         name: new RegExp(`8:15.*${patientName}`),
       }),
+    ).toHaveCount(0);
+    await appointmentDialog.getByRole("button", { name: "Cancelar" }).click();
+    await expect(appointmentDialog).not.toBeVisible();
+    await calendar.getByRole("button", { name: "Nueva Cita manual" }).click();
+    const reopenedAppointmentDialog = page.getByRole("dialog", {
+      name: "Nueva Cita manual",
+    });
+    await expect(
+      reopenedAppointmentDialog.getByRole("alert"),
     ).not.toBeVisible();
+    await reopenedAppointmentDialog
+      .getByRole("button", { name: "Cancelar" })
+      .click();
   } finally {
     await fixture.cleanup();
   }
@@ -859,14 +975,26 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
 
     const calendar = section(page, "Calendario");
     const agendaList = calendar.locator('[data-calendar-list="true"]');
-    await registerInlinePatient(calendar, { contactName, patientName });
-
-    await calendar.locator('input[type="date"]').fill(careDate);
-    await calendar.locator('input[name="startsAt"]').fill(`${careDate}T08:00`);
-    await calendar.locator('select[name="serviceOfferId"]').selectOption({
-      label: `${doctorName} · ${serviceName}`,
+    await registerInlinePatient(calendar, page, {
+      careDate,
+      contactName,
+      patientName,
     });
-    await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
+
+    const appointmentDialog = page.getByRole("dialog", {
+      name: "Nueva Cita manual",
+    });
+    await appointmentDialog
+      .locator('input[name="startsAt"]')
+      .fill(`${careDate}T08:00`);
+    await appointmentDialog
+      .locator('select[name="serviceOfferId"]')
+      .selectOption({
+        label: `${doctorName} · ${serviceName}`,
+      });
+    await appointmentDialog
+      .getByRole("button", { name: "Crear Cita manual" })
+      .click();
 
     const scheduledAppointment = agendaList.getByRole("button", {
       name: new RegExp(`8:00.*${patientName}`),
@@ -905,10 +1033,21 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
     await scheduledAppointment.click();
     await expect(appointmentDetail).toContainText(patientName);
 
-    await calendar.locator('input[name="startsAt"]').fill(`${careDate}T09:35`);
-    await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
+    await calendar.getByRole("button", { name: "Nueva Cita manual" }).click();
+    const outsideAppointmentDialog = page.getByRole("dialog", {
+      name: "Nueva Cita manual",
+    });
+    await outsideAppointmentDialog
+      .locator('input[name="startsAt"]')
+      .fill(`${careDate}T09:35`);
+    await outsideAppointmentDialog
+      .locator('select[name="serviceOfferId"]')
+      .selectOption({ label: `${doctorName} · ${serviceName}` });
+    await outsideAppointmentDialog
+      .getByRole("button", { name: "Crear Cita manual" })
+      .click();
     await expect(
-      calendar.getByText(
+      outsideAppointmentDialog.getByText(
         "La Cita no cabe por completo en el Horario vigente. Confirme la excepción para crearla sin modificar los demás controles de capacidad.",
       ),
     ).toBeVisible();
@@ -916,7 +1055,7 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
       name: new RegExp(`9:35.*${patientName}`),
     });
     await expect(outsideScheduleAppointment).not.toBeVisible();
-    await calendar
+    await outsideAppointmentDialog
       .getByRole("button", { name: "Confirmar Cita fuera de horario" })
       .click();
 
@@ -969,24 +1108,39 @@ async function configureCalendarScenario(input: {
 
 async function registerInlinePatient(
   calendar: Locator,
-  input: { contactName: string; patientName: string; phone?: string },
+  page: Page,
+  input: {
+    careDate: string;
+    contactName: string;
+    patientName: string;
+    phone?: string;
+  },
 ) {
-  await calendar
+  await calendar.locator('input[type="date"]').fill(input.careDate);
+  await calendar.getByRole("button", { name: "Nueva Cita manual" }).click();
+  const appointmentDialog = page.getByRole("dialog", {
+    name: "Nueva Cita manual",
+  });
+  await appointmentDialog
     .getByRole("button", { name: "Registrar Paciente nuevo" })
     .click();
-  await calendar.getByLabel("Nombre del Contacto").fill(input.contactName);
-  await calendar
+  await appointmentDialog
+    .getByLabel("Nombre del Contacto")
+    .fill(input.contactName);
+  await appointmentDialog
     .getByLabel("Teléfono E.164 del Contacto")
     .fill(input.phone ?? "+50371234567");
-  await calendar.getByLabel("Nombre del Paciente").fill(input.patientName);
-  await calendar
+  await appointmentDialog
+    .getByLabel("Nombre del Paciente")
+    .fill(input.patientName);
+  await appointmentDialog
     .getByLabel("Fecha de nacimiento del Paciente")
     .fill("2018-04-02");
-  await calendar
+  await appointmentDialog
     .getByRole("button", { name: "Registrar Contacto y Paciente" })
     .click();
   await expect(
-    calendar.getByText(
+    appointmentDialog.getByText(
       `Paciente ${input.patientName} seleccionado para la nueva Cita.`,
     ),
   ).toBeVisible();
@@ -994,6 +1148,7 @@ async function registerInlinePatient(
 
 async function createManualAppointmentInCalendar(
   calendar: Locator,
+  page: Page,
   input: {
     careDate: string;
     doctorName: string;
@@ -1001,14 +1156,24 @@ async function createManualAppointmentInCalendar(
     startsAt: string;
   },
 ) {
-  await calendar.locator('input[type="date"]').fill(input.careDate);
-  await calendar
+  const appointmentDialog = page.getByRole("dialog", {
+    name: "Nueva Cita manual",
+  });
+  if (!(await appointmentDialog.isVisible())) {
+    await calendar.locator('input[type="date"]').fill(input.careDate);
+    await calendar.getByRole("button", { name: "Nueva Cita manual" }).click();
+  }
+  await appointmentDialog
     .locator('input[name="startsAt"]')
     .fill(`${input.careDate}T${input.startsAt}`);
-  await calendar.locator('select[name="serviceOfferId"]').selectOption({
-    label: `${input.doctorName} · ${input.serviceName}`,
-  });
-  await calendar.getByRole("button", { name: "Crear Cita manual" }).click();
+  await appointmentDialog
+    .locator('select[name="serviceOfferId"]')
+    .selectOption({
+      label: `${input.doctorName} · ${input.serviceName}`,
+    });
+  await appointmentDialog
+    .getByRole("button", { name: "Crear Cita manual" })
+    .click();
 }
 
 function section(page: Page, heading: string) {

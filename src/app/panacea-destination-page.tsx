@@ -1,6 +1,6 @@
 type PanaceaDestinationPageProps = {
   children: React.ReactNode;
-  description: string;
+  description?: string;
   eyebrow?: string;
   title: string;
 };
@@ -8,21 +8,25 @@ type PanaceaDestinationPageProps = {
 export function PanaceaDestinationPage({
   children,
   description,
-  eyebrow = "Panacea",
+  eyebrow,
   title,
 }: PanaceaDestinationPageProps) {
   return (
     <div className="flex w-full flex-col gap-6">
       <header className="max-w-3xl space-y-2">
-        <p className="text-primary text-xs font-semibold tracking-[0.14em] uppercase">
-          {eyebrow}
-        </p>
+        {eyebrow ? (
+          <p className="text-primary text-xs font-semibold tracking-[0.14em] uppercase">
+            {eyebrow}
+          </p>
+        ) : null}
         <h1 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
           {title}
         </h1>
-        <p className="text-muted-foreground leading-6 text-pretty">
-          {description}
-        </p>
+        {description ? (
+          <p className="text-muted-foreground leading-6 text-pretty">
+            {description}
+          </p>
+        ) : null}
       </header>
       <div className="flex min-w-0 flex-col gap-6">{children}</div>
     </div>

@@ -26,7 +26,7 @@ export default async function TechnicalClinicalCheckPage() {
     <main className="bg-background text-foreground min-h-screen px-4 py-10 sm:px-6">
       <div className="mx-auto w-full max-w-2xl">
         <PanaceaDestinationPage
-          description="Superficie protegida para pruebas técnicas de aislamiento por Clínica. No forma parte de la operación normal de Panacea."
+          description="Superficie protegida para pruebas técnicas de aislamiento por Clínica. No forma parte de la operación normal."
           eyebrow="Superficie técnica protegida"
           title="Comprobación clínica"
         >

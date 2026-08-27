@@ -1,8 +1,14 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  type MouseEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
@@ -33,6 +39,16 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogDismissButton,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -81,7 +97,10 @@ export function ManualAppointmentsSection() {
   const [outsideScheduleConfirmation, setOutsideScheduleConfirmation] =
     useState<ManualAppointmentRequest>();
   const [patientId, setPatientId] = useState("");
-  const [recordRegistrationOpen, setRecordRegistrationOpen] = useState(false);
+  const [appointmentDialogOpen, setAppointmentDialogOpen] = useState(false);
+  const [appointmentStartsAt, setAppointmentStartsAt] = useState("");
+  const [serviceOfferId, setServiceOfferId] = useState("");
+  const [patientRegistrationOpen, setPatientRegistrationOpen] = useState(false);
   const [recordRegistrationResult, setRecordRegistrationResult] =
     useState<string>();
   const [sendConfirmation, setSendConfirmation] = useState(false);
@@ -110,7 +129,7 @@ export function ManualAppointmentsSection() {
       onSuccess: async ({ patient }) => {
         await formData.refetch();
         setPatientId(patient.id);
-        setRecordRegistrationOpen(false);
+        setPatientRegistrationOpen(false);
         setRecordRegistrationResult(
           `Paciente ${patient.name} seleccionado para la nueva Cita.`,
         );
@@ -133,6 +152,7 @@ export function ManualAppointmentsSection() {
     },
     onSuccess: async (appointment) => {
       setOutsideScheduleConfirmation(undefined);
+      setAppointmentDialogOpen(false);
       updateCalendarUrl({ selectedId: appointment.id }, "push");
       await calendarAgenda.refetch();
     },
@@ -259,13 +279,35 @@ export function ManualAppointmentsSection() {
     });
   }
 
+  function openAppointmentDialog(
+    startsAt = `${calendarDate}T09:00`,
+    preferredDoctorId = doctorId,
+  ) {
+    setAppointmentStartsAt(startsAt);
+    setServiceOfferId(
+      preferredDoctorId === ""
+        ? ""
+        : (formData.data?.offers.find(
+            (offer) => offer.doctorId === preferredDoctorId,
+          )?.serviceOfferId ?? ""),
+    );
+    setOutsideScheduleConfirmation(undefined);
+    setRecordRegistrationResult(undefined);
+    setPatientRegistrationOpen(false);
+    setSendConfirmation(false);
+    create.reset();
+    registerAdministrativeRecords.reset();
+    setAppointmentDialogOpen(true);
+  }
+
   return (
-    <section className="border-border space-y-4 rounded-xl border p-5">
-      <div>
+    <section className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">Calendario</h2>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Opere Citas manuales y consulte la agenda de la Clínica.
-        </p>
+        <Button onClick={() => openAppointmentDialog()} size="lg" type="button">
+          <Plus aria-hidden="true" />
+          Nueva Cita manual
+        </Button>
       </div>
       {queryError ? (
         <PanaceaQueryError
@@ -276,255 +318,284 @@ export function ManualAppointmentsSection() {
       ) : isLoading ? (
         <PanaceaQueryLoading label="Cargando datos del Calendario" />
       ) : null}
-      <details className="border-border bg-card rounded-xl border p-4" open>
-        <summary className="focus-visible:ring-ring/30 cursor-pointer rounded-lg py-1 text-sm font-semibold outline-none focus-visible:ring-3">
-          Nueva Cita manual
-          <span className="text-muted-foreground ml-2 font-normal">
-            Registrar una atención desde Panacea
-          </span>
-        </summary>
-        <div className="mt-4 space-y-4">
-          <form className="grid gap-2 sm:grid-cols-2" onSubmit={submit}>
-            <label className="text-sm">
-              Paciente
-              <NativeSelect
-                className={inputClass}
-                disabled={formData.data?.patients.length === 0}
-                name="patientId"
-                onChange={(event) => setPatientId(event.target.value)}
-                required
-                value={patientId}
-              >
-                <NativeSelectOption value="">
-                  Seleccione un Paciente
-                </NativeSelectOption>
-                {formData.data?.patients.map((patient) => (
-                  <NativeSelectOption key={patient.id} value={patient.id}>
-                    {patient.name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </label>
-            <label className="text-sm">
-              Oferta de servicio
-              <NativeSelect
-                className={inputClass}
-                disabled={formData.data?.offers.length === 0}
-                name="serviceOfferId"
-                required
-              >
-                <NativeSelectOption value="">
-                  Seleccione una Oferta
-                </NativeSelectOption>
-                {formData.data?.offers.map((offer) => (
-                  <NativeSelectOption
-                    key={offer.serviceOfferId}
-                    value={offer.serviceOfferId}
-                  >
-                    {offer.doctorName} · {offer.serviceName}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </label>
-            <label className="flex items-center gap-2 text-sm sm:col-span-2">
-              <input
-                checked={sendConfirmation}
-                onChange={(event) => setSendConfirmation(event.target.checked)}
-                type="checkbox"
-              />
-              Enviar confirmación inmediata por WhatsApp
-            </label>
-            {sendConfirmation ? (
-              <label className="text-sm sm:col-span-2">
-                Contacto destinatario
+      <Dialog
+        onOpenChange={(open) => {
+          setAppointmentDialogOpen(open);
+          if (!open) {
+            setOutsideScheduleConfirmation(undefined);
+            setPatientRegistrationOpen(false);
+          }
+        }}
+        open={appointmentDialogOpen}
+      >
+        <DialogContent aria-describedby="new-appointment-description">
+          <DialogDismissButton />
+          <DialogHeader>
+            <DialogTitle>Nueva Cita manual</DialogTitle>
+            <DialogDescription id="new-appointment-description">
+              Seleccione un Paciente, una Oferta de servicio y el inicio de la
+              atención.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-6 space-y-4">
+            <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+              <label className="text-sm">
+                Paciente
                 <NativeSelect
                   className={inputClass}
-                  disabled={selectedPatient === undefined}
-                  name="notificationRecipientContactId"
+                  disabled={formData.data?.patients.length === 0}
+                  name="patientId"
+                  onChange={(event) => setPatientId(event.target.value)}
                   required
+                  value={patientId}
                 >
                   <NativeSelectOption value="">
-                    Seleccione un Contacto vinculado
+                    Seleccione un Paciente
                   </NativeSelectOption>
-                  {selectedPatient?.contacts.map((contact) => (
-                    <NativeSelectOption key={contact.id} value={contact.id}>
-                      {contact.name} · {contact.phoneE164}
+                  {formData.data?.patients.map((patient) => (
+                    <NativeSelectOption key={patient.id} value={patient.id}>
+                      {patient.name}
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
               </label>
-            ) : null}
-            <label className="text-sm">
-              Inicio
-              <input
-                className={inputClass}
-                name="startsAt"
-                required
-                type="datetime-local"
-              />
-            </label>
-            <button
-              className={buttonClass}
-              disabled={
-                create.isPending ||
-                registerAdministrativeRecords.isPending ||
-                formData.data?.patients.length === 0 ||
-                formData.data?.offers.length === 0
-              }
-              type="submit"
-            >
-              {create.isPending ? "Validando…" : "Crear Cita manual"}
-            </button>
-          </form>
-          <div className="border-border rounded-lg border p-3">
-            <button
-              className={secondaryButtonClass}
-              onClick={() => setRecordRegistrationOpen((open) => !open)}
-              type="button"
-            >
-              {recordRegistrationOpen
-                ? "Cerrar registro de Paciente"
-                : "Registrar Paciente nuevo"}
-            </button>
-            {recordRegistrationOpen ? (
-              <form
-                className="mt-3 grid gap-2 sm:grid-cols-2"
-                onSubmit={registerRecords}
-              >
-                <label className="text-sm">
-                  Nombre del Contacto
-                  <input className={inputClass} name="contactName" required />
-                </label>
-                <label className="text-sm">
-                  Teléfono E.164 del Contacto
-                  <input
-                    className={inputClass}
-                    name="phone"
-                    placeholder="+50371234567"
-                    required
-                    type="tel"
-                  />
-                </label>
-                <label className="text-sm">
-                  Nombre del Paciente
-                  <input className={inputClass} name="patientName" required />
-                </label>
-                <label className="text-sm">
-                  Fecha de nacimiento del Paciente
-                  <input
-                    className={inputClass}
-                    name="birthDate"
-                    required
-                    type="date"
-                  />
-                </label>
-                <button
-                  className={buttonClass}
-                  disabled={registerAdministrativeRecords.isPending}
-                  type="submit"
+              <label className="text-sm">
+                Oferta de servicio
+                <NativeSelect
+                  className={inputClass}
+                  disabled={formData.data?.offers.length === 0}
+                  name="serviceOfferId"
+                  onChange={(event) => setServiceOfferId(event.target.value)}
+                  required
+                  value={serviceOfferId}
                 >
-                  {registerAdministrativeRecords.isPending
-                    ? "Registrando…"
-                    : "Registrar Contacto y Paciente"}
-                </button>
-              </form>
-            ) : null}
-          </div>
-          {recordRegistrationResult ? (
-            <p
-              aria-live="polite"
-              className="text-primary text-sm"
-              role="status"
-            >
-              {recordRegistrationResult}
-            </p>
-          ) : null}
-          {formData.data?.patients.length === 0 ? (
-            <p className="text-sm text-amber-800">
-              Registre y vincule al menos un Contacto antes de crear la Cita.
-            </p>
-          ) : null}
-          {create.error || registerAdministrativeRecords.error ? (
-            <p className="text-destructive text-sm" role="alert">
-              {(create.error ?? registerAdministrativeRecords.error)?.message}
-            </p>
-          ) : null}
-          {outsideScheduleConfirmation ? (
-            <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              <p>
-                La Cita no cabe por completo en el Horario vigente. Confirme la
-                excepción para crearla sin modificar los demás controles de
-                capacidad.
-              </p>
+                  <NativeSelectOption value="">
+                    Seleccione una Oferta
+                  </NativeSelectOption>
+                  {formData.data?.offers.map((offer) => (
+                    <NativeSelectOption
+                      key={offer.serviceOfferId}
+                      value={offer.serviceOfferId}
+                    >
+                      {offer.doctorName} · {offer.serviceName}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </label>
+              <label className="text-sm">
+                Inicio
+                <input
+                  className={inputClass}
+                  name="startsAt"
+                  onChange={(event) =>
+                    setAppointmentStartsAt(event.target.value)
+                  }
+                  required
+                  type="datetime-local"
+                  value={appointmentStartsAt}
+                />
+              </label>
+              <label className="flex items-center gap-2 self-end pb-2 text-sm">
+                <input
+                  checked={sendConfirmation}
+                  onChange={(event) =>
+                    setSendConfirmation(event.target.checked)
+                  }
+                  type="checkbox"
+                />
+                Enviar confirmación inmediata por WhatsApp
+              </label>
+              {sendConfirmation ? (
+                <label className="text-sm sm:col-span-2">
+                  Contacto destinatario
+                  <NativeSelect
+                    className={inputClass}
+                    disabled={selectedPatient === undefined}
+                    name="notificationRecipientContactId"
+                    required
+                  >
+                    <NativeSelectOption value="">
+                      Seleccione un Contacto vinculado
+                    </NativeSelectOption>
+                    {selectedPatient?.contacts.map((contact) => (
+                      <NativeSelectOption key={contact.id} value={contact.id}>
+                        {contact.name} · {contact.phoneE164}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </label>
+              ) : null}
+              <Button
+                className="sm:col-span-2 sm:w-fit"
+                disabled={
+                  create.isPending ||
+                  registerAdministrativeRecords.isPending ||
+                  formData.data?.patients.length === 0 ||
+                  formData.data?.offers.length === 0
+                }
+                type="submit"
+              >
+                {create.isPending ? "Validando…" : "Crear Cita manual"}
+              </Button>
+            </form>
+            <div className="border-border rounded-lg border p-3">
               <button
                 className={secondaryButtonClass}
-                disabled={create.isPending}
-                onClick={() =>
-                  create.mutate({
-                    ...outsideScheduleConfirmation,
-                    outsideScheduleConfirmed: true,
-                  })
-                }
+                onClick={() => setPatientRegistrationOpen((open) => !open)}
                 type="button"
               >
-                Confirmar Cita fuera de horario
+                {patientRegistrationOpen
+                  ? "Cerrar registro de Paciente"
+                  : "Registrar Paciente nuevo"}
               </button>
+              {patientRegistrationOpen ? (
+                <form
+                  className="mt-3 grid gap-4 sm:grid-cols-2"
+                  onSubmit={registerRecords}
+                >
+                  <label className="text-sm">
+                    Nombre del Contacto
+                    <input className={inputClass} name="contactName" required />
+                  </label>
+                  <label className="text-sm">
+                    Teléfono E.164 del Contacto
+                    <input
+                      className={inputClass}
+                      name="phone"
+                      placeholder="+50371234567"
+                      required
+                      type="tel"
+                    />
+                  </label>
+                  <label className="text-sm">
+                    Nombre del Paciente
+                    <input className={inputClass} name="patientName" required />
+                  </label>
+                  <label className="text-sm">
+                    Fecha de nacimiento del Paciente
+                    <input
+                      className={inputClass}
+                      name="birthDate"
+                      required
+                      type="date"
+                    />
+                  </label>
+                  <Button
+                    className="sm:col-span-2 sm:w-fit"
+                    disabled={registerAdministrativeRecords.isPending}
+                    type="submit"
+                  >
+                    {registerAdministrativeRecords.isPending
+                      ? "Registrando…"
+                      : "Registrar Contacto y Paciente"}
+                  </Button>
+                </form>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      </details>
-      <section aria-labelledby="agenda-heading" className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-primary text-xs font-semibold tracking-[0.14em] uppercase">
-              Operación diaria de agenda
-            </p>
-            <h3 className="mt-1 text-xl font-semibold" id="agenda-heading">
-              Agenda de la Clínica
-            </h3>
-            <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
-              Citas activas y Bloqueos posicionados por el período que ocupa
-              cada Médico.
-            </p>
+            {recordRegistrationResult ? (
+              <p
+                aria-live="polite"
+                className="text-primary text-sm"
+                role="status"
+              >
+                {recordRegistrationResult}
+              </p>
+            ) : null}
+            {formData.data?.patients.length === 0 ? (
+              <p className="text-sm text-amber-800">
+                Registre y vincule al menos un Contacto antes de crear la Cita.
+              </p>
+            ) : null}
+            {create.error || registerAdministrativeRecords.error ? (
+              <p className="text-destructive text-sm" role="alert">
+                {(create.error ?? registerAdministrativeRecords.error)?.message}
+              </p>
+            ) : null}
+            {outsideScheduleConfirmation ? (
+              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <p>
+                  La Cita no cabe por completo en el Horario vigente. Confirme
+                  la excepción para crearla sin modificar los demás controles de
+                  capacidad.
+                </p>
+                <Button
+                  disabled={create.isPending}
+                  onClick={() =>
+                    create.mutate({
+                      ...outsideScheduleConfirmation,
+                      outsideScheduleConfirmed: true,
+                    })
+                  }
+                  type="button"
+                  variant="outline"
+                >
+                  Confirmar Cita fuera de horario
+                </Button>
+              </div>
+            ) : null}
           </div>
-          <div className="flex items-center gap-1 rounded-lg border p-1">
+          <DialogFooter>
+            <DialogClose type="button">Cancelar</DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <section aria-labelledby="agenda-heading" className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-xl font-semibold" id="agenda-heading">
+            Agenda de la Clínica
+          </h3>
+          <div className="flex items-center gap-2">
             <Button
-              aria-label="Ir al período anterior"
-              onClick={() =>
-                updateCalendarUrl({
-                  date: shiftCalendarDate(calendarDate, view, -1),
-                })
-              }
-              size="icon-lg"
+              onClick={() => updateCalendarUrl({ date: today() })}
+              size="sm"
               type="button"
-              variant="ghost"
+              variant="outline"
             >
-              <ChevronLeft aria-hidden="true" />
+              Hoy
             </Button>
-            <span className="min-w-44 px-2 text-center text-sm font-medium tabular-nums">
-              {formatCalendarRange(visibleDates)}
-            </span>
-            <Button
-              aria-label="Ir al período siguiente"
-              onClick={() =>
-                updateCalendarUrl({
-                  date: shiftCalendarDate(calendarDate, view, 1),
-                })
-              }
-              size="icon-lg"
-              type="button"
-              variant="ghost"
-            >
-              <ChevronRight aria-hidden="true" />
-            </Button>
+            <div className="border-border flex items-center gap-1 rounded-lg border p-1">
+              <Button
+                aria-label="Ir al período anterior"
+                onClick={() =>
+                  updateCalendarUrl({
+                    date: shiftCalendarDate(calendarDate, view, -1),
+                  })
+                }
+                size="icon-lg"
+                type="button"
+                variant="ghost"
+              >
+                <ChevronLeft aria-hidden="true" />
+              </Button>
+              <span
+                aria-label={`Período ${formatCalendarRange(visibleDates)}`}
+                className="min-w-44 px-2 text-center text-sm font-semibold capitalize"
+              >
+                {formatCalendarTitle(visibleDates)}
+              </span>
+              <Button
+                aria-label="Ir al período siguiente"
+                onClick={() =>
+                  updateCalendarUrl({
+                    date: shiftCalendarDate(calendarDate, view, 1),
+                  })
+                }
+                size="icon-lg"
+                type="button"
+                variant="ghost"
+              >
+                <ChevronRight aria-hidden="true" />
+              </Button>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <label className="text-sm font-medium" htmlFor="calendar-date">
-            Fecha
+            Ir a fecha
             <input
-              className={inputClass}
+              aria-label="Ir a fecha"
+              className={toolbarInputClass}
               id="calendar-date"
               onChange={(event) =>
                 updateCalendarUrl({ date: event.target.value })
@@ -539,6 +610,7 @@ export function ManualAppointmentsSection() {
             </span>
             <NativeSelect
               aria-labelledby="calendar-doctor-label"
+              className={toolbarSelectClass}
               onChange={(event) =>
                 updateCalendarUrl({ doctorId: event.target.value })
               }
@@ -574,18 +646,26 @@ export function ManualAppointmentsSection() {
         </div>
 
         {!isLoading && !queryError ? (
-          <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-4">
+          <div
+            className={
+              selected === undefined
+                ? ""
+                : "lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start lg:gap-4"
+            }
+          >
             <div className="min-w-0 space-y-4">
+              <CalendarTimeline
+                dates={visibleDates}
+                entries={calendarEntries}
+                onCreate={(startsAt) => openAppointmentDialog(startsAt)}
+                onSelect={(id) => updateCalendarUrl({ selectedId: id }, "push")}
+                showDoctor={doctorId === ""}
+              />
               {calendarEntries.length > 0 ? (
-                <>
-                  <CalendarTimeline
-                    dates={visibleDates}
-                    entries={calendarEntries}
-                    onSelect={(id) =>
-                      updateCalendarUrl({ selectedId: id }, "push")
-                    }
-                    showDoctor={doctorId === ""}
-                  />
+                <details className="border-border rounded-xl border">
+                  <summary className="focus-visible:ring-ring/30 cursor-pointer rounded-xl px-4 py-3 text-sm font-medium outline-none focus-visible:ring-3">
+                    Ver agenda como lista
+                  </summary>
                   <CalendarAccessibleList
                     entries={calendarEntries}
                     onSelect={(id) =>
@@ -593,20 +673,11 @@ export function ManualAppointmentsSection() {
                     }
                     showDoctor={doctorId === ""}
                   />
-                </>
+                </details>
               ) : (
-                <div className="border-border bg-muted/30 rounded-xl border border-dashed p-8 text-center">
-                  <CalendarDays
-                    aria-hidden="true"
-                    className="text-muted-foreground mx-auto size-8"
-                  />
-                  <p className="mt-3 font-medium">
-                    No hay Citas activas ni Bloqueos en este período.
-                  </p>
-                  <p className="text-muted-foreground mt-1 text-sm">
-                    Pruebe otra fecha o quite el filtro de Médico.
-                  </p>
-                </div>
+                <p className="sr-only">
+                  No hay Citas activas ni Bloqueos en este período.
+                </p>
               )}
               <CancelledAppointmentsList
                 appointments={cancelledAppointments.data ?? []}
@@ -635,63 +706,65 @@ export function ManualAppointmentsSection() {
 function CalendarTimeline({
   dates,
   entries,
+  onCreate,
   onSelect,
   showDoctor,
 }: {
   dates: readonly string[];
   entries: readonly CalendarEntry[];
+  onCreate: (startsAt: string) => void;
   onSelect: (id: string) => void;
   showDoctor: boolean;
 }) {
   const bounds = calendarGridBounds(entries);
   const segments = calendarSegments(entries, dates, bounds);
   const hours = timelineHours(bounds);
+  const currentDate = today();
   const gridHeight = Math.max(
-    480,
-    ((bounds.endMinute - bounds.startMinute) / 60) * 64,
+    720,
+    ((bounds.endMinute - bounds.startMinute) / 60) * 72,
   );
   const columns = `repeat(${dates.length}, minmax(${dates.length === 1 ? "16rem" : "9rem"}, 1fr))`;
+  const nowIndicator = calendarNowIndicator(currentDate, dates, bounds);
 
   return (
     <Card
-      className="overflow-hidden"
+      className="border-border overflow-hidden rounded-2xl"
+      data-calendar-list="true"
       data-calendar-view={dates.length === 1 ? "day" : "week"}
       size="sm"
     >
-      <CardHeader className="bg-muted/30 border-b py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <CardTitle>Cuadrícula temporal</CardTitle>
-            <CardDescription>
-              El período sombreado incluye duración y buffer de la Oferta
-              cotizada.
-            </CardDescription>
-          </div>
-          <div aria-label="Leyenda del Calendario" className="flex gap-2">
-            <Badge>Cita</Badge>
-            <Badge variant="warning">Bloqueo</Badge>
-          </div>
-        </div>
-      </CardHeader>
       <CardContent className="p-0">
-        <div className="overflow-x-auto" tabIndex={-1}>
+        <div
+          className="max-h-[calc(100dvh-18rem)] min-h-[30rem] overflow-auto"
+          tabIndex={-1}
+        >
           <div
             className="min-w-[44rem]"
             style={{ minWidth: dates.length === 1 ? "44rem" : undefined }}
           >
             <div
-              className="grid border-b"
+              className="bg-card sticky top-0 z-10 grid border-b"
               style={{ gridTemplateColumns: `4.5rem ${columns}` }}
             >
-              <div className="text-muted-foreground px-2 py-3 text-[0.7rem] font-semibold tracking-wide uppercase">
-                Hora
-              </div>
+              <div className="border-border bg-muted/20 border-r" />
               {dates.map((date) => (
-                <div className="border-l px-3 py-3" key={date}>
-                  <p className="text-sm font-semibold">{formatDay(date)}</p>
-                  <p className="text-muted-foreground text-xs">
-                    {formatCalendarDate(date)}
-                  </p>
+                <div
+                  className={`border-border flex min-h-20 flex-col items-center justify-center gap-1 border-l px-3 py-2 text-center ${date === currentDate ? "bg-primary/5" : ""}`}
+                  data-calendar-day="true"
+                  key={date}
+                >
+                  <span className="text-muted-foreground text-[0.68rem] font-semibold tracking-[0.14em] uppercase">
+                    {formatWeekday(date)}
+                  </span>
+                  <span
+                    className={`flex size-10 items-center justify-center rounded-full text-xl font-semibold tabular-nums ${date === currentDate ? "bg-primary text-primary-foreground" : ""}`}
+                  >
+                    {formatDayNumber(date)}
+                  </span>
+                  <span className="text-muted-foreground text-xs">
+                    {formatMonthShort(date)}
+                  </span>
                 </div>
               ))}
             </div>
@@ -700,7 +773,7 @@ function CalendarTimeline({
               style={{ gridTemplateColumns: `4.5rem minmax(0, 1fr)` }}
             >
               <div
-                className="text-muted-foreground relative text-[0.7rem] tabular-nums"
+                className="bg-muted/20 text-muted-foreground relative border-r text-[0.7rem] tabular-nums"
                 style={{ height: gridHeight }}
               >
                 {hours.map((minute) => (
@@ -715,7 +788,10 @@ function CalendarTimeline({
                   </span>
                 ))}
               </div>
-              <div className="relative" style={{ height: gridHeight }}>
+              <div
+                className="bg-background relative"
+                style={{ height: gridHeight }}
+              >
                 <div
                   className="pointer-events-none absolute inset-0 grid"
                   style={{ gridTemplateColumns: columns }}
@@ -728,9 +804,20 @@ function CalendarTimeline({
                   <div
                     aria-hidden="true"
                     className="border-border/70 pointer-events-none absolute inset-x-0 border-t"
+                    data-calendar-grid-hour="true"
                     key={minute}
                     style={{
                       top: `${((minute - bounds.startMinute) / (bounds.endMinute - bounds.startMinute)) * 100}%`,
+                    }}
+                  />
+                ))}
+                {hours.slice(0, -1).map((minute) => (
+                  <div
+                    aria-hidden="true"
+                    className="border-border/40 pointer-events-none absolute inset-x-0 border-t border-dashed"
+                    key={`half-${minute}`}
+                    style={{
+                      top: `${((minute + 30 - bounds.startMinute) / (bounds.endMinute - bounds.startMinute)) * 100}%`,
                     }}
                   />
                 ))}
@@ -740,6 +827,18 @@ function CalendarTimeline({
                 >
                   {dates.map((date) => (
                     <div className="relative" key={date}>
+                      <button
+                        aria-label={`Crear Cita en ${formatCalendarDate(date)} desde la cuadrícula temporal`}
+                        className="focus-visible:ring-ring/40 hover:bg-primary/5 focus-visible:bg-primary/10 absolute inset-0 z-0 w-full cursor-crosshair appearance-none rounded-none border-0 bg-transparent p-0 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-inset"
+                        onClick={(event) =>
+                          onCreate(
+                            `${date}T${formatInputTime(
+                              calendarMinutesFromPointer(event, bounds),
+                            )}`,
+                          )
+                        }
+                        type="button"
+                      />
                       {segments
                         .filter((segment) => segment.date === date)
                         .map((segment) => (
@@ -753,6 +852,21 @@ function CalendarTimeline({
                     </div>
                   ))}
                 </div>
+                {nowIndicator ? (
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute z-10 flex items-center"
+                    data-calendar-now-indicator="true"
+                    style={{
+                      left: `${nowIndicator.columnIndex * (100 / dates.length)}%`,
+                      top: `${nowIndicator.topPercent}%`,
+                      width: `${100 / dates.length}%`,
+                    }}
+                  >
+                    <span className="bg-destructive size-2.5 -translate-x-1/2 rounded-full" />
+                    <span className="bg-destructive h-0.5 flex-1" />
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -787,7 +901,7 @@ function CalendarEntryCard({
   return (
     <button
       aria-label={description}
-      className={`focus-visible:ring-ring/40 absolute min-h-11 overflow-hidden rounded-lg border p-2 text-left text-xs shadow-sm transition-[background-color,border-color,box-shadow] outline-none focus-visible:ring-3 ${
+      className={`focus-visible:ring-ring/40 absolute z-10 min-h-11 overflow-hidden rounded-lg border p-2 text-left text-xs shadow-sm transition-[background-color,border-color,box-shadow] outline-none focus-visible:ring-3 ${
         block
           ? "border-amber-300 bg-amber-50 text-amber-950 hover:border-amber-500"
           : "border-primary/30 bg-primary/10 text-foreground hover:border-primary"
@@ -956,6 +1070,8 @@ function CalendarSelection({
 }) {
   const selected = appointment ?? block;
   const isMobile = useIsMobile();
+  if (selected === undefined) return null;
+
   const detail = block ? (
     <AvailabilityBlockDetail block={block} />
   ) : (
@@ -969,21 +1085,14 @@ function CalendarSelection({
   return (
     <>
       <div className="hidden lg:block">
-        {selected ? (
-          <div className="border-border bg-card rounded-xl border p-1 shadow-sm">
-            {detail}
-            <div className="border-border mt-4 border-t px-4 py-3">
-              <Button onClick={onClose} type="button" variant="ghost">
-                Cerrar detalle
-              </Button>
-            </div>
+        <div className="border-border bg-card rounded-xl border p-1 shadow-sm">
+          {detail}
+          <div className="border-border mt-4 border-t px-4 py-3">
+            <Button onClick={onClose} type="button" variant="ghost">
+              Cerrar detalle
+            </Button>
           </div>
-        ) : (
-          <aside className="border-border text-muted-foreground rounded-xl border border-dashed p-5 text-sm">
-            Seleccione una Cita o Bloqueo para conservar su detalle junto a la
-            Agenda.
-          </aside>
-        )}
+        </div>
       </div>
       <Sheet
         onOpenChange={(open) => {
@@ -1319,6 +1428,22 @@ function formatCalendarRange(dates: readonly string[]) {
   return `${formatCalendarDate(firstDate)} — ${formatCalendarDate(lastDate)}`;
 }
 
+function formatCalendarTitle(dates: readonly string[]) {
+  const firstDate = dates[0];
+  const lastDate = dates.at(-1);
+  if (firstDate === undefined || lastDate === undefined) return "Sin fechas";
+
+  const format = (value: string) =>
+    new Intl.DateTimeFormat("es-SV", {
+      month: "long",
+      year: "numeric",
+      timeZone: CLINIC_TIMEZONE,
+    }).format(new Date(`${value}T12:00:00${CLINIC_UTC_OFFSET}`));
+  const firstLabel = format(firstDate);
+  const lastLabel = format(lastDate);
+  return firstLabel === lastLabel ? firstLabel : `${firstLabel} — ${lastLabel}`;
+}
+
 function formatCalendarDate(value: string) {
   return new Intl.DateTimeFormat("es-SV", {
     day: "numeric",
@@ -1337,9 +1462,81 @@ function timelineHours(bounds: { endMinute: number; startMinute: number }) {
 
 function formatGridTime(minute: number) {
   const hour = Math.floor(minute / 60) % 24;
-  const period = hour < 12 ? "a. m." : "p. m.";
+  const period = hour < 12 ? "AM" : "PM";
   const twelveHour = hour % 12 || 12;
-  return `${twelveHour}:${String(minute % 60).padStart(2, "0")} ${period}`;
+  return minute % 60 === 0
+    ? `${twelveHour} ${period}`
+    : `${twelveHour}:${String(minute % 60).padStart(2, "0")} ${period}`;
+}
+
+function formatInputTime(minute: number) {
+  const hour = Math.floor(minute / 60) % 24;
+  return `${String(hour).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+}
+
+function calendarMinutesFromPointer(
+  event: MouseEvent<HTMLButtonElement>,
+  bounds: { endMinute: number; startMinute: number },
+) {
+  const defaultMinute = 9 * 60;
+  if (event.detail === 0) {
+    return Math.min(
+      bounds.endMinute - 5,
+      Math.max(bounds.startMinute, defaultMinute),
+    );
+  }
+
+  const rect = event.currentTarget.getBoundingClientRect();
+  const ratio = Math.max(
+    0,
+    Math.min(1, (event.clientY - rect.top) / rect.height),
+  );
+  const rawMinute =
+    bounds.startMinute + ratio * (bounds.endMinute - bounds.startMinute);
+  return Math.min(
+    bounds.endMinute - 5,
+    Math.max(bounds.startMinute, Math.round(rawMinute / 5) * 5),
+  );
+}
+
+function formatWeekday(value: string) {
+  return new Intl.DateTimeFormat("es-SV", {
+    timeZone: CLINIC_TIMEZONE,
+    weekday: "short",
+  }).format(new Date(`${value}T12:00:00${CLINIC_UTC_OFFSET}`));
+}
+
+function formatDayNumber(value: string) {
+  return new Intl.DateTimeFormat("es-SV", {
+    day: "numeric",
+    timeZone: CLINIC_TIMEZONE,
+  }).format(new Date(`${value}T12:00:00${CLINIC_UTC_OFFSET}`));
+}
+
+function formatMonthShort(value: string) {
+  return new Intl.DateTimeFormat("es-SV", {
+    month: "short",
+    timeZone: CLINIC_TIMEZONE,
+  }).format(new Date(`${value}T12:00:00${CLINIC_UTC_OFFSET}`));
+}
+
+function calendarNowIndicator(
+  currentDate: string,
+  dates: readonly string[],
+  bounds: { endMinute: number; startMinute: number },
+) {
+  if (!dates.includes(currentDate)) return undefined;
+  const currentMinute = localClockMinutes(new Date());
+  if (currentMinute < bounds.startMinute || currentMinute > bounds.endMinute) {
+    return undefined;
+  }
+  return {
+    columnIndex: dates.indexOf(currentDate),
+    topPercent:
+      ((currentMinute - bounds.startMinute) /
+        (bounds.endMinute - bounds.startMinute)) *
+      100,
+  };
 }
 
 function isCalendarBlock(
@@ -1358,15 +1555,6 @@ function formatClinicDate(value: Date | string) {
     timeStyle: "short",
     timeZone: CLINIC_TIMEZONE,
   }).format(new Date(value));
-}
-
-function formatDay(value: string) {
-  return new Intl.DateTimeFormat("es-SV", {
-    day: "numeric",
-    month: "short",
-    timeZone: CLINIC_TIMEZONE,
-    weekday: "short",
-  }).format(new Date(`${value}T12:00:00${CLINIC_UTC_OFFSET}`));
 }
 
 function formatTime(value: Date | string) {
@@ -1394,14 +1582,29 @@ function localDate(value: Date | string) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+function localClockMinutes(value: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
+    timeZone: CLINIC_TIMEZONE,
+  }).formatToParts(value);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+  const minute = Number(
+    parts.find((part) => part.type === "minute")?.value ?? 0,
+  );
+  return hour * 60 + minute;
+}
+
 function today() {
   return localDate(new Date());
 }
 
 const inputClass =
   "border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:ring-ring/30 mt-1 min-h-10 w-full rounded border px-3 py-2 outline-none focus-visible:ring-3";
-const buttonClass =
-  "bg-primary text-primary-foreground hover:bg-primary/80 focus-visible:ring-ring/30 min-h-11 w-fit self-end rounded px-4 py-2 font-medium outline-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50";
+const toolbarInputClass =
+  "border-input bg-background text-foreground focus-visible:ring-ring/30 mt-1 min-h-10 w-40 rounded-lg border px-3 py-2 outline-none focus-visible:ring-3";
+const toolbarSelectClass = "mt-1 min-w-52";
 const secondaryButtonClass =
   "border-border hover:bg-muted focus-visible:ring-ring/30 min-h-11 rounded border px-3 py-2 text-sm outline-none focus-visible:ring-3";
 const activeTabClass =

@@ -7,10 +7,7 @@ export default async function CalendarPage() {
   await requirePanaceaDestination("calendar");
 
   return (
-    <PanaceaDestinationPage
-      description="Consulte la semana completa, cambie a la vista diaria y gestione la Operación diaria de agenda."
-      title="Calendario"
-    >
+    <PanaceaDestinationPage title="Calendario">
       <ManualAppointmentsSection />
     </PanaceaDestinationPage>
   );
