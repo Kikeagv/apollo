@@ -190,6 +190,28 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
     );
     await page.goto("/calendario?date=2026-09-16");
     await waitForPanaceaInteractivity(page);
+    await expect(
+      page.getByRole("status", { name: "Comprobando sesiones de soporte…" }),
+    ).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const header = document.querySelector(
+            'main[data-sidebar="inset"] > header',
+          );
+          const heading = document.querySelector(
+            'main[data-sidebar="inset"] h1',
+          );
+          if (header === null || heading === null) {
+            return Number.POSITIVE_INFINITY;
+          }
+          return (
+            heading.getBoundingClientRect().top -
+            header.getBoundingClientRect().bottom
+          );
+        }),
+      )
+      .toBeLessThan(40);
 
     const sidebar = page.locator('aside[data-sidebar="sidebar"]');
     await expect(sidebar).toBeVisible();

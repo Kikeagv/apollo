@@ -68,7 +68,7 @@ export function PanaceaShell({ children, clinic, user }: PanaceaShellProps) {
       <SidebarInset>
         <ClinicSessionActivity />
         <PanaceaHeader clinic={clinic} user={user} />
-        <div className="border-border bg-background border-b px-4 py-3 sm:px-6">
+        <div className="border-border bg-background border-b px-4 py-3 empty:hidden sm:px-6">
           <SupportAccessSection />
         </div>
         <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
