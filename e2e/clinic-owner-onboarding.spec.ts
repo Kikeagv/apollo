@@ -267,7 +267,10 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
     await appointmentDialog
       .getByLabel("Enviar confirmación inmediata por WhatsApp")
       .check();
-    await appointmentDialog.getByRole("button", { name: "Cerrar" }).click();
+    await expect(
+      appointmentDialog.getByRole("button", { name: "Cerrar" }),
+    ).toHaveCount(0);
+    await appointmentDialog.getByRole("button", { name: "Cancelar" }).click();
     await expect(appointmentDialog).not.toBeVisible();
 
     await calendar
@@ -278,6 +281,8 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
         .getByRole("dialog", { name: "Nueva Cita manual" })
         .getByLabel("Enviar confirmación inmediata por WhatsApp"),
     ).not.toBeChecked();
+    await page.keyboard.press("Escape");
+    await expect(appointmentDialog).not.toBeVisible();
   } finally {
     await fixture.cleanup();
   }

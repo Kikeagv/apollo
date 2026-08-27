@@ -43,7 +43,6 @@ import {
   Dialog,
   DialogClose,
   DialogDescription,
-  DialogDismissButton,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -322,7 +321,6 @@ export function ManualAppointmentsSection() {
         open={appointmentDialogOpen}
       >
         <DialogContent aria-describedby="new-appointment-description">
-          <DialogDismissButton />
           <DialogHeader>
             <DialogTitle>Nueva Cita manual</DialogTitle>
             <DialogDescription id="new-appointment-description">

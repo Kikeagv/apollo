@@ -1,7 +1,6 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { X } from "lucide-react";
 import * as React from "react";
 
 import { buttonVariants } from "~/components/ui/button";
@@ -86,22 +85,10 @@ function DialogClose({
   );
 }
 
-function DialogDismissButton() {
-  return (
-    <DialogPrimitive.Close
-      aria-label="Cerrar"
-      className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/30 absolute top-4 right-4 inline-flex size-10 items-center justify-center rounded-lg transition-colors focus-visible:ring-3 focus-visible:outline-none"
-    >
-      <X aria-hidden="true" className="size-4" />
-    </DialogPrimitive.Close>
-  );
-}
-
 export {
   Dialog,
   DialogClose,
   DialogDescription,
-  DialogDismissButton,
   DialogContent,
   DialogFooter,
   DialogHeader,
