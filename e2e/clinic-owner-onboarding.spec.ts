@@ -188,6 +188,8 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
       fixture.invitationToken,
       fixture.ownerEmail,
     );
+    await page.goto("/calendario?date=2026-09-16");
+    await waitForPanaceaInteractivity(page);
 
     const sidebar = page.locator('aside[data-sidebar="sidebar"]');
     await expect(sidebar).toBeVisible();
@@ -212,6 +214,19 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
     await page.setViewportSize({ height: 720, width: 1280 });
 
     const calendar = calendarSection(page);
+    await expect(
+      calendar.getByText("13 sept 2026 — 19 sept 2026", { exact: true }),
+    ).toBeVisible();
+    await calendar.getByRole("button", { name: "Día" }).click();
+    await expect(calendar.locator('[data-calendar-view="day"]')).toBeVisible();
+    await expect(
+      calendar.getByText("16 sept 2026", { exact: true }),
+    ).toBeVisible();
+    await calendar.getByRole("button", { name: "Semana" }).click();
+    await expect(calendar.locator('[data-calendar-view="week"]')).toBeVisible();
+    await expect(
+      calendar.getByText("13 sept 2026 — 19 sept 2026", { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { level: 1, name: "Calendario" }),
     ).toBeVisible();

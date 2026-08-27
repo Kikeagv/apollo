@@ -566,7 +566,7 @@ export function ManualAppointmentsSection() {
                 aria-label={`Período ${formatCalendarRange(visibleDates)}`}
                 className="min-w-44 px-2 text-center text-sm font-semibold capitalize"
               >
-                {formatCalendarTitle(visibleDates)}
+                {formatCalendarRange(visibleDates)}
               </span>
               <Button
                 aria-label="Ir al período siguiente"
@@ -1433,22 +1433,6 @@ function formatCalendarRange(dates: readonly string[]) {
   if (firstDate === undefined || lastDate === undefined) return "Sin fechas";
   if (firstDate === lastDate) return formatCalendarDate(firstDate);
   return `${formatCalendarDate(firstDate)} — ${formatCalendarDate(lastDate)}`;
-}
-
-function formatCalendarTitle(dates: readonly string[]) {
-  const firstDate = dates[0];
-  const lastDate = dates.at(-1);
-  if (firstDate === undefined || lastDate === undefined) return "Sin fechas";
-
-  const format = (value: string) =>
-    new Intl.DateTimeFormat("es-SV", {
-      month: "long",
-      year: "numeric",
-      timeZone: CLINIC_TIMEZONE,
-    }).format(new Date(`${value}T12:00:00${CLINIC_UTC_OFFSET}`));
-  const firstLabel = format(firstDate);
-  const lastLabel = format(lastDate);
-  return firstLabel === lastLabel ? firstLabel : `${firstLabel} — ${lastLabel}`;
 }
 
 function formatCalendarDate(value: string) {
