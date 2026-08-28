@@ -1214,6 +1214,7 @@ function CalendarSelection({
           if (!open) onClose();
         }}
         open={isMobile && selected !== undefined}
+        swipeDirection="right"
       >
         <SheetContent
           className="w-[min(100vw,32rem)] overflow-y-auto p-0"

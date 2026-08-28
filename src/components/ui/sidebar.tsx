@@ -109,7 +109,11 @@ function Sidebar({
 
   if (isMobile) {
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile}>
+      <Sheet
+        onOpenChange={setOpenMobile}
+        open={openMobile}
+        swipeDirection={side}
+      >
         <SheetContent
           aria-label="Navegación principal"
           className="bg-card w-[min(18rem,calc(100vw-2rem))] gap-0 p-0"

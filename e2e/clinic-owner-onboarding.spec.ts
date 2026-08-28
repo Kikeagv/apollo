@@ -181,6 +181,15 @@ test("Pacientes completa el alta Paciente-primero y reutiliza el Contacto por te
   page,
 }) => {
   const fixture = await createFixture();
+  const drawerViewportErrors: string[] = [];
+  page.on("console", (message) => {
+    if (
+      message.type() === "error" &&
+      message.text().includes("<Drawer.Popup> expected to be rendered within")
+    ) {
+      drawerViewportErrors.push(message.text());
+    }
+  });
 
   try {
     await activateAndOpenPanacea(
@@ -213,6 +222,7 @@ test("Pacientes completa el alta Paciente-primero y reutiliza el Contacto por te
     await expect(
       page.getByRole("heading", { name: "Contactos y Vínculos" }),
     ).toBeVisible();
+    expect(drawerViewportErrors).toEqual([]);
     await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
 
     await page.getByRole("button", { name: "Cerrar panel" }).click();

@@ -525,6 +525,7 @@ export function AdministrativeRecordsSection() {
           if (!open) closePatientDetail();
         }}
         open={selectedPatientId !== undefined}
+        swipeDirection="right"
       >
         <SheetContent className="!w-[min(42rem,calc(100vw-1rem))] overflow-y-auto p-0">
           <SheetHeader className="border-border border-b pr-16">
