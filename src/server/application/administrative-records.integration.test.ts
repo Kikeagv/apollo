@@ -6,18 +6,28 @@ import { describe, expect, it } from "vitest";
 import {
   createContact,
   createContactPatientLink,
+  createIncompletePatient,
   createPatient,
+  findContactByPhone,
+  getPatientAdministrativeDetail,
+  addPatientContact,
   listAdministrativeRecords,
+  listPatientDirectory,
   registerAdministrativeRecordsForManualAppointment,
+  registerPatient,
   updateContact,
   updatePatient,
+  verifyPatientGuardianship,
 } from "./administrative-records";
 import { db } from "../db";
 import {
   inClinicTransaction,
   inSuperadminTransaction,
 } from "../db/clinic-context";
-import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-store";
+import {
+  drizzleAdministrativeRecordsStore,
+  TutorOnlyForMinorPatientError,
+} from "../db/administrative-records-store";
 import {
   apoloSuperadmins,
   clinicUsers,
@@ -356,6 +366,236 @@ describe("fichas administrativas persistentes", () => {
             },
           ],
         });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "completa el flujo Paciente-primero, conserva cardinalidad y aísla el directorio por RLS",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const first = await registerPatient(
+          {
+            birthDate: "2018-04-02",
+            clinicId: fixture.primary.clinicId,
+            contact: {
+              kind: "new",
+              name: "Ana Martínez",
+              phone: "+503 7123-4567",
+            },
+            identityId: fixture.primary.identityId,
+            patientName: "Lucía Martínez",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        const second = await registerPatient(
+          {
+            birthDate: "2015-08-11",
+            clinicId: fixture.primary.clinicId,
+            contact: { contactId: first.contact.id, kind: "existing" },
+            identityId: fixture.secretary.identityId,
+            patientName: "Mateo Martínez",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        const incomplete = await createIncompletePatient(
+          {
+            birthDate: "2020-01-10",
+            clinicId: fixture.primary.clinicId,
+            identityId: fixture.primary.identityId,
+            name: "Sofía López",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        const adult = await createPatient(
+          {
+            birthDate: "1990-01-01",
+            clinicId: fixture.primary.clinicId,
+            identityId: fixture.primary.identityId,
+            name: "Pablo Adulto",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        await expect(
+          addPatientContact(
+            {
+              clinicId: fixture.primary.clinicId,
+              contact: {
+                kind: "new",
+                name: "Tutor no válido",
+                phone: "+50370000009",
+              },
+              guardianDui: "01234567-9",
+              identityId: fixture.primary.identityId,
+              patientId: adult.id,
+              relationship: "tutor",
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).rejects.toBeInstanceOf(TutorOnlyForMinorPatientError);
+        const tutor = await addPatientContact(
+          {
+            clinicId: fixture.primary.clinicId,
+            contact: {
+              kind: "new",
+              name: "Carlos López",
+              phone: "+503 7000-0001",
+            },
+            guardianDui: "01234567-8",
+            identityId: fixture.secretary.identityId,
+            patientId: incomplete.id,
+            relationship: "tutor",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        await expect(
+          verifyPatientGuardianship(
+            {
+              clinicId: fixture.primary.clinicId,
+              identityId: fixture.primary.identityId,
+              linkId: tutor.id,
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toMatchObject({
+          guardianshipVerificationStatus: "verified",
+          id: tutor.id,
+        });
+
+        await expect(
+          findContactByPhone(
+            {
+              clinicId: fixture.primary.clinicId,
+              identityId: fixture.secretary.identityId,
+              phone: "+50370000001",
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toMatchObject({
+          id: tutor.contact.id,
+          patientIds: [incomplete.id],
+        });
+        await expect(
+          registerPatient(
+            {
+              birthDate: "2012-01-01",
+              clinicId: fixture.primary.clinicId,
+              contact: {
+                kind: "new",
+                name: "No debe duplicarse",
+                phone: "+503 7123-4567",
+              },
+              identityId: fixture.primary.identityId,
+              patientName: "No debe crearse",
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).rejects.toThrow("Ya existe un Contacto con ese teléfono");
+
+        await expect(
+          drizzleAdministrativeRecordsStore.registerPatient({
+            birthDate: "fecha inválida",
+            clinicId: fixture.primary.clinicId,
+            contact: {
+              kind: "new",
+              name: "Contacto que debe revertirse",
+              phoneE164: "+50370000008",
+            },
+            identityId: fixture.primary.identityId,
+            patientName: "Paciente que debe revertirse",
+          }),
+        ).rejects.toThrow();
+        await expect(
+          findContactByPhone(
+            {
+              clinicId: fixture.primary.clinicId,
+              identityId: fixture.primary.identityId,
+              phone: "+50370000008",
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toBeUndefined();
+
+        const directory = await listPatientDirectory(
+          {
+            clinicId: fixture.primary.clinicId,
+            identityId: fixture.secretary.identityId,
+            searchTarget: "patients",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        expect(directory.patients).toHaveLength(4);
+        expect(directory.patients).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ contactCount: 1, id: incomplete.id }),
+            expect.objectContaining({ contactCount: 1, id: first.patient.id }),
+            expect.objectContaining({ contactCount: 1, id: second.patient.id }),
+            expect.objectContaining({ contactCount: 0, id: adult.id }),
+          ]),
+        );
+        await expect(
+          listPatientDirectory(
+            {
+              clinicId: fixture.primary.clinicId,
+              identityId: fixture.secretary.identityId,
+              query: "Ana",
+              searchTarget: "contacts",
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toMatchObject({
+          contacts: [
+            {
+              id: first.contact.id,
+              patientIds: [first.patient.id, second.patient.id],
+              patientNames: ["Lucía Martínez", "Mateo Martínez"],
+            },
+          ],
+          patients: [],
+        });
+        await expect(
+          listPatientDirectory(
+            {
+              clinicId: fixture.other.clinicId,
+              identityId: fixture.other.identityId,
+              searchTarget: "patients",
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toEqual({ contacts: [], patients: [] });
+        await expect(
+          getPatientAdministrativeDetail(
+            {
+              clinicId: fixture.primary.clinicId,
+              identityId: fixture.secretary.identityId,
+              patientId: incomplete.id,
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toMatchObject({
+          contacts: [
+            {
+              contact: { id: tutor.contact.id },
+              guardianshipVerificationStatus: "verified",
+              id: tutor.id,
+              relationship: "tutor",
+            },
+          ],
+          patient: { id: incomplete.id, name: "Sofía López" },
+        });
+        await expect(
+          getPatientAdministrativeDetail(
+            {
+              clinicId: fixture.other.clinicId,
+              identityId: fixture.other.identityId,
+              patientId: incomplete.id,
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toBeUndefined();
       } finally {
         await fixture.cleanup();
       }

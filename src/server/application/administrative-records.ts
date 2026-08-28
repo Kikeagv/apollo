@@ -1,3 +1,5 @@
+import type { AppointmentEventType } from "./manual-appointments";
+
 const MAX_RECORD_NAME_LENGTH = 120;
 
 export type Contact = {
@@ -18,6 +20,75 @@ export type ContactPatientLink = {
   patientId: string;
 };
 
+export type PatientContactSelection =
+  | { kind: "existing"; contactId: string }
+  | { kind: "new"; name: string; phone: string };
+
+export type PatientRegistration = {
+  contact: Contact;
+  link: ContactPatientLink;
+  patient: Patient;
+  reusedContact: boolean;
+};
+
+export type ContactPhoneMatch = Contact & {
+  patientIds: string[];
+};
+
+export type PatientDirectoryEntry = Patient & {
+  appointmentCount: number;
+  contactCount: number;
+};
+
+export type ContactDirectoryEntry = Contact & {
+  patientIds: string[];
+  patientNames: string[];
+};
+
+export type PatientDirectory = {
+  contacts: ContactDirectoryEntry[];
+  patients: PatientDirectoryEntry[];
+};
+
+export type PatientSearchTarget = "contacts" | "patients";
+
+export type ContactPatientRelationship = "contact" | "tutor";
+export type GuardianshipVerificationStatus = "pending" | "verified";
+
+export type PatientContactLinkDetail = {
+  contact: Contact;
+  guardianshipVerificationStatus: GuardianshipVerificationStatus | null;
+  guardianDui: string | null;
+  id: string;
+  relationship: ContactPatientRelationship;
+};
+
+export type PatientAppointmentEvent = {
+  actorClinicUserId: string | null;
+  actorContactId: string | null;
+  occurredAt: Date;
+  reason: string | null;
+  recipient: Contact | null;
+  type: AppointmentEventType;
+};
+
+export type PatientAppointmentHistory = {
+  doctor: { id: string; name: string };
+  endsAt: Date;
+  events: PatientAppointmentEvent[];
+  id: string;
+  origin: "manual" | "reservation" | null;
+  service: { name: string };
+  startsAt: Date;
+  status: "confirmed" | "cancelled";
+};
+
+export type PatientAdministrativeDetail = {
+  appointments: PatientAppointmentHistory[];
+  contacts: PatientContactLinkDetail[];
+  patient: Patient;
+};
+
 export type PendingGuardianshipVerification = {
   guardianDui: string;
   id: string;
@@ -31,6 +102,46 @@ export type AdministrativeRecords = {
 };
 
 export type AdministrativeRecordsStore = {
+  addPatientContact(input: {
+    clinicId: string;
+    contact:
+      | { contactId: string; kind: "existing" }
+      | { kind: "new"; name: string; phoneE164: string };
+    guardianDui: string | null;
+    identityId: string;
+    patientId: string;
+    relationship: ContactPatientRelationship;
+  }): Promise<PatientContactLinkDetail>;
+  verifyPatientGuardianship(input: {
+    clinicId: string;
+    identityId: string;
+    linkId: string;
+  }): Promise<PatientContactLinkDetail | undefined>;
+  findContactByPhone(input: {
+    clinicId: string;
+    identityId: string;
+    phoneE164: string;
+  }): Promise<ContactPhoneMatch | undefined>;
+  getPatientAdministrativeDetail(input: {
+    clinicId: string;
+    identityId: string;
+    patientId: string;
+  }): Promise<PatientAdministrativeDetail | undefined>;
+  listPatientDirectory(input: {
+    clinicId: string;
+    identityId: string;
+    query: string;
+    searchTarget: PatientSearchTarget;
+  }): Promise<PatientDirectory>;
+  registerPatient(input: {
+    birthDate: string;
+    clinicId: string;
+    contact:
+      | { contactId: string; kind: "existing" }
+      | { kind: "new"; name: string; phoneE164: string };
+    identityId: string;
+    patientName: string;
+  }): Promise<PatientRegistration>;
   register(input: {
     birthDate: string;
     clinicId: string;
@@ -84,6 +195,132 @@ export type AdministrativeRecordsStore = {
     identityId: string;
   }): Promise<PendingGuardianshipVerification[]>;
 };
+
+/** Agrega un Contacto o Tutor sin convertirlo en principal de dominio. */
+export async function addPatientContact(
+  input: {
+    clinicId: string;
+    contact: PatientContactSelection;
+    guardianDui?: string;
+    identityId: string;
+    patientId: string;
+    relationship?: ContactPatientRelationship;
+  },
+  store: Pick<AdministrativeRecordsStore, "addPatientContact">,
+) {
+  const relationship = input.relationship ?? "contact";
+  if (relationship !== "tutor" && input.guardianDui !== undefined) {
+    throw new Error("Solo una tutela puede incluir el DUI del Tutor");
+  }
+  const guardianDui =
+    relationship === "tutor" ? validGuardianDui(input.guardianDui) : null;
+  return store.addPatientContact({
+    clinicId: input.clinicId,
+    contact:
+      input.contact.kind === "existing"
+        ? input.contact
+        : {
+            kind: "new",
+            name: requiredName(input.contact.name),
+            phoneE164: normalizeE164Phone(input.contact.phone),
+          },
+    guardianDui,
+    identityId: input.identityId,
+    patientId: input.patientId,
+    relationship,
+  });
+}
+
+/** Confirma la tutela pendiente sin borrar el Vínculo ni su evidencia administrativa. */
+export async function verifyPatientGuardianship(
+  input: { clinicId: string; identityId: string; linkId: string },
+  store: Pick<AdministrativeRecordsStore, "verifyPatientGuardianship">,
+) {
+  return store.verifyPatientGuardianship(input);
+}
+
+/** Lista Pacientes o Contactos según la tarea de búsqueda del operador. */
+export async function listPatientDirectory(
+  input: {
+    clinicId: string;
+    identityId: string;
+    query?: string;
+    searchTarget?: PatientSearchTarget;
+  },
+  store: Pick<AdministrativeRecordsStore, "listPatientDirectory">,
+) {
+  return store.listPatientDirectory({
+    clinicId: input.clinicId,
+    identityId: input.identityId,
+    query: input.query?.trim() ?? "",
+    searchTarget: input.searchTarget ?? "patients",
+  });
+}
+
+/** Consulta la ficha administrativa sin incorporar datos clínicos o conversaciones. */
+export async function getPatientAdministrativeDetail(
+  input: { clinicId: string; identityId: string; patientId: string },
+  store: Pick<AdministrativeRecordsStore, "getPatientAdministrativeDetail">,
+) {
+  return store.getPatientAdministrativeDetail(input);
+}
+
+/** Busca un Contacto por su teléfono normalizado antes de confirmar su reutilización. */
+export async function findContactByPhone(
+  input: { clinicId: string; identityId: string; phone: string },
+  store: Pick<AdministrativeRecordsStore, "findContactByPhone">,
+) {
+  return store.findContactByPhone({
+    clinicId: input.clinicId,
+    identityId: input.identityId,
+    phoneE164: normalizeE164Phone(input.phone),
+  });
+}
+
+/** Registra una ficha de Paciente y resuelve su Contacto inicial atómicamente. */
+export async function registerPatient(
+  input: {
+    birthDate: string;
+    clinicId: string;
+    contact: PatientContactSelection;
+    identityId: string;
+    patientName: string;
+  },
+  store: Pick<AdministrativeRecordsStore, "registerPatient">,
+) {
+  return store.registerPatient({
+    birthDate: validBirthDate(input.birthDate),
+    clinicId: input.clinicId,
+    contact:
+      input.contact.kind === "existing"
+        ? input.contact
+        : {
+            kind: "new",
+            name: requiredName(input.contact.name),
+            phoneE164: normalizeE164Phone(input.contact.phone),
+          },
+    identityId: input.identityId,
+    patientName: requiredName(input.patientName),
+  });
+}
+
+/** Crea explícitamente una Ficha de Paciente sin inventar un Contacto. */
+export async function createIncompletePatient(
+  input: {
+    birthDate: string;
+    clinicId: string;
+    identityId: string;
+    name: string;
+  },
+  store: Pick<AdministrativeRecordsStore, "createPatient">,
+) {
+  return store.createPatient({
+    birthDate: validBirthDate(input.birthDate),
+    clinicId: input.clinicId,
+    identityId: input.identityId,
+    name: requiredName(input.name),
+  });
+}
 
 /** Registra un Contacto administrativo identificado por su teléfono dentro de la Clínica. */
 export async function createContact(
@@ -249,4 +486,12 @@ function validBirthDate(value: string) {
     throw new Error("La fecha de nacimiento no puede estar en el futuro");
   }
   return value;
+}
+
+function validGuardianDui(value: string | undefined) {
+  const normalized = value?.trim();
+  if (normalized === undefined || !/^\d{8}-\d$/.test(normalized)) {
+    throw new Error("El DUI del Tutor debe usar el formato ########-#");
+  }
+  return normalized;
 }

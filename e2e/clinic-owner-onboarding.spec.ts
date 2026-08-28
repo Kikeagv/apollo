@@ -177,6 +177,83 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
   }
 });
 
+test("Pacientes completa el alta Paciente-primero y reutiliza el Contacto por teléfono", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    await page.goto("/pacientes");
+    await waitForPanaceaInteractivity(page);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Pacientes" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("No hay Pacientes que coincidan con la búsqueda."),
+    ).toBeVisible();
+
+    await page
+      .getByRole("button", { name: "Nuevo Paciente", exact: true })
+      .click();
+    const firstDialog = page.getByRole("dialog", { name: "Nuevo Paciente" });
+    await firstDialog.getByLabel("Nombre del Paciente").fill("Lucía E2E");
+    await firstDialog.getByLabel("Fecha de nacimiento").fill("2018-04-02");
+    await firstDialog.getByLabel("Teléfono").fill("+50371234567");
+    await firstDialog.getByLabel("Nombre del Contacto").fill("Ana E2E");
+    await firstDialog
+      .getByRole("button", { name: "Crear Paciente", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/pacientes\?patient=/);
+    await expect(page.getByText("Lucía E2E", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Contactos y Vínculos" }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
+
+    await page.getByRole("button", { name: "Cerrar panel" }).click();
+    await page
+      .getByRole("button", { name: "Nuevo Paciente", exact: true })
+      .click();
+    const secondDialog = page.getByRole("dialog", { name: "Nuevo Paciente" });
+    await secondDialog.getByLabel("Nombre del Paciente").fill("Mateo E2E");
+    await secondDialog.getByLabel("Fecha de nacimiento").fill("2015-08-11");
+    await secondDialog.getByLabel("Teléfono").fill("+503 7123-4567");
+    await expect(
+      secondDialog.getByText("Contacto existente encontrado"),
+    ).toBeVisible();
+    await secondDialog
+      .getByRole("button", { name: "Reutilizar Contacto" })
+      .click();
+    await secondDialog
+      .getByRole("button", { name: "Crear Paciente", exact: true })
+      .click();
+    await expect(
+      page.getByText("Contacto existente reutilizado."),
+    ).toBeVisible();
+    await expect(page.getByText("Mateo E2E", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Cerrar panel" }).click();
+    await page.getByLabel("Buscar por").selectOption("contacts");
+    await page.getByTestId("patient-directory-search").fill("Ana E2E");
+    await expect(
+      page.getByRole("heading", { name: "Contactos" }),
+    ).toBeVisible();
+    await expect(page.getByText("Ana E2E", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Lucía E2E", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Mateo E2E", exact: true }),
+    ).toBeVisible();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal", async ({
   page,
 }) => {
@@ -731,7 +808,8 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
       {
         contactName: "Beatriz Inline",
         patientName: "Mateo Inline",
-        phone: "+50371234568",
+        phone: "+50371234567",
+        reuseExistingContact: true,
         startsAt: "08:30",
       },
     ]) {
@@ -1206,6 +1284,7 @@ async function registerInlinePatient(
     contactName: string;
     patientName: string;
     phone?: string;
+    reuseExistingContact?: boolean;
   },
 ) {
   await calendar.locator('input[type="date"]').fill(input.careDate);
@@ -1214,13 +1293,13 @@ async function registerInlinePatient(
     name: "Nueva Cita manual",
   });
   await appointmentDialog
-    .getByRole("button", { name: "Registrar Paciente nuevo" })
+    .getByRole("button", { name: "Crear Paciente con Contacto" })
     .click();
   await appointmentDialog
     .getByLabel("Nombre del Contacto")
     .fill(input.contactName);
   await appointmentDialog
-    .getByLabel("Teléfono E.164 del Contacto")
+    .getByLabel("Teléfono del Contacto")
     .fill(input.phone ?? "+50371234567");
   await appointmentDialog
     .getByLabel("Nombre del Paciente")
@@ -1228,8 +1307,18 @@ async function registerInlinePatient(
   await appointmentDialog
     .getByLabel("Fecha de nacimiento del Paciente")
     .fill("2018-04-02");
+  if (input.reuseExistingContact === true) {
+    await appointmentDialog
+      .getByRole("button", { name: "Reutilizar Contacto" })
+      .click();
+    await expect(
+      appointmentDialog.getByRole("button", {
+        name: "Contacto seleccionado",
+      }),
+    ).toBeVisible();
+  }
   await appointmentDialog
-    .getByRole("button", { name: "Registrar Contacto y Paciente" })
+    .getByRole("button", { name: "Crear Paciente y Contacto" })
     .click();
   await expect(
     appointmentDialog.getByText(

@@ -343,6 +343,11 @@ export const appointments = createTable(
   },
   (table) => [
     unique("appointment_clinic_id_unique").on(table.clinicId, table.id),
+    index("appointment_patient_starts_at_idx").on(
+      table.clinicId,
+      table.patientId,
+      table.startsAt,
+    ),
     index("appointment_doctor_starts_at_idx").on(
       table.clinicId,
       table.doctorId,
@@ -713,6 +718,7 @@ export const contacts = createTable(
       table.phoneE164,
     ),
     index("contact_clinic_idx").on(table.clinicId),
+    index("contact_clinic_name_idx").on(table.clinicId, table.name),
   ],
 );
 
@@ -735,6 +741,7 @@ export const patients = createTable(
   (table) => [
     unique("patient_clinic_id_unique").on(table.clinicId, table.id),
     index("patient_clinic_idx").on(table.clinicId),
+    index("patient_clinic_name_idx").on(table.clinicId, table.name),
   ],
 );
 
@@ -760,6 +767,11 @@ export const contactPatientLinks = createTable(
     ),
     index("contact_patient_link_contact_idx").on(table.contactId),
     index("contact_patient_link_patient_idx").on(table.patientId),
+    index("contact_patient_link_guardianship_idx").on(
+      table.clinicId,
+      table.relationship,
+      table.guardianshipVerificationStatus,
+    ),
     foreignKey({
       columns: [table.clinicId, table.contactId],
       foreignColumns: [contacts.clinicId, contacts.id],

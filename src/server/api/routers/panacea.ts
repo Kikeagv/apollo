@@ -42,14 +42,21 @@ import {
   listManualAppointments,
 } from "~/server/application/manual-appointments";
 import {
+  addPatientContact,
   createContact,
   createContactPatientLink,
+  createIncompletePatient,
   createPatient,
+  findContactByPhone,
+  getPatientAdministrativeDetail,
   listAdministrativeRecords,
+  listPatientDirectory,
   listPendingGuardianshipVerifications,
+  registerPatient,
   registerAdministrativeRecordsForManualAppointment,
   updateContact,
   updatePatient,
+  verifyPatientGuardianship,
 } from "~/server/application/administrative-records";
 import {
   addServiceOffer,
@@ -103,6 +110,18 @@ import {
   protectedProcedure,
   publicProcedure,
 } from "~/server/api/trpc";
+
+const patientContactInput = z.discriminatedUnion("kind", [
+  z.object({
+    contactId: z.string().uuid(),
+    kind: z.literal("existing"),
+  }),
+  z.object({
+    kind: z.literal("new"),
+    name: z.string().max(120),
+    phone: z.string().max(32),
+  }),
+]);
 
 export const panaceaRouter = {
   status: publicProcedure.query(() => ({
@@ -257,6 +276,136 @@ export const panaceaRouter = {
       drizzleAdministrativeRecordsStore,
     ),
   ),
+
+  listPatientDirectory: clinicProcedure
+    .input(
+      z.object({
+        query: z.string().max(120).optional(),
+        searchTarget: z.enum(["contacts", "patients"]).optional(),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      listPatientDirectory(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  findContactByPhone: clinicProcedure
+    .input(z.object({ phone: z.string().max(32) }))
+    .query(({ ctx, input }) =>
+      findContactByPhone(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  getPatientAdministrativeDetail: clinicProcedure
+    .input(z.object({ patientId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      getPatientAdministrativeDetail(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  registerPatient: clinicProcedure
+    .input(
+      z.object({
+        birthDate: z.string().max(10),
+        contact: patientContactInput,
+        patientName: z.string().max(120),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      registerPatient(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+          contact:
+            input.contact.kind === "existing"
+              ? input.contact
+              : {
+                  kind: "new",
+                  name: input.contact.name,
+                  phone: input.contact.phone,
+                },
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  createIncompletePatient: clinicProcedure
+    .input(
+      z.object({
+        birthDate: z.string().max(10),
+        name: z.string().max(120),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      createIncompletePatient(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  addPatientContact: clinicProcedure
+    .input(
+      z.object({
+        contact: patientContactInput,
+        guardianDui: z.string().max(10).optional(),
+        patientId: z.string().uuid(),
+        relationship: z.enum(["contact", "tutor"]).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      addPatientContact(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+          contact:
+            input.contact.kind === "existing"
+              ? input.contact
+              : {
+                  kind: "new",
+                  name: input.contact.name,
+                  phone: input.contact.phone,
+                },
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
+
+  verifyPatientGuardianship: clinicProcedure
+    .input(z.object({ linkId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      verifyPatientGuardianship(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleAdministrativeRecordsStore,
+      ),
+    ),
 
   createContact: clinicProcedure
     .input(

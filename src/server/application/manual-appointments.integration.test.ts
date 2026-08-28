@@ -14,13 +14,19 @@ import {
   type ManualAppointmentTransactionalMessage,
   ManualAppointmentNotCancellableError,
   ManualAppointmentOutsideScheduleConfirmationRequiredError,
+  ManualAppointmentUnavailableError,
 } from "./manual-appointments";
+import {
+  createIncompletePatient,
+  getPatientAdministrativeDetail,
+} from "./administrative-records";
 import { db } from "../db";
 import {
   inClinicTransaction,
   inSuperadminTransaction,
 } from "../db/clinic-context";
 import { drizzleManualAppointmentStore } from "../db/manual-appointment-store";
+import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-store";
 import {
   appointmentEvents,
   appointments,
@@ -56,6 +62,30 @@ describe("Citas manuales persistentes", () => {
         },
       };
       try {
+        const incompletePatient = await createIncompletePatient(
+          {
+            birthDate: "2020-01-10",
+            clinicId: fixture.clinicId,
+            identityId: fixture.secretaryIdentityId,
+            name: "Ficha sin Contacto",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        await expect(
+          createManualAppointment(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.doctorId,
+              identityId: fixture.secretaryIdentityId,
+              patientId: incompletePatient.id,
+              serviceOfferId: fixture.serviceOfferId,
+              startsAt: new Date("2026-08-10T13:40:00.000Z"),
+            },
+            drizzleManualAppointmentStore,
+            now,
+          ),
+        ).rejects.toBeInstanceOf(ManualAppointmentUnavailableError);
+
         const appointment = await createManualAppointment(
           {
             clinicId: fixture.clinicId,
@@ -128,6 +158,39 @@ describe("Citas manuales persistentes", () => {
             },
           },
         );
+        await expect(
+          getPatientAdministrativeDetail(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.secretaryIdentityId,
+              patientId: fixture.patientId,
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toMatchObject({
+          appointments: [
+            {
+              events: [
+                { type: "manual-created" },
+                { type: "manual-confirmation-sent" },
+                { type: "cancelled" },
+                { type: "manual-cancellation-sent" },
+              ],
+              id: appointment.id,
+              status: "cancelled",
+            },
+            {
+              events: [
+                { type: "manual-created" },
+                { type: "manual-confirmation-failed" },
+              ],
+              id: failedDelivery.id,
+              status: "confirmed",
+            },
+          ],
+          contacts: [{ contact: { id: fixture.contactId } }],
+          patient: { id: fixture.patientId },
+        });
         await expect(
           listManualAppointments(
             {

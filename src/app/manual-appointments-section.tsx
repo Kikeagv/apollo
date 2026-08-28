@@ -11,6 +11,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -65,6 +66,7 @@ import type {
   CalendarBlock,
   CalendarEntry,
 } from "~/server/application/manual-appointments";
+import type { ContactPhoneMatch } from "~/server/application/administrative-records";
 import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
@@ -100,6 +102,13 @@ export function ManualAppointmentsSection() {
   const [appointmentStartsAt, setAppointmentStartsAt] = useState("");
   const [serviceOfferId, setServiceOfferId] = useState("");
   const [patientRegistrationOpen, setPatientRegistrationOpen] = useState(false);
+  const [registrationPatientName, setRegistrationPatientName] = useState("");
+  const [registrationBirthDate, setRegistrationBirthDate] = useState("");
+  const [registrationContactName, setRegistrationContactName] = useState("");
+  const [registrationPhone, setRegistrationPhone] = useState("");
+  const [registrationContactMode, setRegistrationContactMode] = useState<
+    "new" | "existing"
+  >("new");
   const [recordRegistrationResult, setRecordRegistrationResult] =
     useState<string>();
   const [sendConfirmation, setSendConfirmation] = useState(false);
@@ -123,17 +132,23 @@ export function ManualAppointmentsSection() {
       window.removeEventListener("popstate", syncCalendarStateFromHistory);
   }, []);
   const formData = api.panacea.listManualAppointmentFormData.useQuery();
-  const registerAdministrativeRecords =
-    api.panacea.registerAdministrativeRecordsForManualAppointment.useMutation({
-      onSuccess: async ({ patient }) => {
-        await formData.refetch();
-        setPatientId(patient.id);
-        setPatientRegistrationOpen(false);
-        setRecordRegistrationResult(
-          `Paciente ${patient.name} seleccionado para la nueva Cita.`,
-        );
-      },
-    });
+  const registrationContactMatch = api.panacea.findContactByPhone.useQuery(
+    { phone: registrationPhone },
+    { enabled: canLookupPhone(registrationPhone) },
+  );
+  const registerPatient = api.panacea.registerPatient.useMutation({
+    onSuccess: async ({ patient, reusedContact }) => {
+      await formData.refetch();
+      setPatientId(patient.id);
+      setPatientRegistrationOpen(false);
+      resetPatientRegistration();
+      setRecordRegistrationResult(
+        reusedContact
+          ? `Paciente ${patient.name} seleccionado para la nueva Cita. Contacto existente reutilizado.`
+          : `Paciente ${patient.name} seleccionado para la nueva Cita.`,
+      );
+    },
+  });
   const cancelledAppointments =
     api.panacea.listCancelledManualAppointments.useQuery();
   const calendarDoctors = api.panacea.listPanaceaCalendarDoctors.useQuery();
@@ -270,12 +285,30 @@ export function ManualAppointmentsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     setRecordRegistrationResult(undefined);
-    registerAdministrativeRecords.mutate({
+    registerPatient.mutate({
       birthDate: formValue(data, "birthDate"),
-      contactName: formValue(data, "contactName"),
+      contact:
+        registrationContactMode === "existing" &&
+        registrationContactMatch.data !== undefined
+          ? {
+              contactId: registrationContactMatch.data.id,
+              kind: "existing",
+            }
+          : {
+              kind: "new",
+              name: formValue(data, "contactName"),
+              phone: formValue(data, "phone"),
+            },
       patientName: formValue(data, "patientName"),
-      phone: formValue(data, "phone"),
     });
+  }
+
+  function resetPatientRegistration() {
+    setRegistrationPatientName("");
+    setRegistrationBirthDate("");
+    setRegistrationContactName("");
+    setRegistrationPhone("");
+    setRegistrationContactMode("new");
   }
 
   function openAppointmentDialog(
@@ -295,7 +328,8 @@ export function ManualAppointmentsSection() {
     setPatientRegistrationOpen(false);
     setSendConfirmation(false);
     create.reset();
-    registerAdministrativeRecords.reset();
+    registerPatient.reset();
+    resetPatientRegistration();
     setAppointmentDialogOpen(true);
   }
 
@@ -316,6 +350,7 @@ export function ManualAppointmentsSection() {
           if (!open) {
             setOutsideScheduleConfirmation(undefined);
             setPatientRegistrationOpen(false);
+            resetPatientRegistration();
           }
         }}
         open={appointmentDialogOpen}
@@ -420,7 +455,7 @@ export function ManualAppointmentsSection() {
                 className="sm:col-span-2 sm:w-fit"
                 disabled={
                   create.isPending ||
-                  registerAdministrativeRecords.isPending ||
+                  registerPatient.isPending ||
                   formData.data?.patients.length === 0 ||
                   formData.data?.offers.length === 0
                 }
@@ -437,48 +472,114 @@ export function ManualAppointmentsSection() {
               >
                 {patientRegistrationOpen
                   ? "Cerrar registro de Paciente"
-                  : "Registrar Paciente nuevo"}
+                  : "Crear Paciente con Contacto"}
               </button>
               {patientRegistrationOpen ? (
                 <form
+                  aria-describedby={
+                    registerPatient.error
+                      ? "calendar-patient-registration-error"
+                      : undefined
+                  }
                   className="mt-3 grid gap-4 sm:grid-cols-2"
                   onSubmit={registerRecords}
                 >
                   <label className="text-sm">
-                    Nombre del Contacto
-                    <input className={inputClass} name="contactName" required />
-                  </label>
-                  <label className="text-sm">
-                    Teléfono E.164 del Contacto
+                    Nombre del Paciente
                     <input
                       className={inputClass}
-                      name="phone"
-                      placeholder="+50371234567"
+                      name="patientName"
+                      onChange={(event) =>
+                        setRegistrationPatientName(event.target.value)
+                      }
                       required
-                      type="tel"
+                      value={registrationPatientName}
                     />
-                  </label>
-                  <label className="text-sm">
-                    Nombre del Paciente
-                    <input className={inputClass} name="patientName" required />
                   </label>
                   <label className="text-sm">
                     Fecha de nacimiento del Paciente
                     <input
                       className={inputClass}
                       name="birthDate"
+                      onChange={(event) =>
+                        setRegistrationBirthDate(event.target.value)
+                      }
                       required
                       type="date"
+                      value={registrationBirthDate}
                     />
                   </label>
+                  <label className="text-sm">
+                    Teléfono del Contacto
+                    <input
+                      className={inputClass}
+                      name="phone"
+                      onChange={(event) => {
+                        setRegistrationPhone(event.target.value);
+                        setRegistrationContactMode("new");
+                      }}
+                      placeholder="+50371234567"
+                      required
+                      type="tel"
+                      value={registrationPhone}
+                    />
+                  </label>
+                  {registrationContactMatch.data ? (
+                    <AppointmentContactMatchNotice
+                      contact={registrationContactMatch.data}
+                      onReuse={() => setRegistrationContactMode("existing")}
+                      reused={registrationContactMode === "existing"}
+                    />
+                  ) : null}
+                  {registrationContactMode === "new" ? (
+                    <label className="text-sm sm:col-span-2">
+                      Nombre del Contacto
+                      <input
+                        className={inputClass}
+                        name="contactName"
+                        onChange={(event) =>
+                          setRegistrationContactName(event.target.value)
+                        }
+                        required
+                        value={registrationContactName}
+                      />
+                    </label>
+                  ) : (
+                    <div className="bg-muted/40 rounded-lg border p-3 text-sm sm:col-span-2">
+                      <p className="font-medium">
+                        Contacto seleccionado:{" "}
+                        {registrationContactMatch.data?.name}
+                      </p>
+                      <p className="text-muted-foreground">
+                        {registrationContactMatch.data?.phoneE164}
+                      </p>
+                    </div>
+                  )}
+                  <p
+                    className="text-muted-foreground text-xs sm:col-span-2"
+                    id="calendar-patient-registration-help"
+                  >
+                    El Contacto inicial queda vinculado al Paciente y puede
+                    reutilizarse para otros Pacientes de la Clínica.
+                  </p>
+                  {registerPatient.error ? (
+                    <p
+                      aria-live="assertive"
+                      className="text-destructive text-sm sm:col-span-2"
+                      id="calendar-patient-registration-error"
+                      role="alert"
+                    >
+                      {registerPatient.error.message}
+                    </p>
+                  ) : null}
                   <Button
                     className="sm:col-span-2 sm:w-fit"
-                    disabled={registerAdministrativeRecords.isPending}
+                    disabled={registerPatient.isPending}
                     type="submit"
                   >
-                    {registerAdministrativeRecords.isPending
+                    {registerPatient.isPending
                       ? "Registrando…"
-                      : "Registrar Contacto y Paciente"}
+                      : "Crear Paciente y Contacto"}
                   </Button>
                 </form>
               ) : null}
@@ -493,36 +594,43 @@ export function ManualAppointmentsSection() {
               </p>
             ) : null}
             {formData.data?.patients.length === 0 ? (
-              <p className="text-sm text-amber-800">
-                Registre y vincule al menos un Contacto antes de crear la Cita.
-              </p>
+              <Alert>
+                <AlertTitle>Falta un Paciente disponible</AlertTitle>
+                <AlertDescription>
+                  Registre y vincule al menos un Contacto antes de crear la
+                  Cita.
+                </AlertDescription>
+              </Alert>
             ) : null}
-            {create.error || registerAdministrativeRecords.error ? (
+            {create.error ? (
               <p className="text-destructive text-sm" role="alert">
-                {(create.error ?? registerAdministrativeRecords.error)?.message}
+                {create.error.message}
               </p>
             ) : null}
             {outsideScheduleConfirmation ? (
-              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                <p>
-                  La Cita no cabe por completo en el Horario vigente. Confirme
-                  la excepción para crearla sin modificar los demás controles de
-                  capacidad.
-                </p>
-                <Button
-                  disabled={create.isPending}
-                  onClick={() =>
-                    create.mutate({
-                      ...outsideScheduleConfirmation,
-                      outsideScheduleConfirmed: true,
-                    })
-                  }
-                  type="button"
-                  variant="outline"
-                >
-                  Confirmar Cita fuera de horario
-                </Button>
-              </div>
+              <Alert>
+                <AlertTitle>Fuera de horario</AlertTitle>
+                <AlertDescription className="space-y-2">
+                  <p>
+                    La Cita no cabe por completo en el Horario vigente. Confirme
+                    la excepción para crearla sin modificar los demás controles
+                    de capacidad.
+                  </p>
+                  <Button
+                    disabled={create.isPending}
+                    onClick={() =>
+                      create.mutate({
+                        ...outsideScheduleConfirmation,
+                        outsideScheduleConfirmed: true,
+                      })
+                    }
+                    type="button"
+                    variant="outline"
+                  >
+                    Confirmar Cita fuera de horario
+                  </Button>
+                </AlertDescription>
+              </Alert>
             ) : null}
           </div>
           <DialogFooter>
@@ -910,7 +1018,7 @@ function CalendarEntryCard({
       aria-label={description}
       className={`focus-visible:ring-ring/40 absolute z-10 min-h-11 overflow-hidden rounded-lg border p-2 text-left text-xs shadow-sm transition-[background-color,border-color,box-shadow] outline-none focus-visible:ring-3 ${
         block
-          ? "border-amber-300 bg-amber-50 text-amber-950 hover:border-amber-500"
+          ? "border-border bg-muted/40 text-foreground hover:border-foreground/50"
           : "border-primary/30 bg-primary/10 text-foreground hover:border-primary"
       }`}
       onClick={() => onSelect(entry.id)}
@@ -932,9 +1040,9 @@ function CalendarEntryCard({
         </span>
       ) : null}
       {!block && entry.outsideSchedule ? (
-        <span className="block truncate font-medium text-amber-800">
+        <Badge className="mt-1" variant="warning">
           Fuera de horario
-        </span>
+        </Badge>
       ) : null}
     </button>
   );
@@ -982,9 +1090,9 @@ function CalendarAccessibleList({
                       {block ? "Bloqueo" : "Cita"}
                     </span>
                     {!block && entry.outsideSchedule ? (
-                      <span className="block truncate text-xs font-medium text-amber-800">
+                      <Badge className="mt-1" variant="warning">
                         Fuera de horario
-                      </span>
+                      </Badge>
                     ) : null}
                   </span>
                   <span className="text-muted-foreground shrink-0 text-right text-xs tabular-nums">
@@ -1219,7 +1327,7 @@ function AppointmentDetail({
           <dd className="flex flex-wrap gap-2">
             <a
               className="text-primary underline-offset-2 hover:underline"
-              href={`/pacientes#patient-${appointment.patient.id}`}
+              href={`/pacientes?patient=${appointment.patient.id}`}
             >
               Abrir ficha del Paciente
             </a>
@@ -1404,6 +1512,39 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
+function AppointmentContactMatchNotice({
+  contact,
+  onReuse,
+  reused,
+}: {
+  contact: ContactPhoneMatch;
+  onReuse: () => void;
+  reused: boolean;
+}) {
+  return (
+    <Alert className="border-primary/30 bg-primary/5 sm:col-span-2">
+      <AlertTitle>Contacto existente encontrado</AlertTitle>
+      <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+        <span>
+          {contact.name} ya usa este teléfono y conserva{" "}
+          {contact.patientIds.length} Vínculo
+          {contact.patientIds.length === 1 ? "" : "s"} existente
+          {contact.patientIds.length === 1 ? "" : "s"}.
+        </span>
+        <Button
+          aria-pressed={reused}
+          onClick={onReuse}
+          size="sm"
+          type="button"
+          variant={reused ? "secondary" : "outline"}
+        >
+          {reused ? "Contacto seleccionado" : "Reutilizar Contacto"}
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 function parseCalendarView(value: string | null): CalendarView {
   return value === "day" ? "day" : "week";
 }
@@ -1538,6 +1679,11 @@ function isCalendarBlock(
 
 function clinicDateTime(value: string) {
   return new Date(`${value}:00${CLINIC_UTC_OFFSET}`);
+}
+
+function canLookupPhone(value: string) {
+  const normalized = value.trim().replace(/[()\s.-]/g, "");
+  return /^\+[1-9]\d{7,14}$/.test(normalized);
 }
 
 function formatClinicDate(value: Date | string) {
