@@ -3,6 +3,12 @@
 **Fecha base:** 18 de agosto de 2026
 **Tipo:** documento vivo; marcar cada ítem como resuelto al cerrarse. No contiene secretos.
 
+## Decisiones registradas posteriormente
+
+- **Host canónico de la landing (decisión aceptada el 28 de agosto de 2026; ADR-0037):** `https://www.usepraxia.com` será el único host canónico y `https://usepraxia.com` deberá redirigir permanentemente a la URL equivalente en `www`. La fila 27 conserva el estado histórico de la publicación inicial y queda supersedida por esta decisión hasta completar la configuración y verificación del redirect.
+- **Distribución pública para crawlers de IA (decisión aceptada el 28 de agosto de 2026; ADR-0038):** el host público permitirá `OAI-SearchBot`, `GPTBot` y `Google-Extended`, y Cloudflare deberá ajustar sus Content Signals para no mantener `ai-train=no` contra la intención aceptada. Login, Panacea y superficies privadas permanecen fuera del alcance.
+- **Indexación de la aplicación (decisión aceptada el 28 de agosto de 2026):** todo `app.usepraxia.com` debe responder con `X-Robots-Tag: noindex, follow` mientras no existan páginas públicas allí. Esta cabecera es la fuente de exclusión; `robots.txt` no la sustituye.
+
 ## Decisiones tomadas el 18 de agosto de 2026
 
 - **APO-26** (`Desplegar el perímetro y recuperación verificable de Apolo`) está **cerrado (Done) con evidencia por criterio el 19 de agosto de 2026** (comentario en el ticket; AC1-AC5 con salvedades explícitas: SBFM/Managed al pasar a Pro, regla de Twilio con APO-25, `www` sin decidir).

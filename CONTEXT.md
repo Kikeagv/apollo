@@ -8,6 +8,14 @@ Praxia es la plataforma para consultorios y clínicas pequeñas en El Salvador. 
 La marca comercial que ven clínicas, médicos y pacientes.
 _Avoid_: Apolo, Asclepio, Panacea
 
+**Lead cualificado**:
+La persona que representa a una Clínica y que inicia una conversación comercial con intención verificable de evaluar Praxia. No es un Paciente, un visitante meramente informativo ni una persona que solo accede a Panacea.
+_Avoid_: Paciente, Usuario de clínica, usuario del panel, prospecto
+
+**Solicitud de demo**:
+La petición de una persona representante de una Clínica para conocer y evaluar Praxia con el equipo comercial. No es una Cita de la Agenda ni una Reserva temporal de atención.
+_Avoid_: Cita, reserva de paciente, agendamiento clínico
+
 **Apolo**:
 El nombre interno de la plataforma completa, su infraestructura y despliegue.
 _Avoid_: Praxia cuando se habla de componentes internos
@@ -19,6 +27,10 @@ _Avoid_: bot de Praxia
 **Asistente de la clínica por WhatsApp**:
 La forma pública de describir a Asclepio ante clínicas y pacientes. Puede reservar, reprogramar y cancelar Citas de forma autónoma dentro de las reglas de la Clínica; cuando una solicitud requiere decisión humana, la entrega al equipo y deja de intervenir.
 _Avoid_: agente de Praxia, Asclepio ante pacientes, bot de Praxia
+
+**Atención administrativa por WhatsApp**:
+La interacción por WhatsApp para consultar disponibilidad y gestionar Citas de una Clínica, incluyendo reservas, reprogramaciones y cancelaciones dentro de sus reglas. No incluye diagnóstico, orientación médica ni decisiones clínicas.
+_Avoid_: consulta médica, atención clínica automatizada, diagnóstico por WhatsApp
 
 **Panacea**:
 El CRM y panel interno para operar agenda, pacientes y, en fases posteriores, expediente.
@@ -40,6 +52,10 @@ _Avoid_: paciente cuando se habla del titular de un teléfono
 La persona para quien se gestiona una cita dentro de una clínica. En Panacea su ficha administrativa mínima conserva nombre y fecha de nacimiento. No tiene identidad compartida entre clínicas.
 _Avoid_: contacto cuando se habla de la persona atendida
 
+**Ficha de Paciente incompleta**:
+La ficha administrativa de un Paciente que todavía no tiene ningún Contacto vinculado. Puede conservarse para completarla después, pero no cumple el requisito para crear una Cita manual hasta que se le vincule un Contacto.
+_Avoid_: paciente inválido, paciente sin identidad
+
 **Vínculo Contacto–Paciente**:
 La relación explícita dentro de una Clínica entre un Contacto y un Paciente. Permite que un Contacto esté vinculado a más de un Paciente y que un Paciente tenga varios Contactos; el vínculo de Tutor es su variante con tutela legal registrada.
 _Avoid_: inferir el Paciente desde el Contacto o la última Cita
@@ -55,6 +71,18 @@ _Avoid_: cola de citas de fase 1
 **Activación de clínica**:
 El proceso que deja a una clínica habilitada para intercambiar mensajes reales por WhatsApp. Requiere una subcuenta Twilio, su WABA y sender, plantillas aprobadas, base legal y revisión operativa.
 _Avoid_: alta cuando se habla únicamente de crear un registro de clínica
+
+**Configuración inicial de Clínica**:
+El recorrido guiado que completa la información y capacidad mínima de una Clínica para que la Agenda pueda operar y Asclepio pueda habilitarse. No incluye la Activación de clínica ni sustituye las aprobaciones externas de WhatsApp.
+_Avoid_: Activación de clínica, onboarding de WhatsApp
+
+**Clínica lista para Asclepio**:
+El estado de una Clínica que tiene al menos una ruta de atención válida calculada por la Agenda y puede ofrecer nuevas Opciones de atención mediante Asclepio. No implica que todo su equipo esté configurado ni que WhatsApp real ya esté activado.
+_Avoid_: clínica activa, clínica activada
+
+**Clínica con configuración pendiente**:
+El estado de una Clínica que no tiene ninguna ruta de atención válida disponible para Asclepio. Conserva sus datos y Citas existentes, pero no ofrece nuevas Opciones de atención hasta completar la configuración necesaria.
+_Avoid_: clínica suspendida, clínica desactivada
 
 **Identidad**:
 La prueba de autenticación de una persona operadora. No concede por sí misma acceso a una clínica ni contiene un rol de negocio.
@@ -83,6 +111,10 @@ _Avoid_: modelarla como Médico o concederle administración clínica
 **Operación diaria de agenda**:
 Las consultas del calendario y la gestión de fichas administrativas y Citas para cualquier Médico de una Clínica. Está autorizada para todo Usuario de clínica activo; es distinta de configurar la capacidad de atención.
 _Avoid_: extender las restricciones de configuración de un Médico no propietario a la operación de Citas
+
+**Operación de clínica**:
+La coordinación administrativa de una Clínica que reúne la agenda, la capacidad de atención, el equipo y la atención administrativa por WhatsApp. No incluye decisiones clínicas ni orientación médica.
+_Avoid_: operación diaria de agenda cuando se refiere al producto completo, gestión de atención clínica
 
 **Servicio**:
 La prestación administrativa que una Clínica pone en su catálogo, con nombre único normalizado dentro de la Clínica y descripción pública común a todos los Médicos que la ofrecen. En fase 1 esa descripción no admite variantes por Médico. Su alta requiere al menos una Oferta de servicio activa; no existe un Servicio público sin un Médico que pueda atenderlo. No determina por sí sola la disponibilidad, duración, buffer ni precio de una atención.
