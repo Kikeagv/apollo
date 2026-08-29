@@ -422,6 +422,11 @@ export async function resolveTransactionalDeliveryAlert(input: {
   });
 }
 
+/** Adaptador explícito para que Pendientes delegue la resolución de Entregas. */
+export const drizzleTransactionalDeliveryAlertResolver = {
+  resolveTransactionalDeliveryAlert,
+};
+
 async function dueAppointments(transaction: SchedulerTransaction, now: Date) {
   return transaction
     .select({

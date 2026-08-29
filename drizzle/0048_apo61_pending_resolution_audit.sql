@@ -1,0 +1,4 @@
+ALTER TABLE "pg-drizzle_appointment_self_management_escalation" ADD COLUMN "resolved_by_clinic_user_id" uuid;--> statement-breakpoint
+ALTER TABLE "pg-drizzle_conversation_escalation" ADD COLUMN "resolved_by_clinic_user_id" uuid;--> statement-breakpoint
+ALTER TABLE "pg-drizzle_appointment_self_management_escalation" ADD CONSTRAINT "appointment_self_management_escalation_resolver_same_clinic_fk" FOREIGN KEY ("clinic_id","resolved_by_clinic_user_id") REFERENCES "public"."pg-drizzle_clinic_user"("clinic_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "pg-drizzle_conversation_escalation" ADD CONSTRAINT "conversation_escalation_resolver_same_clinic_fk" FOREIGN KEY ("clinic_id","resolved_by_clinic_user_id") REFERENCES "public"."pg-drizzle_clinic_user"("clinic_id","id") ON DELETE restrict ON UPDATE no action;

@@ -23,6 +23,7 @@ import type {
   WhatsAppBookingResponse,
   WhatsAppMessageOrigin,
 } from "~/server/application/simulated-whatsapp-booking";
+import type { PendingPriority } from "~/domain/pending";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -432,8 +433,13 @@ export const appointmentSelfManagementEscalations = createTable(
     appointmentId: uuid("appointment_id").notNull(),
     contactId: uuid("contact_id").notNull(),
     action: text("action").$type<"cancel" | "reschedule">().notNull(),
+    priority: text("priority")
+      .$type<PendingPriority>()
+      .default("high")
+      .notNull(),
     requestedStartsAt: timestamp("requested_starts_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedByClinicUserId: uuid("resolved_by_clinic_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -452,6 +458,11 @@ export const appointmentSelfManagementEscalations = createTable(
       columns: [table.clinicId, table.contactId],
       foreignColumns: [contacts.clinicId, contacts.id],
       name: "appointment_self_management_escalation_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.resolvedByClinicUserId],
+      foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
+      name: "appointment_self_management_escalation_resolver_same_clinic_fk",
     }).onDelete("restrict"),
   ],
 );
@@ -623,6 +634,10 @@ export const transactionalDeliveryAlerts = createTable(
     id: uuid("id").defaultRandom().primaryKey(),
     clinicId: uuid("clinic_id").notNull(),
     deliveryId: uuid("delivery_id").notNull(),
+    priority: text("priority")
+      .$type<PendingPriority>()
+      .default("high")
+      .notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedByClinicUserId: uuid("resolved_by_clinic_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -818,7 +833,12 @@ export const conversationEscalations = createTable(
     clinicId: uuid("clinic_id").notNull(),
     contactId: uuid("contact_id").notNull(),
     trigger: text("trigger").$type<ConversationEscalationTrigger>().notNull(),
+    priority: text("priority")
+      .$type<PendingPriority>()
+      .default("high")
+      .notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedByClinicUserId: uuid("resolved_by_clinic_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -832,6 +852,11 @@ export const conversationEscalations = createTable(
       columns: [table.clinicId, table.contactId],
       foreignColumns: [contacts.clinicId, contacts.id],
       name: "conversation_escalation_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.resolvedByClinicUserId],
+      foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
+      name: "conversation_escalation_resolver_same_clinic_fk",
     }).onDelete("restrict"),
   ],
 );

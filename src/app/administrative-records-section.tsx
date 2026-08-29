@@ -1261,6 +1261,7 @@ function appointmentEventLabel(type: AppointmentEventType) {
     "reminder-claimed": "Recordatorio tomado",
     rescheduled: "Cita reprogramada",
     "self-management-escalated": "Escalada a atención humana",
+    "self-management-resolved": "Solicitud de autogestión resuelta",
   };
   return labels[type] ?? "Evento administrativo";
 }

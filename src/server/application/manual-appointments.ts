@@ -15,6 +15,7 @@ export const appointmentEventTypes = [
   "reservation-confirmed",
   "rescheduled",
   "self-management-escalated",
+  "self-management-resolved",
   "reminder-claimed",
   "reminder-sent",
   "reminder-failed",

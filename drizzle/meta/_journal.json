@@ -330,6 +330,20 @@
       "when": 1787937224095,
       "tag": "0046_curly_celestials",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1787963454079,
+      "tag": "0047_purple_wolverine",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1788000000000,
+      "tag": "0048_apo61_pending_resolution_audit",
+      "breakpoints": true
     }
   ]
 }

@@ -14,6 +14,7 @@ import { addServiceOffer } from "../src/server/application/service-catalog";
 import { db } from "../src/server/db";
 import {
   inClinicTransaction,
+  inSimulatedWhatsAppClinicTransaction,
   inSuperadminTransaction,
 } from "../src/server/db/clinic-context";
 import {
@@ -23,6 +24,8 @@ import {
   clinics,
   configurationAuditEvents,
   clinicSupportSessions,
+  contacts,
+  conversationEscalations,
   doctors,
   identityAuditEvents,
   services,
@@ -172,6 +175,149 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await expect(
       page.getByText("La acción clínica sintética quedó registrada."),
     ).toBeVisible();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("Pendientes unifica categorías, conserva el detalle y deja historial resuelto", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+  const pendingContactName = "Contacto Pendiente E2E";
+
+  try {
+    let pendingEscalationId: string | undefined;
+    await inSimulatedWhatsAppClinicTransaction(
+      fixture.clinicId(),
+      async (transaction) => {
+        const [contact] = await transaction
+          .insert(contacts)
+          .values({
+            clinicId: fixture.clinicId(),
+            name: pendingContactName,
+            phoneE164: "+50370000009",
+          })
+          .returning({ id: contacts.id });
+        if (contact === undefined) throw new Error("Falta el Contacto E2E");
+        const [escalation] = await transaction
+          .insert(conversationEscalations)
+          .values({
+            clinicId: fixture.clinicId(),
+            contactId: contact.id,
+            createdAt: new Date("2026-08-20T15:00:00.000Z"),
+            priority: "urgent",
+            trigger: "human-request",
+          })
+          .returning({ id: conversationEscalations.id });
+        if (escalation === undefined) {
+          throw new Error("Falta el Escalamiento E2E");
+        }
+        pendingEscalationId = escalation.id;
+      },
+    );
+
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    await page.goto("/pendientes");
+    await waitForPanaceaInteractivity(page);
+
+    const inbox = page.getByRole("region", { name: "Bandeja de Pendientes" });
+    const conversationFilter = inbox.getByTestId("pending-filter-conversation");
+    await expect(conversationFilter).toContainText("1");
+    await expect(inbox.getByTestId("pending-filter-appointment")).toContainText(
+      "0",
+    );
+    await expect(inbox.getByTestId("pending-filter-delivery")).toContainText(
+      "0",
+    );
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
+
+    await conversationFilter.focus();
+    await expect(conversationFilter).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/pendientes\?category=conversation$/);
+
+    const pendingRow = inbox
+      .locator('[data-pending-list="true"]')
+      .getByRole("button", { name: new RegExp(pendingContactName) });
+    await expect(pendingRow).toBeVisible();
+
+    await page.setViewportSize({ height: 844, width: 390 });
+    await pendingRow.click();
+    const mobileDetail = page.getByRole("dialog");
+    await expect(mobileDetail).toBeVisible();
+    await expect(
+      mobileDetail.getByText("La persona solicitó atención humana."),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(page, '[role="dialog"]');
+    await page.keyboard.press("Escape");
+    await expect(mobileDetail).not.toBeVisible();
+    await page.setViewportSize({ height: 720, width: 1280 });
+
+    await pendingRow.click();
+
+    const detail = page.locator('[data-pending-detail="true"]');
+    await expect(detail).toBeVisible();
+    await expect(detail).toContainText("La persona solicitó atención humana.");
+    await expect(
+      detail.getByRole("button", {
+        name: "Cerrar Escalamiento de conversación",
+      }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
+
+    const ownerIdentityId = await fixture.ownerIdentityId();
+    if (pendingEscalationId === undefined) {
+      throw new Error("Falta el identificador del Escalamiento E2E");
+    }
+    const escalationId = pendingEscalationId;
+    await inClinicTransaction(
+      { clinicId: fixture.clinicId(), identityId: ownerIdentityId },
+      (transaction) =>
+        transaction
+          .update(conversationEscalations)
+          .set({ resolvedAt: new Date("2026-08-21T15:00:00.000Z") })
+          .where(eq(conversationEscalations.id, escalationId)),
+    );
+    await detail
+      .getByRole("button", { name: "Cerrar Escalamiento de conversación" })
+      .click();
+    await expect(detail.getByRole("alert")).toContainText(
+      "No se pudo resolver este caso",
+    );
+    await expect(
+      detail.getByRole("button", { name: "Reintentar resolución" }),
+    ).toBeVisible();
+
+    await inClinicTransaction(
+      { clinicId: fixture.clinicId(), identityId: ownerIdentityId },
+      (transaction) =>
+        transaction
+          .update(conversationEscalations)
+          .set({ resolvedAt: null })
+          .where(eq(conversationEscalations.id, escalationId)),
+    );
+    await detail.getByRole("button", { name: "Reintentar resolución" }).click();
+    await expect(pendingRow).not.toBeVisible();
+    await expect(
+      inbox.getByTestId("pending-filter-conversation"),
+    ).toContainText("0");
+    await expect(inbox).toContainText("No hay trabajo humano pendiente.");
+
+    await inbox.getByRole("tab", { name: "Historial resuelto" }).click();
+    await expect(page).toHaveURL(
+      /\/pendientes\?category=conversation&status=resolved$/,
+    );
+    await expect(
+      inbox
+        .locator('[data-pending-list="true"]')
+        .getByRole("button", { name: new RegExp(pendingContactName) }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
   } finally {
     await fixture.cleanup();
   }
@@ -1802,6 +1948,9 @@ async function createFixture() {
               .delete(appointments)
               .where(eq(appointments.clinicId, createdClinicId));
             await transaction
+              .delete(conversationEscalations)
+              .where(eq(conversationEscalations.clinicId, createdClinicId));
+            await transaction
               .delete(clinics)
               .where(eq(clinics.id, createdClinicId));
           });
@@ -1843,6 +1992,9 @@ async function createFixture() {
         await transaction
           .delete(appointments)
           .where(eq(appointments.clinicId, createdClinicId));
+        await transaction
+          .delete(conversationEscalations)
+          .where(eq(conversationEscalations.clinicId, createdClinicId));
         await transaction
           .delete(clinics)
           .where(eq(clinics.id, createdClinicId));
