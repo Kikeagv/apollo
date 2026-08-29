@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Solicita una demo de Praxia para revisar la operación de tu clínica."
+    />
+    <meta name="theme-color" content="#fbfdff" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="/public/logos/Logo.svg?v=20260821"
+    />
+    <link rel="canonical" href="https://www.usepraxia.com/demo" />
+    <link
+      rel="preload"
+      href="/fonts/montserrat-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="/styles.css?v=20260829" />
+    <title>Solicitar una demo | Praxia</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+    <header class="nav">
+      <div class="nav__inner">
+        <a class="brand" href="/" aria-label="Praxia, inicio">
+          <img
+            src="/public/logos/Logo-text.svg"
+            alt="Praxia"
+            width="142"
+            height="42"
+          />
+        </a>
+        <nav class="nav__links" aria-label="Secciones">
+          <a href="/#producto">Producto</a>
+          <a href="/#como-funciona">Cómo funciona</a>
+          <a href="/#para-clinicas">Para clínicas</a>
+        </nav>
+        <a class="button button--sm" href="https://app.usepraxia.com">
+          Iniciar sesión
+        </a>
+      </div>
+    </header>
+
+    <main class="demo-page" id="contenido">
+      <section class="demo-intro" aria-labelledby="demo-title">
+        <h1 id="demo-title">Conversemos sobre la operación de tu clínica.</h1>
+        <p>
+          Cuéntanos quién eres y qué te gustaría revisar. El equipo comercial
+          conocerá tu contexto antes de responderte.
+        </p>
+        <ul class="demo-points">
+          <li>Agenda y capacidad de atención en un solo flujo.</li>
+          <li>Atención administrativa de citas por WhatsApp.</li>
+          <li>Personas en el control cuando una decisión lo requiere.</li>
+        </ul>
+      </section>
+
+      <section class="demo-card" aria-labelledby="form-title">
+        <div class="demo-card__heading">
+          <h2 id="form-title">Solicitar una demo</h2>
+        </div>
+
+        <form
+          action="https://app.usepraxia.com/api/demo"
+          method="post"
+          data-demo-form
+        >
+          <div class="demo-form-grid">
+            <div class="demo-field">
+              <label for="representative-name">Tu nombre *</label>
+              <input
+                id="representative-name"
+                name="representativeName"
+                type="text"
+                autocomplete="name"
+                required
+                maxlength="120"
+              />
+            </div>
+
+            <div class="demo-field">
+              <label for="clinic-name">Nombre de la clínica *</label>
+              <input
+                id="clinic-name"
+                name="clinicName"
+                type="text"
+                autocomplete="organization"
+                required
+                maxlength="160"
+              />
+            </div>
+
+            <div class="demo-field">
+              <label for="role">¿Cómo participas en la clínica? *</label>
+              <select id="role" name="role" required>
+                <option value="" selected disabled>
+                  Selecciona una opción
+                </option>
+                <option value="owner">Médico propietario</option>
+                <option value="secretary">Secretaria</option>
+                <option value="other">Otro</option>
+              </select>
+            </div>
+
+            <div class="demo-field">
+              <label for="email">Correo electrónico *</label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autocomplete="email"
+                required
+                maxlength="254"
+              />
+            </div>
+
+            <div class="demo-field">
+              <label for="phone">Teléfono o WhatsApp (opcional)</label>
+              <input
+                id="phone"
+                name="phone"
+                type="tel"
+                autocomplete="tel"
+                inputmode="tel"
+                maxlength="30"
+                aria-describedby="phone-help"
+              />
+              <small id="phone-help"
+                >Solo lo usaremos si eliges WhatsApp.</small
+              >
+            </div>
+
+            <div class="demo-field">
+              <label for="preferred-contact"
+                >¿Por dónde prefieres que te contactemos?</label
+              >
+              <select id="preferred-contact" name="preferredContact">
+                <option value="email" selected>Correo electrónico</option>
+                <option value="whatsapp">WhatsApp</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="demo-field">
+            <label for="context">¿Qué te gustaría revisar en la demo?</label>
+            <select id="context" name="context">
+              <option value="" selected>Selecciona un tema (opcional)</option>
+              <option value="agenda">Agenda y capacidad de atención</option>
+              <option value="whatsapp">
+                Atención administrativa por WhatsApp
+              </option>
+              <option value="operations">
+                Operación general de la Clínica
+              </option>
+              <option value="other">Otro tema comercial</option>
+            </select>
+            <small id="context-help">
+              Elige un tema general. No solicitamos datos de pacientes ni
+              información clínica.
+            </small>
+          </div>
+
+          <div class="demo-honeypot" aria-hidden="true">
+            <label for="website">Deja este campo vacío</label>
+            <input
+              id="website"
+              name="website"
+              type="text"
+              tabindex="-1"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="demo-turnstile" data-turnstile-widget data-sitekey="">
+            <p>
+              Esta verificación ayuda a proteger el buzón comercial del abuso.
+            </p>
+          </div>
+          <input
+            name="turnstileToken"
+            type="hidden"
+            value="simulated-turnstile-token"
+          />
+
+          <input name="utmSource" type="hidden" value="" />
+          <input name="utmMedium" type="hidden" value="" />
+          <input name="utmCampaign" type="hidden" value="" />
+          <input name="landingPage" type="hidden" value="/demo" />
+          <input name="referrer" type="hidden" value="" />
+
+          <p class="demo-privacy">
+            Al enviar esta solicitud aceptas que tratemos estos datos para
+            responderte sobre Praxia. No pedimos datos de pacientes ni
+            información clínica. Consulta el
+            <a href="/privacidad">Aviso de privacidad</a>.
+          </p>
+          <button class="button" type="submit">Enviar solicitud</button>
+          <noscript>
+            <p class="demo-noscript">
+              Puedes enviar este formulario sin JavaScript. Si aparece una
+              verificación, completa los campos y vuelve a intentarlo.
+            </p>
+          </noscript>
+        </form>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__inner">
+        <div class="footer__brand">
+          <img src="/public/logos/Logo.svg" alt="" width="42" height="42" />
+          <p>Praxia, operación y comunicación más clara para tu clínica.</p>
+        </div>
+        <div>
+          <p class="footer__label">Praxia</p>
+          <nav class="footer__links" aria-label="Praxia">
+            <a href="/">Inicio</a>
+            <a href="https://app.usepraxia.com">Iniciar sesión</a>
+          </nav>
+        </div>
+        <div>
+          <p class="footer__label">Legal</p>
+          <nav class="footer__links" aria-label="Legal">
+            <a href="/privacidad">Aviso de privacidad</a>
+            <a href="/terminos">Términos de uso</a>
+          </nav>
+        </div>
+      </div>
+      <div class="footer__bottom">
+        <div class="footer__bottom-inner">
+          <span>© <span id="year"></span> K31 SOFTWARE</span>
+          <span>Hecho en El Salvador</span>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      document.getElementById("year").textContent = new Date().getFullYear();
+
+      (function () {
+        var form = document.querySelector("[data-demo-form]");
+        if (!form) return;
+
+        var query = new URLSearchParams(window.location.search);
+        ["utmSource", "utmMedium", "utmCampaign"].forEach(function (name) {
+          var value = query.get(name.replace("utm", "utm_").toLowerCase());
+          var field = form.querySelector('[name="' + name + '"]');
+          if (field && value) field.value = value;
+        });
+
+        var landingPage = form.querySelector('[name="landingPage"]');
+        if (landingPage) landingPage.value = window.location.pathname;
+        var referrer = form.querySelector('[name="referrer"]');
+        if (referrer && document.referrer) referrer.value = document.referrer;
+
+        var widget = document.querySelector("[data-turnstile-widget]");
+        var siteKey = widget && widget.getAttribute("data-sitekey");
+        if (!widget || !siteKey) return;
+
+        var token = form.querySelector('[name="turnstileToken"]');
+        var script = document.createElement("script");
+        script.src =
+          "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+        script.async = true;
+        script.defer = true;
+        script.onload = function () {
+          if (!window.turnstile || !token) return;
+          window.turnstile.render(widget, {
+            sitekey: siteKey,
+            callback: function (value) {
+              token.value = value;
+            },
+          });
+        };
+        document.head.appendChild(script);
+      })();
+    </script>
+  </body>
+</html>

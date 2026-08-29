@@ -24,6 +24,7 @@ import type {
   WhatsAppMessageOrigin,
 } from "~/server/application/simulated-whatsapp-booking";
 import type { PendingPriority } from "~/domain/pending";
+import type { DemoRequestRateLimitScope } from "~/server/application/demo-request";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -961,6 +962,26 @@ export const identityRecoveryRequests = createTable(
   (table) => [
     index("identity_recovery_request_ip_idx").on(
       table.ipHash,
+      table.requestedAt,
+    ),
+  ],
+);
+
+/** Intentos anónimos de demo; conserva solo hashes para aplicar rate limits. */
+export const demoRequestRateLimitAttempts = createTable(
+  "demo_request_rate_limit_attempt",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    scope: text("scope").$type<DemoRequestRateLimitScope>().notNull(),
+    keyHash: text("key_hash").notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("demo_request_rate_limit_scope_key_idx").on(
+      table.scope,
+      table.keyHash,
       table.requestedAt,
     ),
   ],
