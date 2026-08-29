@@ -326,7 +326,9 @@ export const panaceaRouter = {
       z.object({
         birthDate: z.string().max(10),
         contact: patientContactInput,
+        guardianDui: z.string().max(10).optional(),
         patientName: z.string().max(120),
+        relationship: z.enum(["contact", "tutor"]).default("contact"),
       }),
     )
     .mutation(({ ctx, input }) =>

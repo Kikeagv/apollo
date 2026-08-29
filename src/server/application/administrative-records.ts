@@ -139,8 +139,10 @@ export type AdministrativeRecordsStore = {
     contact:
       | { contactId: string; kind: "existing" }
       | { kind: "new"; name: string; phoneE164: string };
+    guardianDui: string | null;
     identityId: string;
     patientName: string;
+    relationship: ContactPatientRelationship;
   }): Promise<PatientRegistration>;
   register(input: {
     birthDate: string;
@@ -208,12 +210,10 @@ export async function addPatientContact(
   },
   store: Pick<AdministrativeRecordsStore, "addPatientContact">,
 ) {
-  const relationship = input.relationship ?? "contact";
-  if (relationship !== "tutor" && input.guardianDui !== undefined) {
-    throw new Error("Solo una tutela puede incluir el DUI del Tutor");
-  }
-  const guardianDui =
-    relationship === "tutor" ? validGuardianDui(input.guardianDui) : null;
+  const { guardianDui, relationship } = normalizePatientLink(
+    input.relationship,
+    input.guardianDui,
+  );
   return store.addPatientContact({
     clinicId: input.clinicId,
     contact:
@@ -283,11 +283,18 @@ export async function registerPatient(
     birthDate: string;
     clinicId: string;
     contact: PatientContactSelection;
+    guardianDui?: string;
     identityId: string;
     patientName: string;
+    relationship?: ContactPatientRelationship;
   },
   store: Pick<AdministrativeRecordsStore, "registerPatient">,
 ) {
+  const { guardianDui, relationship } = normalizePatientLink(
+    input.relationship,
+    input.guardianDui,
+  );
+  const patientName = requiredName(input.patientName);
   return store.registerPatient({
     birthDate: validBirthDate(input.birthDate),
     clinicId: input.clinicId,
@@ -296,11 +303,16 @@ export async function registerPatient(
         ? input.contact
         : {
             kind: "new",
-            name: requiredName(input.contact.name),
+            name:
+              relationship === "contact"
+                ? patientName
+                : requiredName(input.contact.name),
             phoneE164: normalizeE164Phone(input.contact.phone),
           },
+    guardianDui,
     identityId: input.identityId,
-    patientName: requiredName(input.patientName),
+    patientName,
+    relationship,
   });
 }
 
@@ -494,4 +506,19 @@ function validGuardianDui(value: string | undefined) {
     throw new Error("El DUI del Tutor debe usar el formato ########-#");
   }
   return normalized;
+}
+
+function normalizePatientLink(
+  relationship: ContactPatientRelationship | undefined,
+  guardianDui: string | undefined,
+) {
+  const normalizedRelationship = relationship ?? "contact";
+  if (normalizedRelationship !== "tutor" && guardianDui !== undefined) {
+    throw new Error("Solo una tutela puede incluir el DUI del Tutor");
+  }
+  return {
+    guardianDui:
+      normalizedRelationship === "tutor" ? validGuardianDui(guardianDui) : null,
+    relationship: normalizedRelationship,
+  };
 }

@@ -221,6 +221,62 @@ describe("gestionar fichas administrativas", () => {
     });
   });
 
+  it("usa al Paciente como Contacto cuando el alta no indica un Tutor", async () => {
+    const registerPatientRecord = vi.fn().mockResolvedValue({
+      contact: {
+        id: "contact-adult",
+        name: "Pablo Adulto",
+        phoneE164: "+50370000002",
+      },
+      link: {
+        contactId: "contact-adult",
+        id: "link-adult",
+        patientId: "patient-adult",
+      },
+      patient: {
+        birthDate: "1990-01-01",
+        id: "patient-adult",
+        name: "Pablo Adulto",
+      },
+      reusedContact: false,
+    });
+
+    await expect(
+      registerPatient(
+        {
+          birthDate: "1990-01-01",
+          clinicId: "clinic-1",
+          contact: {
+            kind: "new",
+            name: "Nombre que ya no se solicita",
+            phone: "+503 7000-0002",
+          },
+          identityId: "operator-1",
+          patientName: "Pablo Adulto",
+        },
+        { registerPatient: registerPatientRecord },
+      ),
+    ).resolves.toMatchObject({
+      contact: { name: "Pablo Adulto" },
+      link: { contactId: "contact-adult", patientId: "patient-adult" },
+      patient: { name: "Pablo Adulto" },
+    });
+
+    expect(registerPatientRecord).toHaveBeenCalledWith({
+      birthDate: "1990-01-01",
+      clinicId: "clinic-1",
+      contact: {
+        kind: "new",
+        name: "Pablo Adulto",
+        phoneE164: "+50370000002",
+      },
+      guardianDui: null,
+      identityId: "operator-1",
+      patientName: "Pablo Adulto",
+      relationship: "contact",
+    });
+  });
+
   it("registra un Paciente con un Contacto inicial en una sola intención", async () => {
     const registerPatientRecord = vi.fn().mockResolvedValue({
       contact: {
@@ -251,8 +307,10 @@ describe("gestionar fichas administrativas", () => {
             name: "  Ana   Martínez ",
             phone: " +503 7123-4567 ",
           },
+          guardianDui: "01234567-8",
           identityId: "operator-1",
           patientName: " Lucía  Martínez ",
+          relationship: "tutor",
         },
         { registerPatient: registerPatientRecord },
       ),
@@ -269,8 +327,10 @@ describe("gestionar fichas administrativas", () => {
         name: "Ana Martínez",
         phoneE164: "+50371234567",
       },
+      guardianDui: "01234567-8",
       identityId: "operator-1",
       patientName: "Lucía Martínez",
+      relationship: "tutor",
     });
   });
 
@@ -300,8 +360,10 @@ describe("gestionar fichas administrativas", () => {
           birthDate: "2015-08-11",
           clinicId: "clinic-1",
           contact: { contactId: "contact-family", kind: "existing" },
+          guardianDui: "01234567-8",
           identityId: "operator-1",
           patientName: " Mateo  Martínez ",
+          relationship: "tutor",
         },
         { registerPatient: registerPatientRecord },
       ),
@@ -314,8 +376,10 @@ describe("gestionar fichas administrativas", () => {
       birthDate: "2015-08-11",
       clinicId: "clinic-1",
       contact: { contactId: "contact-family", kind: "existing" },
+      guardianDui: "01234567-8",
       identityId: "operator-1",
       patientName: "Mateo Martínez",
+      relationship: "tutor",
     });
   });
 

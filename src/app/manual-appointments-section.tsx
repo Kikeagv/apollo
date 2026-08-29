@@ -49,6 +49,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog";
+import { Field, FieldContent, FieldLabel } from "~/components/ui/field";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -67,9 +68,11 @@ import type {
   CalendarEntry,
 } from "~/server/application/manual-appointments";
 import type { ContactPhoneMatch } from "~/server/application/administrative-records";
+import { joinPatientName } from "~/lib/patient-identity";
 import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
+import { RecordField } from "./record-field";
 
 type CalendarAppointment = AgendaAppointment;
 
@@ -102,10 +105,19 @@ export function ManualAppointmentsSection() {
   const [appointmentStartsAt, setAppointmentStartsAt] = useState("");
   const [serviceOfferId, setServiceOfferId] = useState("");
   const [patientRegistrationOpen, setPatientRegistrationOpen] = useState(false);
-  const [registrationPatientName, setRegistrationPatientName] = useState("");
+  const [registrationPatientGivenNames, setRegistrationPatientGivenNames] =
+    useState("");
+  const [registrationPatientFamilyNames, setRegistrationPatientFamilyNames] =
+    useState("");
   const [registrationBirthDate, setRegistrationBirthDate] = useState("");
-  const [registrationContactName, setRegistrationContactName] = useState("");
   const [registrationPhone, setRegistrationPhone] = useState("");
+  const [registrationIsMinor, setRegistrationIsMinor] = useState(false);
+  const [registrationTutorName, setRegistrationTutorName] = useState("");
+  const [registrationGuardianDui, setRegistrationGuardianDui] = useState("");
+  const [registrationFieldErrors, setRegistrationFieldErrors] = useState<{
+    guardianDui?: string;
+    tutorName?: string;
+  }>({});
   const [registrationContactMode, setRegistrationContactMode] = useState<
     "new" | "existing"
   >("new");
@@ -284,6 +296,28 @@ export function ManualAppointmentsSection() {
   function registerRecords(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const patientName = joinPatientName(
+      formValue(data, "patientGivenNames"),
+      formValue(data, "patientFamilyNames"),
+    );
+    const isMinor = data.get("isMinor") === "true";
+    const tutorName = formValue(data, "tutorName");
+    const guardianDui = formValue(data, "guardianDui");
+    const fieldErrors = isMinor
+      ? {
+          guardianDui: /^\d{8}-\d$/.test(guardianDui.trim())
+            ? undefined
+            : "El DUI del Tutor debe usar el formato ########-#",
+          tutorName:
+            registrationContactMode === "new" && tutorName.trim().length === 0
+              ? "El nombre del Tutor es obligatorio"
+              : undefined,
+        }
+      : {};
+    setRegistrationFieldErrors(fieldErrors);
+    if (Object.values(fieldErrors).some((error) => error !== undefined)) {
+      return;
+    }
     setRecordRegistrationResult(undefined);
     registerPatient.mutate({
       birthDate: formValue(data, "birthDate"),
@@ -296,18 +330,24 @@ export function ManualAppointmentsSection() {
             }
           : {
               kind: "new",
-              name: formValue(data, "contactName"),
+              name: isMinor ? tutorName : patientName,
               phone: formValue(data, "phone"),
             },
-      patientName: formValue(data, "patientName"),
+      guardianDui: isMinor ? guardianDui : undefined,
+      patientName,
+      relationship: isMinor ? "tutor" : "contact",
     });
   }
 
   function resetPatientRegistration() {
-    setRegistrationPatientName("");
+    setRegistrationPatientGivenNames("");
+    setRegistrationPatientFamilyNames("");
     setRegistrationBirthDate("");
-    setRegistrationContactName("");
     setRegistrationPhone("");
+    setRegistrationIsMinor(false);
+    setRegistrationTutorName("");
+    setRegistrationGuardianDui("");
+    setRegistrationFieldErrors({});
     setRegistrationContactMode("new");
   }
 
@@ -484,46 +524,42 @@ export function ManualAppointmentsSection() {
                   className="mt-3 grid gap-4 sm:grid-cols-2"
                   onSubmit={registerRecords}
                 >
-                  <label className="text-sm">
-                    Nombre del Paciente
-                    <input
-                      className={inputClass}
-                      name="patientName"
-                      onChange={(event) =>
-                        setRegistrationPatientName(event.target.value)
-                      }
-                      required
-                      value={registrationPatientName}
-                    />
-                  </label>
-                  <label className="text-sm">
-                    Fecha de nacimiento del Paciente
-                    <input
-                      className={inputClass}
-                      name="birthDate"
-                      onChange={(event) =>
-                        setRegistrationBirthDate(event.target.value)
-                      }
-                      required
-                      type="date"
-                      value={registrationBirthDate}
-                    />
-                  </label>
-                  <label className="text-sm">
-                    Teléfono del Contacto
-                    <input
-                      className={inputClass}
-                      name="phone"
-                      onChange={(event) => {
-                        setRegistrationPhone(event.target.value);
-                        setRegistrationContactMode("new");
-                      }}
-                      placeholder="+50371234567"
-                      required
-                      type="tel"
-                      value={registrationPhone}
-                    />
-                  </label>
+                  <RecordField
+                    id="calendar-registration-patient-given-names"
+                    label="Nombres del Paciente"
+                    name="patientGivenNames"
+                    onChange={setRegistrationPatientGivenNames}
+                    value={registrationPatientGivenNames}
+                  />
+                  <RecordField
+                    id="calendar-registration-patient-family-names"
+                    label="Apellidos del Paciente"
+                    name="patientFamilyNames"
+                    onChange={setRegistrationPatientFamilyNames}
+                    value={registrationPatientFamilyNames}
+                  />
+                  <RecordField
+                    id="calendar-registration-birth-date"
+                    label="Fecha de nacimiento del Paciente"
+                    name="birthDate"
+                    onChange={setRegistrationBirthDate}
+                    type="date"
+                    value={registrationBirthDate}
+                  />
+                  <p className="text-sm font-medium sm:col-span-2">Contacto</p>
+                  <RecordField
+                    className="sm:col-span-2"
+                    id="calendar-registration-phone"
+                    label="Teléfono"
+                    name="phone"
+                    onChange={(value) => {
+                      setRegistrationPhone(value);
+                      setRegistrationContactMode("new");
+                    }}
+                    placeholder="+50371234567"
+                    type="tel"
+                    value={registrationPhone}
+                  />
                   {registrationContactMatch.data ? (
                     <AppointmentContactMatchNotice
                       contact={registrationContactMatch.data}
@@ -531,20 +567,61 @@ export function ManualAppointmentsSection() {
                       reused={registrationContactMode === "existing"}
                     />
                   ) : null}
-                  {registrationContactMode === "new" ? (
-                    <label className="text-sm sm:col-span-2">
-                      Nombre del Contacto
-                      <input
-                        className={inputClass}
-                        name="contactName"
-                        onChange={(event) =>
-                          setRegistrationContactName(event.target.value)
-                        }
-                        required
-                        value={registrationContactName}
+                  <Field className="sm:col-span-2" orientation="horizontal">
+                    <input
+                      checked={registrationIsMinor}
+                      className="accent-primary focus-visible:border-ring focus-visible:ring-ring/30 size-11 rounded outline-none focus-visible:ring-3"
+                      id="calendar-registration-is-minor"
+                      name="isMinor"
+                      onChange={(event) => {
+                        setRegistrationIsMinor(event.target.checked);
+                        setRegistrationFieldErrors({});
+                      }}
+                      type="checkbox"
+                      value="true"
+                    />
+                    <FieldContent>
+                      <FieldLabel htmlFor="calendar-registration-is-minor">
+                        El Paciente es menor de edad
+                      </FieldLabel>
+                    </FieldContent>
+                  </Field>
+                  {registrationIsMinor ? (
+                    <div className="grid gap-4 sm:col-span-2 sm:grid-cols-2">
+                      {registrationContactMode === "new" ? (
+                        <RecordField
+                          error={registrationFieldErrors.tutorName}
+                          id="calendar-registration-tutor-name"
+                          label="Nombre del Tutor"
+                          name="tutorName"
+                          onChange={(value) => {
+                            setRegistrationTutorName(value);
+                            setRegistrationFieldErrors((errors) => ({
+                              ...errors,
+                              tutorName: undefined,
+                            }));
+                          }}
+                          value={registrationTutorName}
+                        />
+                      ) : null}
+                      <RecordField
+                        error={registrationFieldErrors.guardianDui}
+                        id="calendar-registration-guardian-dui"
+                        label="DUI del Tutor"
+                        name="guardianDui"
+                        onChange={(value) => {
+                          setRegistrationGuardianDui(value);
+                          setRegistrationFieldErrors((errors) => ({
+                            ...errors,
+                            guardianDui: undefined,
+                          }));
+                        }}
+                        placeholder="########-#"
+                        value={registrationGuardianDui}
                       />
-                    </label>
-                  ) : (
+                    </div>
+                  ) : null}
+                  {registrationContactMode === "existing" ? (
                     <div className="bg-muted/40 rounded-lg border p-3 text-sm sm:col-span-2">
                       <p className="font-medium">
                         Contacto seleccionado:{" "}
@@ -554,14 +631,7 @@ export function ManualAppointmentsSection() {
                         {registrationContactMatch.data?.phoneE164}
                       </p>
                     </div>
-                  )}
-                  <p
-                    className="text-muted-foreground text-xs sm:col-span-2"
-                    id="calendar-patient-registration-help"
-                  >
-                    El Contacto inicial queda vinculado al Paciente y puede
-                    reutilizarse para otros Pacientes de la Clínica.
-                  </p>
+                  ) : null}
                   {registerPatient.error ? (
                     <p
                       aria-live="assertive"

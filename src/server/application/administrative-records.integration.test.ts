@@ -386,8 +386,10 @@ describe("fichas administrativas persistentes", () => {
               name: "Ana Martínez",
               phone: "+503 7123-4567",
             },
+            guardianDui: "01234567-8",
             identityId: fixture.primary.identityId,
             patientName: "Lucía Martínez",
+            relationship: "tutor",
           },
           drizzleAdministrativeRecordsStore,
         );
@@ -396,8 +398,10 @@ describe("fichas administrativas persistentes", () => {
             birthDate: "2015-08-11",
             clinicId: fixture.primary.clinicId,
             contact: { contactId: first.contact.id, kind: "existing" },
+            guardianDui: "01234567-8",
             identityId: fixture.secretary.identityId,
             patientName: "Mateo Martínez",
+            relationship: "tutor",
           },
           drizzleAdministrativeRecordsStore,
         );
@@ -410,15 +414,28 @@ describe("fichas administrativas persistentes", () => {
           },
           drizzleAdministrativeRecordsStore,
         );
-        const adult = await createPatient(
+        const adultRegistration = await registerPatient(
           {
             birthDate: "1990-01-01",
             clinicId: fixture.primary.clinicId,
+            contact: {
+              kind: "new",
+              name: "Nombre que ya no se solicita",
+              phone: "+503 7000-0002",
+            },
             identityId: fixture.primary.identityId,
-            name: "Pablo Adulto",
+            patientName: "Pablo Adulto",
           },
           drizzleAdministrativeRecordsStore,
         );
+        const adult = adultRegistration.patient;
+        expect(adultRegistration).toMatchObject({
+          contact: {
+            name: "Pablo Adulto",
+            phoneE164: "+50370000002",
+          },
+          patient: { id: adult.id, name: "Pablo Adulto" },
+        });
         await expect(
           addPatientContact(
             {
@@ -504,8 +521,10 @@ describe("fichas administrativas persistentes", () => {
               name: "Contacto que debe revertirse",
               phoneE164: "+50370000008",
             },
+            guardianDui: null,
             identityId: fixture.primary.identityId,
             patientName: "Paciente que debe revertirse",
+            relationship: "contact",
           }),
         ).rejects.toThrow();
         await expect(
@@ -533,7 +552,7 @@ describe("fichas administrativas persistentes", () => {
             expect.objectContaining({ contactCount: 1, id: incomplete.id }),
             expect.objectContaining({ contactCount: 1, id: first.patient.id }),
             expect.objectContaining({ contactCount: 1, id: second.patient.id }),
-            expect.objectContaining({ contactCount: 0, id: adult.id }),
+            expect.objectContaining({ contactCount: 1, id: adult.id }),
           ]),
         );
         await expect(
@@ -585,6 +604,26 @@ describe("fichas administrativas persistentes", () => {
             },
           ],
           patient: { id: incomplete.id, name: "Sofía López" },
+        });
+        await expect(
+          getPatientAdministrativeDetail(
+            {
+              clinicId: fixture.primary.clinicId,
+              identityId: fixture.primary.identityId,
+              patientId: adult.id,
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toMatchObject({
+          contacts: [
+            {
+              contact: { id: adultRegistration.contact.id },
+              guardianDui: null,
+              guardianshipVerificationStatus: null,
+              relationship: "contact",
+            },
+          ],
+          patient: { id: adult.id, name: "Pablo Adulto" },
         });
         await expect(
           getPatientAdministrativeDetail(

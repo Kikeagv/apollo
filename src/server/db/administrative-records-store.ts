@@ -458,6 +458,10 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
 
   async registerPatient(input) {
     return inClinicTransaction(input, async (transaction) => {
+      const relationship = input.relationship ?? "contact";
+      if (relationship === "tutor" && !isMinor(input.birthDate)) {
+        throw new TutorOnlyForMinorPatientError();
+      }
       let contact: ContactRow | undefined;
       let reusedContact = false;
 
@@ -510,7 +514,11 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
         .values({
           clinicId: input.clinicId,
           contactId: contact.id,
+          guardianDui: input.guardianDui,
+          guardianshipVerificationStatus:
+            relationship === "tutor" ? "pending" : null,
           patientId: patient.id,
+          relationship,
         })
         .returning(linkFields);
       if (link === undefined) throw new Error("No se pudo crear el Vínculo");

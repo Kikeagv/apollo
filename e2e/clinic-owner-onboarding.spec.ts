@@ -207,21 +207,65 @@ test("Pacientes completa el alta Paciente-primero y reutiliza el Contacto por te
     ).toBeVisible();
 
     await page
+      .getByRole("button", { name: "Crear Ficha incompleta", exact: true })
+      .click();
+    const incompleteDialog = page.getByRole("dialog", {
+      name: "Crear Ficha de Paciente incompleta",
+    });
+    await expect(
+      incompleteDialog.getByLabel("Nombres del Paciente"),
+    ).toBeVisible();
+    await expect(
+      incompleteDialog.getByLabel("Apellidos del Paciente"),
+    ).toBeVisible();
+    await expect(
+      incompleteDialog.getByLabel("Nombre del Paciente"),
+    ).toHaveCount(0);
+    await incompleteDialog.getByRole("button", { name: "Cancelar" }).click();
+
+    await page
       .getByRole("button", { name: "Nuevo Paciente", exact: true })
       .click();
     const firstDialog = page.getByRole("dialog", { name: "Nuevo Paciente" });
-    await firstDialog.getByLabel("Nombre del Paciente").fill("Lucía E2E");
-    await firstDialog.getByLabel("Fecha de nacimiento").fill("2018-04-02");
+    await expectNoAccessibilityViolations(page, '[role="dialog"]', {
+      disableRules: ["color-contrast"],
+    });
+    await firstDialog.getByLabel("Nombres del Paciente").fill("Lucía");
+    await firstDialog.getByLabel("Apellidos del Paciente").fill("E2E");
+    await firstDialog.getByLabel("Fecha de nacimiento").fill("1990-04-02");
+    await expect(
+      firstDialog.getByText("Contacto inicial", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      firstDialog.getByText(/El Contacto identifica al titular/),
+    ).toHaveCount(0);
+    await expect(firstDialog.getByLabel("Nombre del Contacto")).toHaveCount(0);
+    await expect(firstDialog.getByLabel("Nombre del Tutor")).toHaveCount(0);
     await firstDialog.getByLabel("Teléfono").fill("+50371234567");
-    await firstDialog.getByLabel("Nombre del Contacto").fill("Ana E2E");
     await firstDialog
       .getByRole("button", { name: "Crear Paciente", exact: true })
       .click();
     await expect(page).toHaveURL(/\/pacientes\?patient=/);
-    await expect(page.getByText("Lucía E2E", { exact: true })).toBeVisible();
+    await expect(
+      page
+        .getByRole("dialog")
+        .getByRole("heading", { name: "Lucía E2E", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("dialog")
+        .getByRole("region", { name: "Contactos y Vínculos" })
+        .getByText("Lucía E2E", { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Contactos y Vínculos" }),
     ).toBeVisible();
+    await expect(
+      page
+        .getByRole("dialog")
+        .getByLabel("Tipo de Vínculo")
+        .getByRole("option", { name: "Tutor", exact: true }),
+    ).toHaveCount(0);
     expect(drawerViewportErrors).toEqual([]);
     await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
 
@@ -230,9 +274,13 @@ test("Pacientes completa el alta Paciente-primero y reutiliza el Contacto por te
       .getByRole("button", { name: "Nuevo Paciente", exact: true })
       .click();
     const secondDialog = page.getByRole("dialog", { name: "Nuevo Paciente" });
-    await secondDialog.getByLabel("Nombre del Paciente").fill("Mateo E2E");
+    await secondDialog.getByLabel("Nombres del Paciente").fill("Mateo");
+    await secondDialog.getByLabel("Apellidos del Paciente").fill("E2E");
     await secondDialog.getByLabel("Fecha de nacimiento").fill("2015-08-11");
+    await secondDialog.getByLabel("El Paciente es menor de edad").check();
     await secondDialog.getByLabel("Teléfono").fill("+503 7123-4567");
+    await secondDialog.getByLabel("Nombre del Tutor").fill("Lucía E2E");
+    await secondDialog.getByLabel("DUI del Tutor").fill("12345678-9");
     await expect(
       secondDialog.getByText("Contacto existente encontrado"),
     ).toBeVisible();
@@ -246,13 +294,25 @@ test("Pacientes completa el alta Paciente-primero y reutiliza el Contacto por te
       page.getByText("Contacto existente reutilizado."),
     ).toBeVisible();
     await expect(page.getByText("Mateo E2E", { exact: true })).toBeVisible();
+    await expect(
+      page
+        .getByRole("dialog")
+        .getByRole("region", { name: "Contactos y Vínculos" })
+        .getByText("Tutor", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("dialog")
+        .getByText("DUI: 12345678-9 · Tutela pendiente de verificación", {
+          exact: true,
+        }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Cerrar panel" }).click();
     await page.getByLabel("Buscar por").selectOption("contacts");
-    await page.getByTestId("patient-directory-search").fill("Ana E2E");
+    await page.getByTestId("patient-directory-search").fill("Lucía E2E");
     await expect(
       page.getByRole("heading", { name: "Contactos" }),
     ).toBeVisible();
-    await expect(page.getByText("Ana E2E", { exact: true })).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Lucía E2E", exact: true }),
     ).toBeVisible();
@@ -810,13 +870,11 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
 
     for (const appointment of [
       {
-        contactName: "Ana Inline",
         patientName: "Lucía Inline",
         phone: "+50371234567",
         startsAt: "08:00",
       },
       {
-        contactName: "Beatriz Inline",
         patientName: "Mateo Inline",
         phone: "+50371234567",
         reuseExistingContact: true,
@@ -879,7 +937,6 @@ test("el Calendario cancela una Cita activa y conserva su historial", async ({
     const calendar = calendarSection(page);
     await registerInlinePatient(calendar, page, {
       careDate,
-      contactName: "Contacto con historial",
       patientName,
     });
     await createManualAppointmentInCalendar(calendar, page, {
@@ -955,7 +1012,6 @@ test("el Calendario solo ofrece cancelar Citas manuales futuras", async ({
     const calendar = calendarSection(page);
     await registerInlinePatient(calendar, page, {
       careDate,
-      contactName: "Contacto de orígenes",
       patientName,
     });
     await createManualAppointmentInCalendar(calendar, page, {
@@ -1058,7 +1114,6 @@ test("el Calendario rechaza una Cita que se traslapa con capacidad ocupada", asy
     const calendar = calendarSection(page);
     await registerInlinePatient(calendar, page, {
       careDate,
-      contactName: "Contacto sin traslape",
       patientName,
     });
     await createManualAppointmentInCalendar(calendar, page, {
@@ -1113,7 +1168,6 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
   const fixture = await createFixture();
   const doctorName = "Dra. Marina Calendario";
   const serviceName = "Consulta Calendario";
-  const contactName = "Contacto Calendario";
   const patientName = "Paciente Calendario";
   const careDate = nextClinicMonday();
 
@@ -1157,7 +1211,6 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
     const agendaList = calendar.locator('[data-calendar-list="true"]');
     await registerInlinePatient(calendar, page, {
       careDate,
-      contactName,
       patientName,
     });
 
@@ -1206,7 +1259,11 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
       })
       .locator("xpath=../..");
     await expect(appointmentDetail).toContainText(patientName);
-    await expect(appointmentDetail).toContainText(contactName);
+    await expect(
+      appointmentDetail.getByText("Paciente Calendario · +50371234567", {
+        exact: true,
+      }),
+    ).toBeVisible();
     await expect(appointmentDetail).toContainText(serviceName);
     await page.goBack();
     await expect(appointmentDetail).not.toBeVisible();
@@ -1291,7 +1348,6 @@ async function registerInlinePatient(
   page: Page,
   input: {
     careDate: string;
-    contactName: string;
     patientName: string;
     phone?: string;
     reuseExistingContact?: boolean;
@@ -1305,18 +1361,20 @@ async function registerInlinePatient(
   await appointmentDialog
     .getByRole("button", { name: "Crear Paciente con Contacto" })
     .click();
+  const patientNameParts = input.patientName.trim().split(/\s+/);
+  const patientGivenNames = patientNameParts.shift() ?? "";
   await appointmentDialog
-    .getByLabel("Nombre del Contacto")
-    .fill(input.contactName);
+    .getByLabel("Nombres del Paciente")
+    .fill(patientGivenNames);
   await appointmentDialog
-    .getByLabel("Teléfono del Contacto")
+    .getByLabel("Apellidos del Paciente")
+    .fill(patientNameParts.join(" "));
+  await appointmentDialog
+    .getByLabel("Teléfono")
     .fill(input.phone ?? "+50371234567");
   await appointmentDialog
-    .getByLabel("Nombre del Paciente")
-    .fill(input.patientName);
-  await appointmentDialog
     .getByLabel("Fecha de nacimiento del Paciente")
-    .fill("2018-04-02");
+    .fill("2000-04-02");
   if (input.reuseExistingContact === true) {
     await appointmentDialog
       .getByRole("button", { name: "Reutilizar Contacto" })

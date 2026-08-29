@@ -49,9 +49,11 @@ import type {
   PatientSearchTarget,
 } from "~/server/application/administrative-records";
 import type { AppointmentEventType } from "~/server/application/manual-appointments";
+import { joinPatientName } from "~/lib/patient-identity";
 import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
+import { RecordField } from "./record-field";
 
 const EMPTY_PATIENT_ID = "00000000-0000-0000-0000-000000000000";
 
@@ -66,14 +68,26 @@ export function AdministrativeRecordsSection() {
   const [incompleteRegistrationOpen, setIncompleteRegistrationOpen] =
     useState(false);
   const [result, setResult] = useState<string>();
-  const [registrationPatientName, setRegistrationPatientName] = useState("");
+  const [registrationPatientGivenNames, setRegistrationPatientGivenNames] =
+    useState("");
+  const [registrationPatientFamilyNames, setRegistrationPatientFamilyNames] =
+    useState("");
   const [registrationBirthDate, setRegistrationBirthDate] = useState("");
-  const [registrationContactName, setRegistrationContactName] = useState("");
   const [registrationPhone, setRegistrationPhone] = useState("");
+  const [registrationIsMinor, setRegistrationIsMinor] = useState(false);
+  const [registrationTutorName, setRegistrationTutorName] = useState("");
+  const [registrationGuardianDui, setRegistrationGuardianDui] = useState("");
+  const [registrationFieldErrors, setRegistrationFieldErrors] = useState<{
+    guardianDui?: string;
+    tutorName?: string;
+  }>({});
   const [registrationContactMode, setRegistrationContactMode] = useState<
     "new" | "existing"
   >("new");
-  const [incompleteName, setIncompleteName] = useState("");
+  const [incompletePatientGivenNames, setIncompletePatientGivenNames] =
+    useState("");
+  const [incompletePatientFamilyNames, setIncompletePatientFamilyNames] =
+    useState("");
   const [incompleteBirthDate, setIncompleteBirthDate] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
@@ -107,7 +121,7 @@ export function AdministrativeRecordsSection() {
           ? "Paciente " +
               patient.name +
               " creado y Contacto existente reutilizado."
-          : "Paciente " + patient.name + " creado con su Contacto inicial.",
+          : "Paciente " + patient.name + " creado con su Contacto.",
       );
       resetRegistration();
       setRegistrationOpen(false);
@@ -123,7 +137,8 @@ export function AdministrativeRecordsSection() {
             patient.name +
             " creada. Vincule un Contacto antes de crear una Cita.",
         );
-        setIncompleteName("");
+        setIncompletePatientGivenNames("");
+        setIncompletePatientFamilyNames("");
         setIncompleteBirthDate("");
         setIncompleteRegistrationOpen(false);
         await directory.refetch();
@@ -169,10 +184,14 @@ export function AdministrativeRecordsSection() {
   }
 
   function resetRegistration() {
-    setRegistrationPatientName("");
+    setRegistrationPatientGivenNames("");
+    setRegistrationPatientFamilyNames("");
     setRegistrationBirthDate("");
-    setRegistrationContactName("");
     setRegistrationPhone("");
+    setRegistrationIsMinor(false);
+    setRegistrationTutorName("");
+    setRegistrationGuardianDui("");
+    setRegistrationFieldErrors({});
     setRegistrationContactMode("new");
   }
 
@@ -188,6 +207,28 @@ export function AdministrativeRecordsSection() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const phone = formValue(data, "contactPhone");
+    const patientName = joinPatientName(
+      formValue(data, "patientGivenNames"),
+      formValue(data, "patientFamilyNames"),
+    );
+    const isMinor = data.get("isMinor") === "true";
+    const tutorName = formValue(data, "tutorName");
+    const guardianDui = formValue(data, "guardianDui");
+    const fieldErrors = isMinor
+      ? {
+          guardianDui: /^\d{8}-\d$/.test(guardianDui.trim())
+            ? undefined
+            : "El DUI del Tutor debe usar el formato ########-#",
+          tutorName:
+            registrationContactMode === "new" && tutorName.trim().length === 0
+              ? "El nombre del Tutor es obligatorio"
+              : undefined,
+        }
+      : {};
+    setRegistrationFieldErrors(fieldErrors);
+    if (Object.values(fieldErrors).some((error) => error !== undefined)) {
+      return;
+    }
     registerPatient.mutate({
       birthDate: formValue(data, "birthDate"),
       contact:
@@ -199,10 +240,12 @@ export function AdministrativeRecordsSection() {
             }
           : {
               kind: "new",
-              name: formValue(data, "contactName"),
+              name: isMinor ? tutorName : patientName,
               phone,
             },
-      patientName: formValue(data, "patientName"),
+      guardianDui: isMinor ? guardianDui : undefined,
+      patientName,
+      relationship: isMinor ? "tutor" : "contact",
     });
   }
 
@@ -211,7 +254,10 @@ export function AdministrativeRecordsSection() {
     const data = new FormData(event.currentTarget);
     createIncompletePatient.mutate({
       birthDate: formValue(data, "birthDate"),
-      name: formValue(data, "name"),
+      name: joinPatientName(
+        formValue(data, "patientGivenNames"),
+        formValue(data, "patientFamilyNames"),
+      ),
     });
   }
 
@@ -369,8 +415,7 @@ export function AdministrativeRecordsSection() {
           <DialogHeader>
             <DialogTitle>Nuevo Paciente</DialogTitle>
             <DialogDescription>
-              Registre la persona atendida junto con su Contacto inicial. La
-              operación crea Paciente, Contacto y Vínculo atómicamente.
+              Registre los datos del Paciente y el teléfono de Contacto.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -380,31 +425,32 @@ export function AdministrativeRecordsSection() {
             className="mt-6 space-y-5"
             onSubmit={submitRegistration}
           >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <RecordField
+                id="registration-patient-given-names"
+                label="Nombres del Paciente"
+                name="patientGivenNames"
+                onChange={setRegistrationPatientGivenNames}
+                value={registrationPatientGivenNames}
+              />
+              <RecordField
+                id="registration-patient-family-names"
+                label="Apellidos del Paciente"
+                name="patientFamilyNames"
+                onChange={setRegistrationPatientFamilyNames}
+                value={registrationPatientFamilyNames}
+              />
+            </div>
+            <RecordField
+              id="registration-patient-birth-date"
+              label="Fecha de nacimiento"
+              name="birthDate"
+              onChange={setRegistrationBirthDate}
+              type="date"
+              value={registrationBirthDate}
+            />
+            <h3 className="font-medium">Contacto</h3>
             <FieldGroup className="gap-4">
-              <RecordField
-                id="registration-patient-name"
-                label="Nombre del Paciente"
-                name="patientName"
-                onChange={setRegistrationPatientName}
-                value={registrationPatientName}
-              />
-              <RecordField
-                id="registration-patient-birth-date"
-                label="Fecha de nacimiento"
-                name="birthDate"
-                onChange={setRegistrationBirthDate}
-                type="date"
-                value={registrationBirthDate}
-              />
-            </FieldGroup>
-            <div className="border-border space-y-4 rounded-lg border p-4">
-              <div>
-                <h3 className="font-medium">Contacto inicial</h3>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  El Contacto identifica al titular del teléfono; no se
-                  convierte en Paciente principal.
-                </p>
-              </div>
               <RecordField
                 id="registration-contact-phone"
                 label="Teléfono"
@@ -424,19 +470,66 @@ export function AdministrativeRecordsSection() {
                   reused={registrationContactMode === "existing"}
                 />
               ) : null}
-              {registrationContactMode === "new" ? (
-                <RecordField
-                  id="registration-contact-name"
-                  label="Nombre del Contacto"
-                  name="contactName"
-                  onChange={setRegistrationContactName}
-                  required
-                  value={registrationContactName}
+              <Field orientation="horizontal">
+                <input
+                  checked={registrationIsMinor}
+                  className="accent-primary focus-visible:border-ring focus-visible:ring-ring/30 size-11 rounded outline-none focus-visible:ring-3"
+                  id="registration-is-minor"
+                  name="isMinor"
+                  onChange={(event) => {
+                    setRegistrationIsMinor(event.target.checked);
+                    setRegistrationFieldErrors({});
+                  }}
+                  type="checkbox"
+                  value="true"
                 />
-              ) : (
+                <FieldContent>
+                  <FieldLabel htmlFor="registration-is-minor">
+                    El Paciente es menor de edad
+                  </FieldLabel>
+                </FieldContent>
+              </Field>
+              {registrationIsMinor ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {registrationContactMode === "new" ? (
+                    <RecordField
+                      error={registrationFieldErrors.tutorName}
+                      id="registration-tutor-name"
+                      label="Nombre del Tutor"
+                      name="tutorName"
+                      onChange={(value) => {
+                        setRegistrationTutorName(value);
+                        setRegistrationFieldErrors((errors) => ({
+                          ...errors,
+                          tutorName: undefined,
+                        }));
+                      }}
+                      required
+                      value={registrationTutorName}
+                    />
+                  ) : null}
+                  <RecordField
+                    error={registrationFieldErrors.guardianDui}
+                    id="registration-guardian-dui"
+                    label="DUI del Tutor"
+                    name="guardianDui"
+                    onChange={(value) => {
+                      setRegistrationGuardianDui(value);
+                      setRegistrationFieldErrors((errors) => ({
+                        ...errors,
+                        guardianDui: undefined,
+                      }));
+                    }}
+                    placeholder="########-#"
+                    required
+                    value={registrationGuardianDui}
+                  />
+                </div>
+              ) : null}
+              {registrationContactMode === "existing" ? (
                 <SelectedContact contact={registrationContactMatch.data} />
-              )}
-            </div>
+              ) : null}
+            </FieldGroup>
             <MutationError
               error={registerPatient.error}
               id="patient-registration-error"
@@ -459,7 +552,8 @@ export function AdministrativeRecordsSection() {
         onOpenChange={(open) => {
           setIncompleteRegistrationOpen(open);
           if (!open) {
-            setIncompleteName("");
+            setIncompletePatientGivenNames("");
+            setIncompletePatientFamilyNames("");
             setIncompleteBirthDate("");
           }
         }}
@@ -483,14 +577,23 @@ export function AdministrativeRecordsSection() {
             className="mt-6 space-y-5"
             onSubmit={submitIncompletePatient}
           >
-            <FieldGroup className="gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <RecordField
-                id="incomplete-patient-name"
-                label="Nombre del Paciente"
-                name="name"
-                onChange={setIncompleteName}
-                value={incompleteName}
+                id="incomplete-patient-given-names"
+                label="Nombres del Paciente"
+                name="patientGivenNames"
+                onChange={setIncompletePatientGivenNames}
+                value={incompletePatientGivenNames}
               />
+              <RecordField
+                id="incomplete-patient-family-names"
+                label="Apellidos del Paciente"
+                name="patientFamilyNames"
+                onChange={setIncompletePatientFamilyNames}
+                value={incompletePatientFamilyNames}
+              />
+            </div>
+            <FieldGroup className="gap-4">
               <RecordField
                 id="incomplete-patient-birth-date"
                 label="Fecha de nacimiento"
@@ -748,6 +851,9 @@ function PatientDetail({
   onVerify: (linkId: string) => void;
 }) {
   const incomplete = detail.contacts.length === 0;
+  const canAddTutor = isMinorPatient(detail.patient.birthDate);
+  const selectedRelationship =
+    canAddTutor && contactRelationship === "tutor" ? "tutor" : "contact";
   return (
     <div className="space-y-6">
       <MutationError error={mutationError} id="patient-detail-error" />
@@ -843,7 +949,7 @@ function PatientDetail({
         className="space-y-3"
       >
         <h3 className="font-medium" id="add-patient-contact-title">
-          Agregar Contacto o Tutor
+          {canAddTutor ? "Agregar Contacto o Tutor" : "Agregar Contacto"}
         </h3>
         <form
           aria-describedby={mutationError ? "patient-detail-error" : undefined}
@@ -892,16 +998,18 @@ function PatientDetail({
                       event.target.value as "contact" | "tutor",
                     )
                   }
-                  value={contactRelationship}
+                  value={selectedRelationship}
                 >
                   <NativeSelectOption value="contact">
                     Contacto
                   </NativeSelectOption>
-                  <NativeSelectOption value="tutor">Tutor</NativeSelectOption>
+                  {canAddTutor ? (
+                    <NativeSelectOption value="tutor">Tutor</NativeSelectOption>
+                  ) : null}
                 </NativeSelect>
               </FieldContent>
             </Field>
-            {contactRelationship === "tutor" ? (
+            {selectedRelationship === "tutor" ? (
               <RecordField
                 id="patient-contact-guardian-dui"
                 label="DUI del Tutor"
@@ -1077,49 +1185,26 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RecordField({
-  id,
-  label,
-  maxLength = 120,
-  name,
-  onChange,
-  placeholder,
-  required = true,
-  type = "text",
-  value,
-}: {
-  id: string;
-  label: string;
-  maxLength?: number;
-  name?: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  required?: boolean;
-  type?: "date" | "tel" | "text";
-  value: string;
-}) {
-  return (
-    <Field>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <FieldContent>
-        <Input
-          id={id}
-          maxLength={type === "date" ? undefined : maxLength}
-          name={name ?? id}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          required={required}
-          type={type}
-          value={value}
-        />
-      </FieldContent>
-    </Field>
-  );
-}
-
 function canLookupPhone(value: string) {
   const normalized = value.trim().replace(/[()\s.-]/g, "");
   return /^\+[1-9]\d{7,14}$/.test(normalized);
+}
+
+function isMinorPatient(birthDate: string | null) {
+  if (birthDate === null) return false;
+  const birth = new Date(`${birthDate}T00:00:00.000Z`);
+  const adulthood = new Date(
+    Date.UTC(
+      birth.getUTCFullYear() + 18,
+      birth.getUTCMonth(),
+      birth.getUTCDate(),
+    ),
+  );
+  const now = new Date();
+  const today = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  return adulthood > today;
 }
 
 function MutationError({
