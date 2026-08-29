@@ -34,6 +34,24 @@ describe("contrato público de Solicitud de demo", () => {
     );
   });
 
+  it("mantiene una composición de formulario compacta y de una columna", () => {
+    const demo = readLandingFile("./demo.html");
+    const styles = readLandingFile("./styles.css");
+
+    expect(demo).not.toContain('<p class="kicker">Solicitud de demo</p>');
+    expect(demo).not.toContain('<p class="kicker">Hablemos de Praxia</p>');
+    expect(demo).not.toContain("Los campos marcados con * son necesarios.");
+    expect(styles).toMatch(
+      /\.demo-form-grid\s*\{[\s\S]*grid-template-columns:\s*1fr;/,
+    );
+    expect(styles).toMatch(
+      /\.demo-field select\s*\{[\s\S]*appearance:\s*none;[\s\S]*padding-right:\s*3rem;/,
+    );
+    expect(styles).toContain("background-position: right 1rem center");
+    expect(styles).toContain("font-size: clamp(2.35rem, 4.5vw, 4rem);");
+    expect(styles).toContain("font-size: clamp(1.65rem, 3vw, 2.35rem);");
+  });
+
   it("mantiene la confirmación fuera del índice y sin promesa de respuesta", () => {
     const confirmation = readLandingFile("./demo/recibido.html");
     const nginx = readLandingFile("./nginx.conf");
