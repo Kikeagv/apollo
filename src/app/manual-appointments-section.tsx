@@ -1563,6 +1563,8 @@ function appointmentEventLabel(type: AppointmentEventType) {
       return "Cita reprogramada automáticamente";
     case "self-management-escalated":
       return "Solicitud de autogestión escalada a una persona";
+    case "self-management-resolved":
+      return "Solicitud de autogestión resuelta por una persona";
     case "manual-confirmation-sent":
       return "Confirmación por WhatsApp enviada";
     case "manual-confirmation-failed":

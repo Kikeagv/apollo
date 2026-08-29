@@ -24,6 +24,10 @@ import {
   getVoiceTranscriptionSettings,
   setVoiceTranscriptionSettings,
 } from "~/server/application/voice-note-transcription-settings";
+import {
+  listPendingCases,
+  resolvePendingCase,
+} from "~/server/application/pending";
 import { performSyntheticClinicalAction } from "~/server/application/perform-synthetic-clinical-action";
 import { canAccessPanaceaTechnicalSurface } from "~/server/application/panacea-technical-surface";
 import {
@@ -106,6 +110,10 @@ import {
   resolveTransactionalDeliveryAlert,
 } from "~/server/db/transactional-delivery-store";
 import {
+  drizzlePendingResolver,
+  drizzlePendingStore,
+} from "~/server/db/pending-store";
+import {
   clinicProcedure,
   protectedProcedure,
   publicProcedure,
@@ -155,6 +163,42 @@ export const panaceaRouter = {
           identityId: ctx.clinic.identityId,
         },
         drizzleNoShowPolicyStore,
+      ),
+    ),
+
+  listPendingCases: clinicProcedure
+    .input(
+      z.object({
+        category: z.enum(["all", "conversation", "appointment", "delivery"]),
+        status: z.enum(["open", "resolved"]),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      listPendingCases(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzlePendingStore,
+      ),
+    ),
+
+  resolvePendingCase: clinicProcedure
+    .input(
+      z.object({
+        category: z.enum(["conversation", "appointment", "delivery"]),
+        id: z.string().uuid(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      resolvePendingCase(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzlePendingResolver,
       ),
     ),
 

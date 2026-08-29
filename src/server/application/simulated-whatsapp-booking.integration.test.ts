@@ -8,6 +8,7 @@ import { listPendingGuardianshipVerifications } from "./administrative-records";
 import { sendAppointmentReminder } from "./appointment-reminders";
 import { canContactManageAppointment } from "./appointment-self-management";
 import { resolveAppointmentSelfManagementEscalation } from "./appointment-self-management";
+import { listPendingCases, resolvePendingCase } from "./pending";
 import {
   listConversationEscalations,
   resolveConversationEscalation,
@@ -15,6 +16,8 @@ import {
 import { db } from "../db";
 import {
   inClinicTransaction,
+  inAppointmentSchedulerTransaction,
+  inSimulatedWhatsAppClinicTransaction,
   inSuperadminTransaction,
 } from "../db/clinic-context";
 import {
@@ -24,6 +27,10 @@ import {
   drizzleConversationEscalationResolver,
   drizzleSimulatedWhatsAppBookingStore,
 } from "../db/simulated-whatsapp-booking-store";
+import {
+  drizzlePendingResolver,
+  drizzlePendingStore,
+} from "../db/pending-store";
 import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-store";
 import { drizzleManualAppointmentStore } from "../db/manual-appointment-store";
 import {
@@ -31,6 +38,7 @@ import {
   simulatedAppointmentReminderSender,
 } from "../whatsapp/simulated-appointment-messages";
 import {
+  appointmentEvents,
   appointments,
   appointmentSelfManagementEscalations,
   apoloSuperadmins,
@@ -47,6 +55,9 @@ import {
   serviceOffers,
   services,
   simulatedWhatsAppMessages,
+  transactionalDeliveryAlerts,
+  transactionalDeliveryAttempts,
+  transactionalDeliveries,
   user as identities,
 } from "../db/schema";
 
@@ -54,6 +65,336 @@ const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("Reserva simulada de WhatsApp persistente", () => {
+  databaseTest(
+    "agrega los tres tipos de Pendiente bajo RLS, conserva el historial y sus evidencias",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const appointmentId = await inClinicTransaction(
+          fixture,
+          async (transaction) => {
+            const doctor = await transaction.query.doctors.findFirst({
+              columns: { id: true },
+              where: eq(doctors.clinicId, fixture.clinicId),
+            });
+            if (doctor === undefined) throw new Error("Falta el Médico");
+            const startsAt = new Date("2026-09-07T14:00:00.000Z");
+            const endsAt = new Date("2026-09-07T14:30:00.000Z");
+            const [appointment] = await transaction
+              .insert(appointments)
+              .values({
+                bufferMinutes: 0,
+                clinicId: fixture.clinicId,
+                doctorId: doctor.id,
+                durationMinutes: 30,
+                endsAt,
+                occupiedUntil: endsAt,
+                origin: "manual",
+                patientId: fixture.patientId,
+                serviceOfferId: fixture.offerId,
+                startsAt,
+              })
+              .returning({ id: appointments.id });
+            if (appointment === undefined) {
+              throw new Error("No se creó la Cita de prueba");
+            }
+            await transaction.insert(appointmentEvents).values({
+              actorContactId: fixture.contactId,
+              appointmentId: appointment.id,
+              clinicId: fixture.clinicId,
+              reason: "reschedule",
+              type: "self-management-escalated",
+            });
+            return appointment.id;
+          },
+        );
+
+        const conversationEscalationId =
+          await inSimulatedWhatsAppClinicTransaction(
+            fixture.clinicId,
+            async (transaction) => {
+              const [escalation] = await transaction
+                .insert(conversationEscalations)
+                .values({
+                  clinicId: fixture.clinicId,
+                  contactId: fixture.contactId,
+                  createdAt: new Date("2026-08-10T12:00:00.000Z"),
+                  priority: "urgent",
+                  trigger: "human-request",
+                })
+                .returning({ id: conversationEscalations.id });
+              if (escalation === undefined) {
+                throw new Error("No se creó el Escalamiento de conversación");
+              }
+              await transaction.insert(conversationEvents).values({
+                clinicId: fixture.clinicId,
+                contactId: fixture.contactId,
+                type: "urgency-protocol",
+              });
+              return escalation.id;
+            },
+          );
+        const appointmentEscalationId =
+          await inSimulatedWhatsAppClinicTransaction(
+            fixture.clinicId,
+            async (transaction) => {
+              const [escalation] = await transaction
+                .insert(appointmentSelfManagementEscalations)
+                .values({
+                  action: "reschedule",
+                  appointmentId,
+                  clinicId: fixture.clinicId,
+                  contactId: fixture.contactId,
+                  createdAt: new Date("2026-08-11T12:00:00.000Z"),
+                  priority: "high",
+                  requestedStartsAt: new Date("2026-09-08T14:00:00.000Z"),
+                })
+                .returning({ id: appointmentSelfManagementEscalations.id });
+              if (escalation === undefined) {
+                throw new Error("No se creó el Escalamiento de Cita");
+              }
+              return escalation.id;
+            },
+          );
+        const deliveryAlertId = await inAppointmentSchedulerTransaction(
+          async (transaction) => {
+            const createdAt = new Date("2026-08-12T12:00:00.000Z");
+            const retainUntil = new Date("2027-08-12T12:00:00.000Z");
+            const [delivery] = await transaction
+              .insert(transactionalDeliveries)
+              .values({
+                attempts: 3,
+                clinicId: fixture.clinicId,
+                createdAt,
+                idempotencyKey: `pending-${randomUUID()}`,
+                kind: "daily-agenda-pdf",
+                lastError: "Proveedor no disponible",
+                nextAttemptAt: createdAt,
+                payload: {},
+                retainUntil,
+                status: "failed",
+                updatedAt: createdAt,
+              })
+              .returning({ id: transactionalDeliveries.id });
+            if (delivery === undefined) {
+              throw new Error("No se creó la Entrega de prueba");
+            }
+            await transaction.insert(transactionalDeliveryAttempts).values({
+              attempt: 3,
+              clinicId: fixture.clinicId,
+              deliveryId: delivery.id,
+              error: "Proveedor no disponible",
+              occurredAt: createdAt,
+              outcome: "failed",
+              retainUntil,
+            });
+            const [alert] = await transaction
+              .insert(transactionalDeliveryAlerts)
+              .values({
+                clinicId: fixture.clinicId,
+                createdAt,
+                deliveryId: delivery.id,
+                priority: "normal",
+                retainUntil,
+              })
+              .returning({ id: transactionalDeliveryAlerts.id });
+            if (alert === undefined) {
+              throw new Error("No se creó la Alerta de Entrega");
+            }
+            return alert.id;
+          },
+        );
+
+        const open = await listPendingCases(
+          {
+            category: "all",
+            clinicId: fixture.clinicId,
+            identityId: fixture.identityId,
+            status: "open",
+          },
+          drizzlePendingStore,
+        );
+        expect(open.items.map((pending) => pending.category)).toEqual([
+          "conversation",
+          "appointment",
+          "delivery",
+        ]);
+        expect(open.counts).toEqual({
+          appointment: 1,
+          conversation: 1,
+          delivery: 1,
+        });
+
+        await expect(
+          listPendingCases(
+            {
+              category: "appointment",
+              clinicId: fixture.clinicId,
+              identityId: fixture.identityId,
+              status: "open",
+            },
+            drizzlePendingStore,
+          ),
+        ).resolves.toMatchObject({
+          counts: { appointment: 1, conversation: 1, delivery: 1 },
+          items: [{ id: appointmentEscalationId }],
+          total: 3,
+        });
+
+        await resolvePendingCase(
+          {
+            category: "conversation",
+            clinicId: fixture.clinicId,
+            id: conversationEscalationId,
+            identityId: fixture.identityId,
+          },
+          drizzlePendingResolver,
+        );
+        await resolvePendingCase(
+          {
+            category: "appointment",
+            clinicId: fixture.clinicId,
+            id: appointmentEscalationId,
+            identityId: fixture.identityId,
+          },
+          drizzlePendingResolver,
+        );
+        await resolvePendingCase(
+          {
+            category: "delivery",
+            clinicId: fixture.clinicId,
+            id: deliveryAlertId,
+            identityId: fixture.identityId,
+          },
+          drizzlePendingResolver,
+        );
+
+        await expect(
+          listPendingCases(
+            {
+              category: "all",
+              clinicId: fixture.clinicId,
+              identityId: fixture.identityId,
+              status: "open",
+            },
+            drizzlePendingStore,
+          ),
+        ).resolves.toMatchObject({ total: 0 });
+        await expect(
+          listPendingCases(
+            {
+              category: "all",
+              clinicId: fixture.clinicId,
+              identityId: fixture.identityId,
+              status: "resolved",
+            },
+            drizzlePendingStore,
+          ),
+        ).resolves.toMatchObject({
+          counts: { appointment: 1, conversation: 1, delivery: 1 },
+          total: 3,
+        });
+
+        const preserved = await inClinicTransaction(
+          fixture,
+          async (transaction) => {
+            const owner = await transaction.query.clinicUsers.findFirst({
+              columns: { id: true },
+              where: and(
+                eq(clinicUsers.clinicId, fixture.clinicId),
+                eq(clinicUsers.identityId, fixture.identityId),
+              ),
+            });
+            if (owner === undefined) throw new Error("Falta el propietario");
+            const conversation =
+              await transaction.query.conversationEscalations.findFirst({
+                where: eq(conversationEscalations.id, conversationEscalationId),
+              });
+            const appointment =
+              await transaction.query.appointmentSelfManagementEscalations.findFirst(
+                {
+                  where: eq(
+                    appointmentSelfManagementEscalations.id,
+                    appointmentEscalationId,
+                  ),
+                },
+              );
+            const delivery =
+              await transaction.query.transactionalDeliveryAlerts.findFirst({
+                where: eq(transactionalDeliveryAlerts.id, deliveryAlertId),
+              });
+            const attempts =
+              delivery === undefined
+                ? []
+                : await transaction
+                    .select({ id: transactionalDeliveryAttempts.id })
+                    .from(transactionalDeliveryAttempts)
+                    .where(
+                      eq(
+                        transactionalDeliveryAttempts.deliveryId,
+                        delivery.deliveryId,
+                      ),
+                    );
+            const conversationHistory = await transaction
+              .select({ type: conversationEvents.type })
+              .from(conversationEvents)
+              .where(eq(conversationEvents.contactId, fixture.contactId));
+            const appointmentHistory = await transaction
+              .select({
+                actorClinicUserId: appointmentEvents.actorClinicUserId,
+                type: appointmentEvents.type,
+              })
+              .from(appointmentEvents)
+              .where(eq(appointmentEvents.appointmentId, appointmentId));
+            return {
+              appointment,
+              appointmentHistory,
+              attempts,
+              conversation,
+              conversationHistory,
+              delivery,
+              owner,
+            };
+          },
+        );
+        expect(preserved.conversation?.resolvedAt).not.toBeNull();
+        expect(preserved.conversation?.resolvedByClinicUserId).toBe(
+          preserved.owner.id,
+        );
+        expect(preserved.appointment?.resolvedAt).not.toBeNull();
+        expect(preserved.appointment?.resolvedByClinicUserId).toBe(
+          preserved.owner.id,
+        );
+        expect(preserved.delivery?.resolvedAt).not.toBeNull();
+        expect(preserved.delivery?.resolvedByClinicUserId).toBe(
+          preserved.owner.id,
+        );
+        expect(preserved.attempts).toHaveLength(1);
+        expect(preserved.conversationHistory).toContainEqual({
+          type: "urgency-protocol",
+        });
+        expect(preserved.appointmentHistory).toContainEqual({
+          actorClinicUserId: preserved.owner.id,
+          type: "self-management-resolved",
+        });
+
+        await expect(
+          listPendingCases(
+            {
+              category: "all",
+              clinicId: fixture.other.clinicId,
+              identityId: fixture.identityId,
+              status: "open",
+            },
+            drizzlePendingStore,
+          ),
+        ).rejects.toThrow("La Identidad no pertenece a la Clínica");
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "resuelve Clínica y Contacto por E.164, confirma una Reserva y aísla sus datos por RLS",
     async () => {
@@ -578,6 +919,23 @@ async function createFixture() {
           await transaction.execute(
             sql`select set_config('app.clinic_id', ${primary.clinicId}, true)`,
           );
+          await transaction
+            .delete(transactionalDeliveryAlerts)
+            .where(eq(transactionalDeliveryAlerts.clinicId, primary.clinicId));
+          await transaction
+            .delete(transactionalDeliveries)
+            .where(eq(transactionalDeliveries.clinicId, primary.clinicId));
+          await transaction
+            .delete(conversationEscalations)
+            .where(eq(conversationEscalations.clinicId, primary.clinicId));
+          await transaction
+            .delete(appointmentSelfManagementEscalations)
+            .where(
+              eq(
+                appointmentSelfManagementEscalations.clinicId,
+                primary.clinicId,
+              ),
+            );
           await transaction
             .delete(clinics)
             .where(eq(clinics.id, primary.clinicId));

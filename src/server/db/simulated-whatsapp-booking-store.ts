@@ -641,9 +641,12 @@ export const drizzleConversationEscalationResolver: ConversationEscalationResolv
   {
     async resolveConversationEscalation(input) {
       return inClinicTransaction(input, async (transaction) => {
+        const actorClinicUserId = await activeClinicUserId(transaction, input);
+        if (actorClinicUserId === undefined) return false;
+        const resolvedAt = new Date();
         const [escalation] = await transaction
           .update(conversationEscalations)
-          .set({ resolvedAt: new Date() })
+          .set({ resolvedAt, resolvedByClinicUserId: actorClinicUserId })
           .where(
             and(
               eq(conversationEscalations.clinicId, input.clinicId),
@@ -770,6 +773,21 @@ async function hasActiveClinicOwner(
   );
 }
 
+async function activeClinicUserId(
+  transaction: ClinicTransaction,
+  input: { clinicId: string; identityId: string },
+) {
+  const member = await transaction.query.clinicUsers.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(clinicUsers.clinicId, input.clinicId),
+      eq(clinicUsers.identityId, input.identityId),
+      eq(clinicUsers.active, true),
+    ),
+  });
+  return member?.id;
+}
+
 export const drizzleAppointmentSelfManagementEscalationReader: AppointmentSelfManagementEscalationReader =
   {
     async listSelfManagementEscalations(input) {
@@ -817,9 +835,12 @@ export const drizzleAppointmentSelfManagementEscalationResolver: AppointmentSelf
   {
     async resolveSelfManagementEscalation(input) {
       return inClinicTransaction(input, async (transaction) => {
+        const actorClinicUserId = await activeClinicUserId(transaction, input);
+        if (actorClinicUserId === undefined) return false;
+        const resolvedAt = new Date();
         const [escalation] = await transaction
           .update(appointmentSelfManagementEscalations)
-          .set({ resolvedAt: new Date() })
+          .set({ resolvedAt, resolvedByClinicUserId: actorClinicUserId })
           .where(
             and(
               eq(appointmentSelfManagementEscalations.clinicId, input.clinicId),
@@ -828,9 +849,18 @@ export const drizzleAppointmentSelfManagementEscalationResolver: AppointmentSelf
             ),
           )
           .returning({
+            appointmentId: appointmentSelfManagementEscalations.appointmentId,
             contactId: appointmentSelfManagementEscalations.contactId,
           });
         if (escalation === undefined) return false;
+        await transaction.insert(appointmentEvents).values({
+          actorClinicUserId,
+          appointmentId: escalation.appointmentId,
+          clinicId: input.clinicId,
+          occurredAt: resolvedAt,
+          reason: "self-management-resolved",
+          type: "self-management-resolved",
+        });
         const conversation =
           await transaction.query.whatsappConversations.findFirst({
             columns: { state: true },
