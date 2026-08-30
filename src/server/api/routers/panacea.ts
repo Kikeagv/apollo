@@ -2,7 +2,10 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 
 import { env } from "~/env";
+import { filterPanaceaConfigurationOverview } from "~/domain/panacea-configuration";
 import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
+import { getPanaceaConfigurationOverview } from "~/server/application/panacea-configuration";
+import { listPanaceaTeam } from "~/server/application/panacea-team";
 import { inviteAdditionalDoctor } from "~/server/application/doctor-invitations";
 import { completeOwnDoctorProfile } from "~/server/application/doctor-profile";
 import {
@@ -76,6 +79,8 @@ import {
   listDoctorInvitationStatuses,
   drizzleDoctorInvitationStore,
 } from "~/server/db/doctor-invitation-store";
+import { drizzlePanaceaConfigurationReader } from "~/server/db/panacea-configuration-store";
+import { drizzlePanaceaTeamReader } from "~/server/db/panacea-team-store";
 import {
   drizzleDoctorStatusStore,
   listDoctors,
@@ -157,6 +162,27 @@ export const panaceaRouter = {
         drizzleNoShowPolicyStore,
       ),
     ),
+
+  getConfigurationOverview: clinicProcedure.query(async ({ ctx }) => {
+    const overview = await getPanaceaConfigurationOverview(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzlePanaceaConfigurationReader,
+    );
+    return filterPanaceaConfigurationOverview(overview, ctx.clinic.role);
+  }),
+
+  listTeam: clinicProcedure.query(({ ctx }) =>
+    listPanaceaTeam(
+      {
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      },
+      drizzlePanaceaTeamReader,
+    ),
+  ),
 
   listTransactionalDeliveryAlerts: clinicProcedure.query(({ ctx }) =>
     listTransactionalDeliveryAlerts({

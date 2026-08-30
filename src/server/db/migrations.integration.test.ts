@@ -64,6 +64,23 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
+          const clinicMembershipPolicies = await migrated<
+            Array<{ command: "SELECT"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_clinic_user'
+              and cmd = 'SELECT'
+          `;
+          expect(clinicMembershipPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "SELECT",
+                name: "clinic_membership_configuration_owner_read",
+              },
+            ]),
+          );
           const escalationPolicies = await migrated<
             Array<{ command: "INSERT" | "SELECT" | "UPDATE"; name: string }>
           >`
@@ -119,11 +136,182 @@ describe("migraciones de PostgreSQL", () => {
         );
         await admin.unsafe(`grant panacea_clinical_access to "${roleName}"`);
 
+        const rlsClinicId = randomUUID();
+        const otherClinicId = randomUUID();
+        const rlsIdentities = {
+          doctor: randomUUID(),
+          other: randomUUID(),
+          owner: randomUUID(),
+          secretary: randomUUID(),
+        };
+        const rlsMemberships = {
+          doctor: randomUUID(),
+          other: randomUUID(),
+          owner: randomUUID(),
+          secretary: randomUUID(),
+        };
+        const rlsDoctors = {
+          doctor: randomUUID(),
+          owner: randomUUID(),
+          other: randomUUID(),
+        };
+        const rlsAdmin = postgres(migratedUrl.toString(), { max: 1 });
+        await rlsAdmin`
+          insert into "user" (
+            id, name, email, email_verified, created_at, updated_at
+          ) values
+            (${rlsIdentities.owner}, 'RLS owner', ${`${rlsIdentities.owner}@test`}, true, now(), now()),
+            (${rlsIdentities.doctor}, 'RLS doctor', ${`${rlsIdentities.doctor}@test`}, true, now(), now()),
+            (${rlsIdentities.secretary}, 'RLS secretary', ${`${rlsIdentities.secretary}@test`}, true, now(), now()),
+            (${rlsIdentities.other}, 'RLS other', ${`${rlsIdentities.other}@test`}, true, now(), now())
+        `;
+        await rlsAdmin`
+          insert into "pg-drizzle_clinic" (id, name)
+          values
+            (${rlsClinicId}, 'RLS clinic'),
+            (${otherClinicId}, 'Other RLS clinic')
+        `;
+        await rlsAdmin`
+          insert into "pg-drizzle_clinic_user" (
+            id, clinic_id, identity_id, role, active
+          ) values
+            (${rlsMemberships.owner}, ${rlsClinicId}, ${rlsIdentities.owner}, 'owner', true),
+            (${rlsMemberships.doctor}, ${rlsClinicId}, ${rlsIdentities.doctor}, 'doctor', true),
+            (${rlsMemberships.secretary}, ${rlsClinicId}, ${rlsIdentities.secretary}, 'secretary', true),
+            (${rlsMemberships.other}, ${otherClinicId}, ${rlsIdentities.other}, 'doctor', true)
+        `;
+        await rlsAdmin`
+          insert into "pg-drizzle_doctor" (
+            id, clinic_id, clinic_user_id, public_name, primary_specialty
+          ) values
+            (${rlsDoctors.owner}, ${rlsClinicId}, ${rlsMemberships.owner}, 'Owner', 'General'),
+            (${rlsDoctors.doctor}, ${rlsClinicId}, ${rlsMemberships.doctor}, 'Doctor', 'General'),
+            (${rlsDoctors.other}, ${otherClinicId}, ${rlsMemberships.other}, 'Other', 'General')
+        `;
+        await rlsAdmin.end();
+
         const restrictedUrl = new URL(migratedUrl);
         restrictedUrl.username = roleName;
         restrictedUrl.password = password;
         const restricted = postgres(restrictedUrl.toString(), { max: 1 });
         try {
+          const ownerMemberships = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "owner",
+              clinicUserId: rlsMemberships.owner,
+              identityId: rlsIdentities.owner,
+            },
+            (transaction) =>
+              transaction<Array<{ clinic_id: string; identity_id: string }>>`
+                select clinic_id, identity_id
+                from "pg-drizzle_clinic_user"
+                order by identity_id
+              `,
+          );
+          expect(ownerMemberships).toHaveLength(3);
+          expect(ownerMemberships.map((row) => row.identity_id).sort()).toEqual(
+            [
+              rlsIdentities.doctor,
+              rlsIdentities.owner,
+              rlsIdentities.secretary,
+            ].sort(),
+          );
+
+          const doctorMemberships = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "doctor",
+              clinicUserId: rlsMemberships.doctor,
+              identityId: rlsIdentities.doctor,
+            },
+            (transaction) =>
+              transaction<Array<{ clinic_id: string; identity_id: string }>>`
+                select clinic_id, identity_id
+                from "pg-drizzle_clinic_user"
+                order by identity_id
+              `,
+          );
+          expect(doctorMemberships).toEqual([
+            { clinic_id: rlsClinicId, identity_id: rlsIdentities.doctor },
+          ]);
+
+          const secretaryMemberships = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "secretary",
+              clinicUserId: rlsMemberships.secretary,
+              identityId: rlsIdentities.secretary,
+            },
+            (transaction) =>
+              transaction<Array<{ clinic_id: string; identity_id: string }>>`
+                select clinic_id, identity_id
+                from "pg-drizzle_clinic_user"
+                order by identity_id
+              `,
+          );
+          expect(secretaryMemberships).toEqual([
+            { clinic_id: rlsClinicId, identity_id: rlsIdentities.secretary },
+          ]);
+
+          const ownerDoctors = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "owner",
+              clinicUserId: rlsMemberships.owner,
+              identityId: rlsIdentities.owner,
+            },
+            (transaction) =>
+              transaction<Array<{ clinic_id: string; id: string }>>`
+                select clinic_id, id
+                from "pg-drizzle_doctor"
+                order by id
+              `,
+          );
+          expect(ownerDoctors).toHaveLength(2);
+          expect(ownerDoctors.map((doctor) => doctor.clinic_id)).toEqual([
+            rlsClinicId,
+            rlsClinicId,
+          ]);
+
+          const doctorDoctors = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "doctor",
+              clinicUserId: rlsMemberships.doctor,
+              identityId: rlsIdentities.doctor,
+            },
+            (transaction) =>
+              transaction<Array<{ clinic_id: string; id: string }>>`
+                select clinic_id, id
+                from "pg-drizzle_doctor"
+              `,
+          );
+          expect(doctorDoctors).toEqual([
+            { clinic_id: rlsClinicId, id: rlsDoctors.doctor },
+          ]);
+
+          const secretaryDoctors = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "secretary",
+              clinicUserId: rlsMemberships.secretary,
+              identityId: rlsIdentities.secretary,
+            },
+            (transaction) =>
+              transaction<Array<{ clinic_id: string; id: string }>>`
+                select clinic_id, id
+                from "pg-drizzle_doctor"
+              `,
+          );
+          expect(secretaryDoctors).toEqual([]);
+
           await expect(
             withSuperadminContext(
               restricted,
@@ -251,5 +439,25 @@ async function withSuperadminContext<T>(
     await transaction`select set_config('app.clinic_id', ${clinicId}, true)`;
     await transaction`select set_config('app.superadmin_id', ${randomUUID()}, true)`;
     return operation(transaction, clinicId);
+  });
+}
+
+async function withClinicContext<T>(
+  connection: postgres.Sql,
+  input: {
+    clinicId: string;
+    clinicRole: "doctor" | "owner" | "secretary";
+    clinicUserId: string;
+    identityId: string;
+  },
+  operation: (transaction: postgres.TransactionSql) => Promise<T>,
+) {
+  return connection.begin(async (transaction) => {
+    await transaction`set local role panacea_clinical_access`;
+    await transaction`select set_config('app.clinic_id', ${input.clinicId}, true)`;
+    await transaction`select set_config('app.identity_id', ${input.identityId}, true)`;
+    await transaction`select set_config('app.clinic_role', ${input.clinicRole}, true)`;
+    await transaction`select set_config('app.clinic_user_id', ${input.clinicUserId}, true)`;
+    return operation(transaction);
   });
 }

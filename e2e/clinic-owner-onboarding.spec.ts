@@ -133,6 +133,25 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await expect(
       page.getByRole("heading", { level: 1, name: "Configuración" }),
     ).toBeVisible();
+    const configurationIndex = page.getByRole("navigation", {
+      name: "Subsecciones de Configuración",
+    });
+    await expect(configurationIndex.getByRole("link")).toHaveCount(4);
+    await expect(
+      configurationIndex.getByText("Requiere atención", { exact: true }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(
+      page,
+      '[data-settings-index="true"]',
+    );
+    const teamLink = configurationIndex.getByRole("link", {
+      name: "Abrir Equipo",
+      exact: true,
+    });
+    await teamLink.focus();
+    await expect(teamLink).toBeFocused();
+    await teamLink.press("Enter");
+    await expect(page).toHaveURL(/\/configuracion\/equipo$/);
     await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
 
     await page.getByRole("link", { name: "Calendario", exact: true }).click();
@@ -773,20 +792,21 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
     ).toBeVisible();
     await expect(invitedOffer).toBeVisible();
     await goToPanaceaRoute(page, "/configuracion/equipo");
-    const doctorsSection = section(page, "Médicos");
-    await doctorsSection
-      .locator("li")
-      .filter({ hasText: invitedDoctorName })
-      .getByRole("button", { name: "Desactivar" })
+    const doctorsSection = page.locator('[data-team-section="true"]');
+    const invitedDoctorRow = doctorsSection
+      .getByRole("row")
+      .filter({ hasText: invitedDoctorName });
+    await invitedDoctorRow
+      .getByRole("button", { name: "Desactivar", exact: true })
+      .click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Desactivar Médico" })
       .click();
     await expect(
       doctorsSection.getByText("Cita confirmada", { exact: false }),
     ).toBeVisible();
-    await expect(
-      doctorsSection
-        .getByText(`${invitedDoctorName} · Pediatría`, { exact: true })
-        .locator(".."),
-    ).toContainText("Activo");
+    await expect(invitedDoctorRow).toContainText("Activo");
     await clearConfirmedAppointments({
       clinicId: fixture.clinicId(),
       ownerIdentityId,
@@ -798,28 +818,28 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       ownerIdentityId,
       publicName: invitedDoctorName,
     });
-    await doctorsSection
-      .locator("li")
-      .filter({ hasText: invitedDoctorName })
-      .getByRole("button", { name: "Desactivar" })
+    await invitedDoctorRow
+      .getByRole("button", { name: "Desactivar", exact: true })
+      .click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Desactivar Médico" })
       .click();
     await expect(
       doctorsSection.getByText("Reserva temporal activa", { exact: false }),
     ).toBeVisible();
-    await expect(
-      doctorsSection
-        .getByText(`${invitedDoctorName} · Pediatría`, { exact: true })
-        .locator(".."),
-    ).toContainText("Activo");
+    await expect(invitedDoctorRow).toContainText("Activo");
     await clearTemporaryReservations({
       clinicId: fixture.clinicId(),
       ownerIdentityId,
       publicName: invitedDoctorName,
     });
-    await doctorsSection
-      .locator("li")
-      .filter({ hasText: invitedDoctorName })
-      .getByRole("button", { name: "Desactivar" })
+    await invitedDoctorRow
+      .getByRole("button", { name: "Desactivar", exact: true })
+      .click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Desactivar Médico" })
       .click();
     await expect(
       doctorsSection.getByText(`Médico desactivado: ${invitedDoctorName}.`),
