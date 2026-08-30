@@ -1,5 +1,7 @@
 import "server-only";
 
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
+
 import { env } from "~/env";
 import { createResendClinicInvitationEmailSender } from "~/server/email/resend-clinic-invitation-email";
 import {
@@ -47,10 +49,12 @@ export function assertClinicInvitationEmailDeliveryAllowed(input: {
   }
 }
 
-assertClinicInvitationEmailDeliveryAllowed({
-  delivery: env.IDENTITY_EMAIL_DELIVERY,
-  nodeEnv: env.NODE_ENV,
-});
+if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) {
+  assertClinicInvitationEmailDeliveryAllowed({
+    delivery: env.IDENTITY_EMAIL_DELIVERY,
+    nodeEnv: env.NODE_ENV,
+  });
+}
 
 /**
  * Selección por configuración del adaptador de invitaciones de clínica. El

@@ -136,6 +136,25 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await expect(
       page.getByRole("heading", { level: 1, name: "Configuración" }),
     ).toBeVisible();
+    const configurationIndex = page.getByRole("navigation", {
+      name: "Subsecciones de Configuración",
+    });
+    await expect(configurationIndex.getByRole("link")).toHaveCount(4);
+    await expect(
+      configurationIndex.getByText("Requiere atención", { exact: true }),
+    ).toBeVisible();
+    await expectNoAccessibilityViolations(
+      page,
+      '[data-settings-index="true"]',
+    );
+    const teamLink = configurationIndex.getByRole("link", {
+      name: "Abrir Equipo",
+      exact: true,
+    });
+    await teamLink.focus();
+    await expect(teamLink).toBeFocused();
+    await teamLink.press("Enter");
+    await expect(page).toHaveURL(/\/configuracion\/equipo$/);
     await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
 
     await page.getByRole("link", { name: "Calendario", exact: true }).click();
@@ -486,24 +505,34 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
     await expect(
       page.getByRole("status", { name: "Comprobando sesiones de soporte…" }),
     ).toHaveCount(0);
+    const header = page.locator('main[data-sidebar="inset"] > header');
+    const heading = page.getByRole("heading", {
+      level: 1,
+      name: "Calendario",
+    });
+    const profileAlert = page
+      .locator('[role="alert"]')
+      .filter({ hasText: "Su perfil de Médico está incompleto" });
+    await expect(profileAlert).toBeVisible();
     await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const header = document.querySelector(
-            'main[data-sidebar="inset"] > header',
-          );
-          const heading = document.querySelector(
-            'main[data-sidebar="inset"] h1',
-          );
-          if (header === null || heading === null) {
-            return Number.POSITIVE_INFINITY;
-          }
-          return (
-            heading.getBoundingClientRect().top -
-            header.getBoundingClientRect().bottom
-          );
-        }),
-      )
+      .poll(async () => {
+        const [headerBox, headingBox, profileAlertBox] = await Promise.all([
+          header.boundingBox(),
+          heading.boundingBox(),
+          profileAlert.boundingBox(),
+        ]);
+        if (
+          headerBox === null ||
+          headingBox === null ||
+          profileAlertBox === null
+        ) {
+          return Number.POSITIVE_INFINITY;
+        }
+        expect(headingBox.y).toBeGreaterThanOrEqual(
+          headerBox.y + headerBox.height,
+        );
+        return headingBox.y - (profileAlertBox.y + profileAlertBox.height);
+      })
       .toBeLessThan(40);
 
     const sidebar = page.locator('aside[data-sidebar="sidebar"]');
@@ -919,20 +948,21 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
     ).toBeVisible();
     await expect(invitedOffer).toBeVisible();
     await goToPanaceaRoute(page, "/configuracion/equipo");
-    const doctorsSection = section(page, "Médicos");
-    await doctorsSection
-      .locator("li")
-      .filter({ hasText: invitedDoctorName })
-      .getByRole("button", { name: "Desactivar" })
+    const doctorsSection = page.locator('[data-team-section="true"]');
+    const invitedDoctorRow = doctorsSection
+      .getByRole("row")
+      .filter({ hasText: invitedDoctorName });
+    await invitedDoctorRow
+      .getByRole("button", { name: "Desactivar", exact: true })
+      .click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Desactivar Médico" })
       .click();
     await expect(
       doctorsSection.getByText("Cita confirmada", { exact: false }),
     ).toBeVisible();
-    await expect(
-      doctorsSection
-        .getByText(`${invitedDoctorName} · Pediatría`, { exact: true })
-        .locator(".."),
-    ).toContainText("Activo");
+    await expect(invitedDoctorRow).toContainText("Activo");
     await clearConfirmedAppointments({
       clinicId: fixture.clinicId(),
       ownerIdentityId,
@@ -944,28 +974,28 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       ownerIdentityId,
       publicName: invitedDoctorName,
     });
-    await doctorsSection
-      .locator("li")
-      .filter({ hasText: invitedDoctorName })
-      .getByRole("button", { name: "Desactivar" })
+    await invitedDoctorRow
+      .getByRole("button", { name: "Desactivar", exact: true })
+      .click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Desactivar Médico" })
       .click();
     await expect(
       doctorsSection.getByText("Reserva temporal activa", { exact: false }),
     ).toBeVisible();
-    await expect(
-      doctorsSection
-        .getByText(`${invitedDoctorName} · Pediatría`, { exact: true })
-        .locator(".."),
-    ).toContainText("Activo");
+    await expect(invitedDoctorRow).toContainText("Activo");
     await clearTemporaryReservations({
       clinicId: fixture.clinicId(),
       ownerIdentityId,
       publicName: invitedDoctorName,
     });
-    await doctorsSection
-      .locator("li")
-      .filter({ hasText: invitedDoctorName })
-      .getByRole("button", { name: "Desactivar" })
+    await invitedDoctorRow
+      .getByRole("button", { name: "Desactivar", exact: true })
+      .click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Desactivar Médico" })
       .click();
     await expect(
       doctorsSection.getByText(`Médico desactivado: ${invitedDoctorName}.`),

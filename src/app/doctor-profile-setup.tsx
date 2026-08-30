@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
@@ -12,6 +13,7 @@ import {
   FieldLabel,
 } from "~/components/ui/field";
 import { Input } from "~/components/ui/input";
+import { doctorProfileProgress } from "~/domain/panacea-team";
 import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
 
@@ -23,16 +25,22 @@ export function DoctorProfileSetup({
     publicName: string | null;
   };
 }) {
+  const router = useRouter();
   const [completed, setCompleted] = useState(
-    initialProfile.primarySpecialty !== null &&
-      initialProfile.publicName !== null,
+    () => doctorProfileProgress(initialProfile).status === "complete",
   );
   const [isHydrated, setIsHydrated] = useState(false);
   const [result, setResult] = useState<string>();
+  const utils = api.useUtils();
   const completion = api.panacea.completeOwnDoctorProfile.useMutation({
     onSuccess: () => {
       setCompleted(true);
       setResult("Perfil de Médico guardado.");
+      void Promise.all([
+        utils.panacea.getConfigurationOverview.invalidate(),
+        utils.panacea.listTeam.invalidate(),
+      ]);
+      router.refresh();
     },
   });
 
@@ -61,7 +69,8 @@ export function DoctorProfileSetup({
           </h2>
           <p className="text-muted-foreground leading-6 text-pretty">
             Su perfil de Médico ya está vinculado a esta Clínica. Complete estos
-            datos antes de configurar Servicios y Disponibilidad.
+            datos para publicar su capacidad de atención; esta tarea no bloquea
+            su acceso normal a Panacea.
           </p>
         </CardHeader>
         <CardContent className="space-y-5 pt-6">
@@ -74,6 +83,16 @@ export function DoctorProfileSetup({
             <li>Configurar el primer Servicio</li>
             <li>Definir el primer Horario vigente</li>
           </ol>
+          {!completed ? (
+            <Alert variant="warning">
+              <AlertTitle>Perfil pendiente, sin bloqueo</AlertTitle>
+              <AlertDescription>
+                Puede seguir usando Panacea y revisar esta configuración cuando
+                esté listo. Complete los dos datos para publicar su capacidad de
+                atención.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <form
             aria-busy={completion.isPending}
             className="space-y-4"
@@ -120,11 +139,9 @@ export function DoctorProfileSetup({
             </fieldset>
           </form>
           {result ? (
-            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-950">
+            <Alert variant="success">
               <AlertTitle>Perfil actualizado</AlertTitle>
-              <AlertDescription className="text-emerald-900">
-                {result}
-              </AlertDescription>
+              <AlertDescription>{result}</AlertDescription>
             </Alert>
           ) : null}
           {completion.error ? (

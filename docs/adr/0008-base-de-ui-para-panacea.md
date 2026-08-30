@@ -283,6 +283,12 @@ Cada wrapper propio deberá incluir una justificación breve, identificar su
 consumidor y explicar por qué el primitive oficial no es suficiente. Esta
 excepción quedará documentada junto con el cambio que la introduce.
 
+La lista inicial de primitives corresponde a la primera rebanada de validación
+y no limita las olas posteriores. La rebanada APO-62 agrega `Avatar` para
+identificar Médicos en Equipo y `Progress` para comunicar el estado de las
+áreas de Configuración; ambos son primitives compartidos con consumidores
+reales y conservan la semántica y accesibilidad de sus elementos nativos.
+
 ## Consecuencias
 
 - Los componentes de UI serán código del repositorio y podrán adaptarse al

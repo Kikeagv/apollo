@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
+
 import { env } from "~/env";
 
 export const TURNSTILE_SITEVERIFY_URL =
@@ -33,10 +35,12 @@ export function assertTurnstileVerificationAllowed(input: {
   }
 }
 
-assertTurnstileVerificationAllowed({
-  nodeEnv: env.NODE_ENV,
-  verification: env.TURNSTILE_VERIFICATION,
-});
+if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) {
+  assertTurnstileVerificationAllowed({
+    nodeEnv: env.NODE_ENV,
+    verification: env.TURNSTILE_VERIFICATION,
+  });
+}
 
 export function turnstileVerifier(): TurnstileVerifier {
   const adapters = {

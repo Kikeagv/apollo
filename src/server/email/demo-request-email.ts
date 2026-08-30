@@ -1,5 +1,7 @@
 import "server-only";
 
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
+
 import { env } from "~/env";
 import type { DemoRequest } from "~/domain/demo-request";
 
@@ -31,10 +33,12 @@ export function assertDemoRequestEmailDeliveryAllowed(input: {
   }
 }
 
-assertDemoRequestEmailDeliveryAllowed({
-  delivery: env.IDENTITY_EMAIL_DELIVERY,
-  nodeEnv: env.NODE_ENV,
-});
+if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) {
+  assertDemoRequestEmailDeliveryAllowed({
+    delivery: env.IDENTITY_EMAIL_DELIVERY,
+    nodeEnv: env.NODE_ENV,
+  });
+}
 
 /**
  * Puerto de correo comercial de la Solicitud de demo. Comparte la selección

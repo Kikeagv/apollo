@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { handleDemoRequest } from "./route";
+import { handleDemoRequest } from "./handler";
 
 function createRouteDependencies() {
   const countRecent = vi.fn(async () => 0);

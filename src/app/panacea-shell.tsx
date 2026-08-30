@@ -20,6 +20,7 @@ import {
   type PanaceaDestination,
   visiblePanaceaDestinations,
 } from "~/domain/panacea-shell";
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { authClient } from "~/server/better-auth/client";
 import { ClinicSessionActivity } from "./clinic-session-activity";
 import { SupportAccessSection } from "./support-access-section";
@@ -55,13 +56,19 @@ type PanaceaShellProps = {
     clinicName: string;
     role: "doctor" | "owner" | "secretary";
   };
+  doctorProfileIncomplete: boolean;
   user: {
     email: string;
     name: string;
   };
 };
 
-export function PanaceaShell({ children, clinic, user }: PanaceaShellProps) {
+export function PanaceaShell({
+  children,
+  clinic,
+  doctorProfileIncomplete,
+  user,
+}: PanaceaShellProps) {
   return (
     <SidebarProvider>
       <PanaceaNavigation role={clinic.role} />
@@ -71,6 +78,28 @@ export function PanaceaShell({ children, clinic, user }: PanaceaShellProps) {
         <div className="border-border bg-background border-b px-4 py-3 empty:hidden sm:px-6">
           <SupportAccessSection />
         </div>
+        {doctorProfileIncomplete ? (
+          <div className="border-border bg-background border-b px-4 py-3 sm:px-6">
+            <Alert className="mx-auto max-w-[1600px]" variant="warning">
+              <AlertTitle>Su perfil de Médico está incompleto</AlertTitle>
+              <AlertDescription>
+                Complete su nombre público y especialidad para publicar su
+                capacidad. Puede seguir usando Panacea mientras termina esta
+                configuración.{" "}
+                <Link
+                  className="focus-visible:border-ring focus-visible:ring-ring/30 rounded-sm font-medium underline underline-offset-4 outline-none focus-visible:ring-3"
+                  href={
+                    clinic.role === "owner"
+                      ? "/configuracion/equipo"
+                      : "/configuracion"
+                  }
+                >
+                  Completar perfil
+                </Link>
+              </AlertDescription>
+            </Alert>
+          </div>
+        ) : null}
         <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
           {children}
         </div>
