@@ -29,6 +29,7 @@ import {
   doctors,
   identityAuditEvents,
   services,
+  serviceOffers,
   temporaryReservations,
   user as identities,
   verification,
@@ -392,9 +393,7 @@ test("Pacientes completa el alta Paciente-primero y reutiliza el Contacto por te
       .getByRole("button", { name: "Nuevo Paciente", exact: true })
       .click();
     const firstDialog = page.getByRole("dialog", { name: "Nuevo Paciente" });
-    await expectNoAccessibilityViolations(page, '[role="dialog"]', {
-      disableRules: ["color-contrast"],
-    });
+    await expectNoAccessibilityViolations(page, '[role="dialog"]');
     await firstDialog.getByLabel("Nombres del Paciente").fill("Lucía");
     await firstDialog.getByLabel("Apellidos del Paciente").fill("E2E");
     await firstDialog.getByLabel("Fecha de nacimiento").fill("1990-04-02");
@@ -626,6 +625,24 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
     await contextualAppointmentDialog
       .getByRole("button", { name: "Cancelar" })
       .click();
+    await expect(
+      calendar.getByRole("button", { name: "Bloquear selección" }),
+    ).toBeVisible();
+    await calendar.getByRole("button", { name: "Bloquear selección" }).click();
+    const selectedBlockDialog = page.getByRole("dialog", {
+      name: "Crear Bloqueo",
+    });
+    await expect(
+      selectedBlockDialog.locator('input[name="startsAt"]'),
+    ).toHaveValue(/T09:00$/);
+    await expect(
+      selectedBlockDialog.locator('input[name="endsAt"]'),
+    ).toHaveValue(/T09:30$/);
+    await expectNoAccessibilityViolations(page, '[role="dialog"]');
+    await expect(
+      selectedBlockDialog.locator('select[name="doctorId"]'),
+    ).toBeFocused();
+    await selectedBlockDialog.getByRole("button", { name: "Cancelar" }).click();
 
     await calendar
       .getByRole("button", { name: "Nueva Cita manual", exact: true })
@@ -638,12 +655,8 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
     await expect(
       appointmentDialog.getByLabel("Oferta de servicio"),
     ).toBeVisible();
-    await expectNoAccessibilityViolations(page, '[role="dialog"]', {
-      disableRules: ["color-contrast"],
-    });
-    await expectNoAccessibilityViolations(page, '[data-calendar-view="week"]', {
-      disableRules: ["color-contrast"],
-    });
+    await expectNoAccessibilityViolations(page, '[role="dialog"]');
+    await expectNoAccessibilityViolations(page, '[data-calendar-view="week"]');
 
     await appointmentDialog
       .getByLabel("Enviar confirmación inmediata por WhatsApp")
@@ -669,15 +682,9 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
   }
 });
 
-async function expectNoAccessibilityViolations(
-  page: Page,
-  selector: string,
-  options: { disableRules?: string[] } = {},
-) {
+async function expectNoAccessibilityViolations(page: Page, selector: string) {
+  await page.waitForTimeout(250);
   const scan = new AxeBuilder({ page }).include(selector);
-  if (options.disableRules !== undefined) {
-    scan.disableRules(options.disableRules);
-  }
   const accessibilityScanResults = await scan.analyze();
 
   expect(accessibilityScanResults.violations).toEqual([]);
@@ -810,6 +817,39 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
     await expect(
       catalog.getByText(`Servicio ${consultationName} creado.`),
     ).toBeVisible();
+    const serviceEditor = catalog.getByRole("form", {
+      name: `Editar Servicio ${consultationName}`,
+    });
+    await serviceEditor
+      .locator('textarea[name="description"]')
+      .fill("Consulta de prueba actualizada");
+    await serviceEditor
+      .getByRole("button", { name: "Guardar Servicio" })
+      .click();
+    await expect(
+      catalog.getByText(`Servicio ${consultationName} actualizado.`),
+    ).toBeVisible();
+    const ownerOffer = catalog.getByRole("form", {
+      name: `Oferta de ${ownerName}`,
+    });
+    await ownerOffer.locator('input[name="durationMinutes"]').fill("35");
+    await ownerOffer
+      .getByRole("button", { name: "Guardar", exact: true })
+      .click();
+    const offerUpdateDialog = page.getByRole("alertdialog");
+    await expect(offerUpdateDialog).toContainText(
+      "Citas confirmadas conservan la duración",
+    );
+    await expectNoAccessibilityViolations(page, '[role="alertdialog"]');
+    await expect(
+      offerUpdateDialog.getByRole("button", { name: "Volver" }),
+    ).toBeFocused();
+    await offerUpdateDialog
+      .getByRole("button", { name: "Confirmar actualización" })
+      .click();
+    await expect(
+      catalog.getByText("Oferta actualizada para opciones nuevas."),
+    ).toBeVisible();
 
     await saveSchedule(page, careDate, ownerName);
     await expectCareOptions(page, ownerName, consultationName, careDate, true);
@@ -933,6 +973,7 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       date: careDate,
       ownerIdentityId,
       publicName: invitedDoctorName,
+      serviceName: consultationName,
     });
     await goToPanaceaRoute(page, "/configuracion/servicios");
     const catalogAfterAppointment = section(page, "Catálogo de Servicios");
@@ -943,6 +984,10 @@ test("Panacea configura disponibilidad y protege la capacidad de Médicos", asyn
       .getByRole("form", { name: `Oferta de ${invitedDoctorName}` })
       .getByRole("button", { name: "Desactivar" });
     await invitedOffer.click();
+    await page
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Desactivar Oferta" })
+      .click();
     await expect(
       catalogAfterAppointment.getByText("Cita confirmada", { exact: false }),
     ).toBeVisible();
@@ -1383,8 +1428,40 @@ test("el Calendario opera Citas, Bloqueos y la excepción manual fuera de horari
       drizzleAvailabilityStore,
     );
 
+    await reloadPanacea(page);
     const calendar = calendarSection(page);
     const agendaList = calendar.locator('[data-calendar-list="true"]');
+    await calendar.locator('input[type="date"]').fill(careDate);
+    await calendar.getByRole("button", { name: "Nuevo Bloqueo" }).click();
+    const contextualBlockDialog = page.getByRole("dialog", {
+      name: "Crear Bloqueo",
+    });
+    await contextualBlockDialog
+      .locator('select[name="doctorId"]')
+      .selectOption({ label: doctorName });
+    await contextualBlockDialog
+      .locator('input[name="privateLabel"]')
+      .fill("Bloqueo contextual");
+    await contextualBlockDialog
+      .locator('input[name="startsAt"]')
+      .fill(`${careDate}T10:15`);
+    await contextualBlockDialog
+      .locator('input[name="endsAt"]')
+      .fill(`${careDate}T10:30`);
+    await contextualBlockDialog
+      .getByRole("button", { name: "Revisar Bloqueo" })
+      .click();
+    const blockConfirmationDialog = page.getByRole("alertdialog");
+    await expectNoAccessibilityViolations(page, '[role="alertdialog"]');
+    await expect(
+      blockConfirmationDialog.getByRole("button", { name: "Volver" }),
+    ).toBeFocused();
+    await blockConfirmationDialog
+      .getByRole("button", { name: "Confirmar Bloqueo" })
+      .click();
+    await expect(
+      agendaList.getByRole("button", { name: /Bloqueo.*Bloqueo contextual/ }),
+    ).toBeVisible();
     await registerInlinePatient(calendar, page, {
       careDate,
       patientName,
@@ -1676,6 +1753,10 @@ async function saveSchedule(
   await availability.getByLabel("Inicio de franja 1").fill("08:00");
   await availability.getByLabel("Fin de franja 1").fill("10:00");
   await availability.getByRole("button", { name: "Guardar Horario" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Confirmar cambio" })
+    .click();
   await expect(
     availability.getByText("Horario vigente actualizado para opciones nuevas."),
   ).toBeVisible();
@@ -1800,16 +1881,40 @@ type DoctorFixture = {
 async function createConfirmedAppointment(
   input: DoctorFixture & {
     date: string;
+    serviceName: string;
   },
 ) {
   await inClinicTransaction(
     { clinicId: input.clinicId, identityId: input.ownerIdentityId },
     async (transaction) => {
       const doctor = await findDoctor(transaction, input);
+      const [offer] = await transaction
+        .select({ id: serviceOffers.id })
+        .from(serviceOffers)
+        .innerJoin(
+          services,
+          and(
+            eq(serviceOffers.clinicId, services.clinicId),
+            eq(serviceOffers.serviceId, services.id),
+          ),
+        )
+        .where(
+          and(
+            eq(serviceOffers.clinicId, input.clinicId),
+            eq(serviceOffers.doctorId, doctor.id),
+            eq(serviceOffers.active, true),
+            eq(services.name, input.serviceName),
+          ),
+        )
+        .limit(1);
+      if (offer === undefined) {
+        throw new Error("Falta la Oferta de servicio E2E");
+      }
       await transaction.insert(appointments).values({
         clinicId: input.clinicId,
         doctorId: doctor.id,
         endsAt: new Date(`${input.date}T09:00:00-06:00`),
+        serviceOfferId: offer.id,
         startsAt: new Date(`${input.date}T08:00:00-06:00`),
       });
     },

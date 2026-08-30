@@ -91,6 +91,7 @@ export function calculateCareOptionsFromInputs(
         startMinute += 5
       ) {
         const startsAt = localDateTime(date, startMinute);
+        if (startsAt <= now) continue;
         const blockedUntil = new Date(
           startsAt.valueOf() + totalMinutes * 60_000,
         );

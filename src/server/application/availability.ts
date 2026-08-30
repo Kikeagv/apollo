@@ -27,6 +27,7 @@ export type EffectiveScheduleReplacer = {
 };
 
 export type AvailabilityBlock = {
+  doctorId: string;
   endsAt: Date;
   id: string;
   privateLabel: string | null;

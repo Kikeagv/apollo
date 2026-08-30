@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { CapacityConflictError } from "~/server/application/availability";
 import {
+  type ServiceCatalogUpdater,
   type ServiceCatalogStore,
   type ServiceOfferCreator,
   type ServiceOffer,
@@ -40,6 +41,7 @@ export class LastActiveServiceOfferError extends Error {
 }
 
 export const drizzleServiceCatalogStore: ServiceCatalogStore &
+  ServiceCatalogUpdater &
   ServiceOfferCreator &
   ServiceOfferDeactivator &
   ServiceOfferUpdater = {
@@ -123,10 +125,99 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
     });
   },
 
-  async add(input) {
+  async updateService(input) {
     return inClinicTransaction(input, async (transaction) => {
       if (!(await ownerCanConfigure(transaction, input))) return undefined;
 
+      const existing = await transaction.query.services.findFirst({
+        columns: {
+          description: true,
+          id: true,
+          name: true,
+          normalizedName: true,
+        },
+        where: and(
+          eq(services.id, input.serviceId),
+          eq(services.clinicId, input.clinicId),
+        ),
+      });
+      if (existing === undefined) return undefined;
+
+      if (existing.normalizedName !== input.normalizedName) {
+        const conflictingService = await transaction.query.services.findFirst({
+          columns: { id: true },
+          where: and(
+            eq(services.clinicId, input.clinicId),
+            eq(services.normalizedName, input.normalizedName),
+          ),
+        });
+        if (conflictingService !== undefined) {
+          throw new ServiceNameConflictError();
+        }
+      }
+
+      const [updated] = await transaction
+        .update(services)
+        .set({
+          description: input.description,
+          name: input.name,
+          normalizedName: input.normalizedName,
+        })
+        .where(
+          and(
+            eq(services.id, existing.id),
+            eq(services.clinicId, input.clinicId),
+          ),
+        )
+        .returning({
+          description: services.description,
+          id: services.id,
+          name: services.name,
+        });
+      if (updated === undefined) return undefined;
+
+      const offers = await transaction.query.serviceOffers.findMany({
+        columns: {
+          active: true,
+          bufferMinutes: true,
+          doctorId: true,
+          durationMinutes: true,
+          id: true,
+          priceUsd: true,
+          serviceId: true,
+        },
+        where: and(
+          eq(serviceOffers.clinicId, input.clinicId),
+          eq(serviceOffers.serviceId, input.serviceId),
+        ),
+      });
+      await transaction.insert(configurationAuditEvents).values({
+        action: "service-updated",
+        actorIdentityId: input.identityId,
+        afterValues: {
+          description: updated.description,
+          name: updated.name,
+          normalizedName: input.normalizedName,
+        },
+        beforeValues: {
+          description: existing.description,
+          name: existing.name,
+          normalizedName: existing.normalizedName,
+        },
+        clinicId: input.clinicId,
+        entity: "service",
+        entityId: updated.id,
+      });
+
+      return {
+        ...updated,
+        offers: offers.map(({ serviceId: _, ...offer }) => offer),
+      };
+    });
+  },
+
+  async add(input) {
+    return inClinicTransaction(input, async (transaction) => {
       const service = await transaction.query.services.findFirst({
         columns: { id: true },
         where: and(
@@ -135,6 +226,15 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
         ),
       });
       if (service === undefined) return undefined;
+      if (
+        !(await canManageOffer(transaction, {
+          clinicId: input.clinicId,
+          doctorId: input.doctorId,
+          identityId: input.identityId,
+        }))
+      ) {
+        return undefined;
+      }
       await requireEligibleDoctors(transaction, input.clinicId, [
         input.doctorId,
       ]);
@@ -169,8 +269,6 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
 
   async update(input) {
     return inClinicTransaction(input, async (transaction) => {
-      if (!(await canManageOffers(transaction, input))) return undefined;
-
       const offer = await transaction.query.serviceOffers.findFirst({
         columns: {
           active: true,
@@ -187,6 +285,15 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
         ),
       });
       if (offer === undefined) return undefined;
+      if (
+        !(await canManageOffer(transaction, {
+          clinicId: input.clinicId,
+          doctorId: offer.doctorId,
+          identityId: input.identityId,
+        }))
+      ) {
+        return undefined;
+      }
 
       const [updated] = await transaction
         .update(serviceOffers)
@@ -221,8 +328,6 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
 
   async deactivate(input) {
     return inClinicTransaction(input, async (transaction) => {
-      if (!(await canManageOffers(transaction, input))) return undefined;
-
       const offer = await transaction.query.serviceOffers.findFirst({
         columns: {
           active: true,
@@ -240,9 +345,21 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
         ),
       });
       if (offer === undefined) return undefined;
+      if (
+        !(await canManageOffer(transaction, {
+          clinicId: input.clinicId,
+          doctorId: offer.doctorId,
+          identityId: input.identityId,
+        }))
+      ) {
+        return undefined;
+      }
 
       await transaction.execute(
         sql`select pg_advisory_xact_lock(hashtext(${offer.serviceId}))`,
+      );
+      await transaction.execute(
+        sql`select set_config('app.service_offer_active_count', 'true', true)`,
       );
       const activeOffers = await transaction.query.serviceOffers.findMany({
         columns: { id: true },
@@ -251,6 +368,9 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
           eq(serviceOffers.active, true),
         ),
       });
+      await transaction.execute(
+        sql`select set_config('app.service_offer_active_count', 'false', true)`,
+      );
       if (activeOffers.length <= 1) throw new LastActiveServiceOfferError();
 
       await transaction.execute(
@@ -259,6 +379,7 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
       const conflicts = await capacityConflictsForDoctor(transaction, {
         clinicId: input.clinicId,
         doctorId: offer.doctorId,
+        serviceOfferId: offer.id,
       });
       if (conflicts.length > 0) throw new CapacityConflictError(conflicts);
 
@@ -353,21 +474,20 @@ export async function listServiceCatalog(input: {
         .where(doctorWhere),
     ]);
 
-    const visibleServices =
+    const visibleDoctorIds = new Set(catalogDoctors.map((doctor) => doctor.id));
+    const visibleOffers =
       membership.role === "owner"
-        ? catalogServices
-        : catalogServices.filter((service) =>
-            catalogOffers.some((offer) => offer.serviceId === service.id),
-          );
+        ? catalogOffers
+        : catalogOffers.filter((offer) => visibleDoctorIds.has(offer.doctorId));
 
     return {
       doctors: catalogDoctors.map((doctor) => ({
         id: doctor.id,
         publicName: doctor.publicName ?? "Médico sin nombre público",
       })),
-      services: visibleServices.map((service) => ({
+      services: catalogServices.map((service) => ({
         ...service,
-        offers: catalogOffers
+        offers: visibleOffers
           .filter((offer) => offer.serviceId === service.id)
           .map(({ serviceId: _, ...offer }) => offer),
       })),
@@ -384,25 +504,38 @@ async function ownerCanConfigure(
     where: and(
       eq(clinicUsers.clinicId, input.clinicId),
       eq(clinicUsers.identityId, input.identityId),
+      eq(clinicUsers.active, true),
       eq(clinicUsers.role, "owner"),
     ),
   });
   return owner !== undefined;
 }
 
-async function canManageOffers(
+async function canManageOffer(
   transaction: Parameters<Parameters<typeof inClinicTransaction>[1]>[0],
-  input: { clinicId: string; identityId: string },
+  input: { clinicId: string; doctorId: string; identityId: string },
 ) {
   const member = await transaction.query.clinicUsers.findFirst({
-    columns: { id: true },
+    columns: { id: true, role: true },
     where: and(
       eq(clinicUsers.clinicId, input.clinicId),
       eq(clinicUsers.identityId, input.identityId),
+      eq(clinicUsers.active, true),
       inArray(clinicUsers.role, ["owner", "doctor"]),
     ),
   });
-  return member !== undefined;
+  if (member === undefined) return false;
+  if (member.role === "owner") return true;
+  const doctor = await transaction.query.doctors.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(doctors.id, input.doctorId),
+      eq(doctors.clinicId, input.clinicId),
+      eq(doctors.clinicUserId, member.id),
+      eq(doctors.active, true),
+    ),
+  });
+  return doctor !== undefined;
 }
 
 async function requireEligibleDoctors(

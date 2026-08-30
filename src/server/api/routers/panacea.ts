@@ -70,6 +70,7 @@ import {
   createService,
   deactivateServiceOffer,
   ServiceCatalogAccessError,
+  updateService,
   updateServiceOffer,
 } from "~/server/application/service-catalog";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
@@ -619,6 +620,25 @@ export const panaceaRouter = {
     )
     .mutation(({ ctx, input }) =>
       createService(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzleServiceCatalogStore,
+      ),
+    ),
+
+  updateService: clinicProcedure
+    .input(
+      z.object({
+        description: z.string().max(1_000),
+        name: z.string().max(120),
+        serviceId: z.string().uuid(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      updateService(
         {
           ...input,
           clinicId: ctx.clinic.clinicId,

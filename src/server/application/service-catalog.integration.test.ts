@@ -7,6 +7,7 @@ import {
   addServiceOffer,
   createService,
   deactivateServiceOffer,
+  updateService,
   updateServiceOffer,
 } from "./service-catalog";
 import { deactivateDoctor } from "./doctor-status";
@@ -155,6 +156,173 @@ describe("catálogo y Ofertas de servicio persistentes", () => {
   );
 
   databaseTest(
+    "permite al Médico desactivar su Oferta sin ocultar las demás del Servicio",
+    async () => {
+      const fixture = await createCatalogFixture();
+
+      try {
+        const ownerDoctorId = fixture.aurora.doctorIds[0];
+        const additionalDoctorId = fixture.aurora.doctorIds[1];
+        const doctorIdentityId = fixture.aurora.additionalIdentityId;
+        if (
+          ownerDoctorId === undefined ||
+          additionalDoctorId === undefined ||
+          doctorIdentityId === undefined
+        ) {
+          throw new Error("Faltan los Médicos elegibles de la Clínica");
+        }
+        const service = await createService(
+          {
+            clinicId: fixture.aurora.clinicId,
+            description: "Consulta médica general",
+            identityId: fixture.aurora.identityId,
+            name: "Consulta propia",
+            offers: [
+              {
+                bufferMinutes: 0,
+                doctorId: ownerDoctorId,
+                durationMinutes: 30,
+                priceUsd: "35.00",
+              },
+            ],
+          },
+          drizzleServiceCatalogStore,
+        );
+        const ownerOffer = service.offers[0];
+        if (ownerOffer === undefined) throw new Error("Falta la Oferta creada");
+        const ownOffer = await addServiceOffer(
+          {
+            bufferMinutes: 0,
+            clinicId: fixture.aurora.clinicId,
+            doctorId: additionalDoctorId,
+            durationMinutes: 30,
+            identityId: doctorIdentityId,
+            priceUsd: "30.00",
+            serviceId: service.id,
+          },
+          drizzleServiceCatalogStore,
+        );
+
+        await expect(
+          deactivateServiceOffer(
+            {
+              clinicId: fixture.aurora.clinicId,
+              identityId: doctorIdentityId,
+              offerId: ownOffer.id,
+            },
+            drizzleServiceCatalogStore,
+          ),
+        ).resolves.toMatchObject({ active: false, id: ownOffer.id });
+        await inClinicTransaction(fixture.aurora, async (transaction) => {
+          await expect(
+            transaction.query.serviceOffers.findFirst({
+              columns: { active: true },
+              where: eq(serviceOffers.id, ownerOffer.id),
+            }),
+          ).resolves.toMatchObject({ active: true });
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "solo bloquea la desactivación por ocupación de la Oferta afectada",
+    async () => {
+      const fixture = await createCatalogFixture();
+
+      try {
+        const [ownerDoctorId, additionalDoctorId] = fixture.aurora.doctorIds;
+        if (ownerDoctorId === undefined || additionalDoctorId === undefined) {
+          throw new Error("Faltan los Médicos elegibles de la Clínica");
+        }
+        const targetService = await createService(
+          {
+            clinicId: fixture.aurora.clinicId,
+            description: "Servicio objetivo",
+            identityId: fixture.aurora.identityId,
+            name: "Servicio objetivo",
+            offers: [
+              {
+                bufferMinutes: 0,
+                doctorId: ownerDoctorId,
+                durationMinutes: 30,
+                priceUsd: "35.00",
+              },
+            ],
+          },
+          drizzleServiceCatalogStore,
+        );
+        const targetOffer = targetService.offers[0];
+        if (targetOffer === undefined)
+          throw new Error("Falta la Oferta objetivo");
+        await addServiceOffer(
+          {
+            bufferMinutes: 0,
+            clinicId: fixture.aurora.clinicId,
+            doctorId: additionalDoctorId,
+            durationMinutes: 30,
+            identityId: fixture.aurora.identityId,
+            priceUsd: "30.00",
+            serviceId: targetService.id,
+          },
+          drizzleServiceCatalogStore,
+        );
+        const otherService = await createService(
+          {
+            clinicId: fixture.aurora.clinicId,
+            description: "Otro servicio",
+            identityId: fixture.aurora.identityId,
+            name: "Otro servicio",
+            offers: [
+              {
+                bufferMinutes: 0,
+                doctorId: ownerDoctorId,
+                durationMinutes: 30,
+                priceUsd: "40.00",
+              },
+            ],
+          },
+          drizzleServiceCatalogStore,
+        );
+        const otherOffer = otherService.offers[0];
+        if (otherOffer === undefined) throw new Error("Falta la Oferta ajena");
+        await inClinicTransaction(fixture.aurora, async (transaction) => {
+          await transaction.insert(appointments).values({
+            clinicId: fixture.aurora.clinicId,
+            doctorId: ownerDoctorId,
+            endsAt: new Date(Date.now() + 7_200_000),
+            serviceOfferId: otherOffer.id,
+            startsAt: new Date(Date.now() + 3_600_000),
+          });
+          await transaction.insert(temporaryReservations).values({
+            clinicId: fixture.aurora.clinicId,
+            doctorId: ownerDoctorId,
+            endsAt: new Date(Date.now() + 10_800_000),
+            expiresAt: new Date(Date.now() + 7_200_000),
+            serviceOfferId: otherOffer.id,
+            startsAt: new Date(Date.now() + 9_000_000),
+          });
+        });
+
+        await expect(
+          deactivateServiceOffer(
+            {
+              clinicId: fixture.aurora.clinicId,
+              identityId: fixture.aurora.identityId,
+              offerId: targetOffer.id,
+            },
+            drizzleServiceCatalogStore,
+          ),
+        ).resolves.toMatchObject({ active: false, id: targetOffer.id });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
     "rechaza desactivar una Oferta que dejaría Citas o Reservas activas sin capacidad",
     async () => {
       const fixture = await createCatalogFixture();
@@ -200,6 +368,7 @@ describe("catálogo y Ofertas de servicio persistentes", () => {
             clinicId: fixture.aurora.clinicId,
             doctorId: ownerDoctorId,
             endsAt: new Date("2030-08-10T15:00:00.000Z"),
+            serviceOfferId: offer.id,
             startsAt: new Date("2030-08-10T14:00:00.000Z"),
           });
           await transaction.insert(temporaryReservations).values({
@@ -207,6 +376,7 @@ describe("catálogo y Ofertas de servicio persistentes", () => {
             doctorId: ownerDoctorId,
             endsAt: new Date("2030-08-10T17:00:00.000Z"),
             expiresAt: new Date("2031-01-01T00:00:00.000Z"),
+            serviceOfferId: offer.id,
             startsAt: new Date("2030-08-10T16:00:00.000Z"),
           });
         });
@@ -358,13 +528,50 @@ describe("catálogo y Ofertas de servicio persistentes", () => {
         );
         const firstOffer = service.offers[0];
         if (firstOffer === undefined) throw new Error("Falta la Oferta creada");
+        await expect(
+          updateService(
+            {
+              clinicId: fixture.aurora.clinicId,
+              description: "Consulta inicial y seguimiento",
+              identityId: fixture.aurora.identityId,
+              name: "Consulta y seguimiento",
+              serviceId: service.id,
+            },
+            drizzleServiceCatalogStore,
+          ),
+        ).resolves.toMatchObject({
+          description: "Consulta inicial y seguimiento",
+          name: "Consulta y seguimiento",
+        });
+        await inClinicTransaction(
+          {
+            clinicId: fixture.aurora.clinicId,
+            identityId: fixture.aurora.additionalIdentityId,
+          },
+          async (transaction) => {
+            await expect(
+              transaction
+                .update(services)
+                .set({ description: "Cambio no autorizado" })
+                .where(eq(services.id, service.id))
+                .returning({ id: services.id }),
+            ).resolves.toEqual([]);
+          },
+        );
+        const doctorCatalogBeforeOwnOffer = await listServiceCatalog({
+          clinicId: fixture.aurora.clinicId,
+          identityId: fixture.aurora.additionalIdentityId,
+        });
+        expect(doctorCatalogBeforeOwnOffer?.services).toHaveLength(1);
+        expect(doctorCatalogBeforeOwnOffer?.services[0]?.offers).toEqual([]);
+
         const secondOffer = await addServiceOffer(
           {
             bufferMinutes: 0,
             clinicId: fixture.aurora.clinicId,
             doctorId: additionalDoctorId,
             durationMinutes: 45,
-            identityId: fixture.aurora.identityId,
+            identityId: fixture.aurora.additionalIdentityId,
             priceUsd: "40.00",
             serviceId: service.id,
           },
@@ -429,7 +636,8 @@ describe("catálogo y Ofertas de servicio persistentes", () => {
         const catalog = await listServiceCatalog(fixture.aurora);
         expect(catalog?.services).toHaveLength(1);
         expect(catalog?.services[0]).toMatchObject({
-          name: "Consulta inicial",
+          description: "Consulta inicial y seguimiento",
+          name: "Consulta y seguimiento",
         });
         expect(
           catalog?.services[0]?.offers.some(
@@ -461,6 +669,13 @@ describe("catálogo y Ofertas de servicio persistentes", () => {
         expect(audit.some((event) => event.action === "service-created")).toBe(
           true,
         );
+        expect(
+          audit.some(
+            (event) =>
+              event.action === "service-updated" &&
+              event.afterValues?.name === "Consulta y seguimiento",
+          ),
+        ).toBe(true);
         expect(
           audit.some((event) => event.action === "service-offer-created"),
         ).toBe(true);

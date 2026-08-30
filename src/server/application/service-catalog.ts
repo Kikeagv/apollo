@@ -31,6 +31,17 @@ export type ServiceCatalogStore = {
   }): Promise<ClinicService | undefined>;
 };
 
+export type ServiceCatalogUpdater = {
+  updateService(input: {
+    clinicId: string;
+    description: string;
+    identityId: string;
+    name: string;
+    normalizedName: string;
+    serviceId: string;
+  }): Promise<ClinicService | undefined>;
+};
+
 export type ServiceOfferDeactivator = {
   deactivate(input: {
     clinicId: string;
@@ -100,6 +111,39 @@ export async function createService(
     name,
     normalizedName: normalizeServiceName(name),
     offers,
+  });
+  if (service === undefined) throw new ServiceCatalogAccessError();
+  return service;
+}
+
+/** Actualiza la identidad pública de un Servicio sin tocar sus Ofertas. */
+export async function updateService(
+  input: {
+    clinicId: string;
+    description: string;
+    identityId: string;
+    name: string;
+    serviceId: string;
+  },
+  store: ServiceCatalogUpdater,
+) {
+  const name = requiredText(
+    input.name,
+    "El nombre del Servicio es obligatorio",
+    MAX_SERVICE_NAME_LENGTH,
+  );
+  const description = requiredText(
+    input.description,
+    "La descripción pública es obligatoria",
+    MAX_DESCRIPTION_LENGTH,
+  );
+  const service = await store.updateService({
+    clinicId: input.clinicId,
+    description,
+    identityId: input.identityId,
+    name,
+    normalizedName: normalizeServiceName(name),
+    serviceId: input.serviceId,
   });
   if (service === undefined) throw new ServiceCatalogAccessError();
   return service;

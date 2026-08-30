@@ -9,7 +9,7 @@ type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 /** Ocupación que impediría un cambio de configuración que reduce capacidad. */
 export async function capacityConflictsForDoctor(
   transaction: ClinicTransaction,
-  input: { clinicId: string; doctorId: string },
+  input: { clinicId: string; doctorId: string; serviceOfferId?: string },
 ): Promise<CapacityConflict[]> {
   const now = new Date();
   const [confirmed, reservations] = await Promise.all([
@@ -26,6 +26,9 @@ export async function capacityConflictsForDoctor(
           eq(appointments.clinicId, input.clinicId),
           eq(appointments.doctorId, input.doctorId),
           eq(appointments.status, "confirmed"),
+          input.serviceOfferId === undefined
+            ? undefined
+            : eq(appointments.serviceOfferId, input.serviceOfferId),
           or(gt(appointments.endsAt, now), gt(appointments.occupiedUntil, now)),
         ),
       ),
@@ -40,6 +43,9 @@ export async function capacityConflictsForDoctor(
         and(
           eq(temporaryReservations.clinicId, input.clinicId),
           eq(temporaryReservations.doctorId, input.doctorId),
+          input.serviceOfferId === undefined
+            ? undefined
+            : eq(temporaryReservations.serviceOfferId, input.serviceOfferId),
           gt(temporaryReservations.expiresAt, now),
         ),
       ),

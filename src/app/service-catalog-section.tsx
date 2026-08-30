@@ -2,43 +2,102 @@
 
 import { type FormEvent, useState } from "react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
+import { Button } from "~/components/ui/button";
+import { Input } from "~/components/ui/input";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "~/components/ui/native-select";
+import { Textarea } from "~/components/ui/textarea";
+import { FieldError } from "~/components/ui/field";
 import { api } from "~/trpc/react";
 import { CapacityConflicts } from "./capacity-conflicts";
 import { formNumberValue, formValue } from "./form-values";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
+type PendingOfferUpdate = {
+  input: {
+    bufferMinutes: number;
+    durationMinutes: number;
+    offerId: string;
+    priceUsd: string;
+  };
+  previous: {
+    bufferMinutes: number;
+    durationMinutes: number;
+  };
+};
+
 export function ServiceCatalogSection({
-  canCreateServices,
+  canManageServices,
+  canManageOffers = canManageServices,
 }: {
-  canCreateServices: boolean;
+  canManageServices: boolean;
+  canManageOffers?: boolean;
 }) {
   const [result, setResult] = useState<string>();
+  const [offerToDeactivate, setOfferToDeactivate] = useState<string>();
+  const [offerToUpdate, setOfferToUpdate] = useState<PendingOfferUpdate>();
+  const [addErrorServiceId, setAddErrorServiceId] = useState<string>();
+  const [serviceUpdateErrorId, setServiceUpdateErrorId] = useState<string>();
+  const [offerUpdateErrorId, setOfferUpdateErrorId] = useState<string>();
   const catalog = api.panacea.listServiceCatalog.useQuery();
   const create = api.panacea.createService.useMutation({
     onSuccess: (service) => {
       setResult(`Servicio ${service.name} creado.`);
       void catalog.refetch();
     },
+    onError: () => setResult(undefined),
   });
   const add = api.panacea.addServiceOffer.useMutation({
     onSuccess: () => {
+      setAddErrorServiceId(undefined);
       setResult("Oferta agregada al Servicio.");
       void catalog.refetch();
     },
+    onError: () => setResult(undefined),
+  });
+  const updateServiceMutation = api.panacea.updateService.useMutation({
+    onSuccess: (service) => {
+      setServiceUpdateErrorId(undefined);
+      setResult(`Servicio ${service.name} actualizado.`);
+      void catalog.refetch();
+    },
+    onError: () => setResult(undefined),
   });
   const update = api.panacea.updateServiceOffer.useMutation({
     onSuccess: () => {
+      setOfferUpdateErrorId(undefined);
       setResult("Oferta actualizada para opciones nuevas.");
       void catalog.refetch();
     },
+    onError: () => setResult(undefined),
   });
   const deactivate = api.panacea.deactivateServiceOffer.useMutation({
     onSuccess: () => {
       setResult("Oferta desactivada sin borrar su historial.");
       void catalog.refetch();
     },
+    onError: () => setResult(undefined),
   });
   const queryError = catalog.error;
+  const createErrorId = "service-catalog-create-error";
+  const createFieldProps = create.error
+    ? ({
+        "aria-describedby": createErrorId,
+        "aria-invalid": true,
+      } as const)
+    : {};
+  const deactivateErrorId = "service-catalog-deactivate-error";
 
   function createService(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,31 +119,64 @@ export function ServiceCatalogSection({
   function updateOffer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    update.mutate({
+    const input = {
       bufferMinutes: formNumberValue(data, "bufferMinutes"),
       durationMinutes: formNumberValue(data, "durationMinutes"),
       offerId: formValue(data, "offerId"),
       priceUsd: formValue(data, "priceUsd"),
+    };
+    const currentOffer = catalog.data?.services
+      .flatMap((service) => service.offers)
+      .find((offer) => offer.id === input.offerId);
+    if (
+      currentOffer === undefined ||
+      (currentOffer.bufferMinutes === input.bufferMinutes &&
+        currentOffer.durationMinutes === input.durationMinutes)
+    ) {
+      setOfferUpdateErrorId(input.offerId);
+      update.mutate(input);
+      return;
+    }
+    setOfferToUpdate({
+      input,
+      previous: {
+        bufferMinutes: currentOffer.bufferMinutes,
+        durationMinutes: currentOffer.durationMinutes,
+      },
+    });
+  }
+
+  function updateServiceInfo(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const serviceId = formValue(data, "serviceId");
+    setServiceUpdateErrorId(serviceId);
+    updateServiceMutation.mutate({
+      description: formValue(data, "description"),
+      name: formValue(data, "name"),
+      serviceId,
     });
   }
 
   function addOffer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const serviceId = formValue(data, "serviceId");
+    setAddErrorServiceId(serviceId);
     add.mutate({
       bufferMinutes: formNumberValue(data, "bufferMinutes"),
       doctorId: formValue(data, "doctorId"),
       durationMinutes: formNumberValue(data, "durationMinutes"),
       priceUsd: formValue(data, "priceUsd"),
-      serviceId: formValue(data, "serviceId"),
+      serviceId,
     });
   }
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-700 p-5">
+    <section className="border-border bg-card text-card-foreground space-y-4 rounded-xl border p-5">
       <div>
         <h2 className="text-xl font-semibold">Catálogo de Servicios</h2>
-        <p className="mt-1 text-sm text-slate-300">
+        <p className="text-muted-foreground mt-1 text-sm">
           Cada Servicio comienza con una Oferta activa de un Médico elegible.
         </p>
       </div>
@@ -97,12 +189,13 @@ export function ServiceCatalogSection({
       ) : catalog.isLoading ? (
         <PanaceaQueryLoading label="Cargando Servicios" />
       ) : null}
-      {canCreateServices ? (
+      {canManageServices ? (
         <form className="grid gap-3 sm:grid-cols-2" onSubmit={createService}>
           <label className="block text-sm">
             Servicio
-            <input
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+            <Input
+              {...createFieldProps}
+              className="mt-1"
               maxLength={120}
               name="name"
               required
@@ -110,23 +203,25 @@ export function ServiceCatalogSection({
           </label>
           <label className="block text-sm">
             Médico
-            <select
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+            <NativeSelect
+              {...createFieldProps}
+              className="mt-1 w-full"
               disabled={catalog.data?.doctors.length === 0}
               name="doctorId"
               required
             >
               {catalog.data?.doctors.map((doctor) => (
-                <option key={doctor.id} value={doctor.id}>
+                <NativeSelectOption key={doctor.id} value={doctor.id}>
                   {doctor.publicName}
-                </option>
+                </NativeSelectOption>
               ))}
-            </select>
+            </NativeSelect>
           </label>
           <label className="block text-sm sm:col-span-2">
             Descripción pública
-            <textarea
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+            <Textarea
+              {...createFieldProps}
+              className="mt-1 min-h-24"
               maxLength={1000}
               name="description"
               required
@@ -134,8 +229,9 @@ export function ServiceCatalogSection({
           </label>
           <label className="block text-sm">
             Precio (USD)
-            <input
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+            <Input
+              {...createFieldProps}
+              className="mt-1"
               inputMode="decimal"
               name="priceUsd"
               pattern="[0-9]+\.[0-9]{2}"
@@ -145,8 +241,9 @@ export function ServiceCatalogSection({
           </label>
           <label className="block text-sm">
             Duración (minutos)
-            <input
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+            <Input
+              {...createFieldProps}
+              className="mt-1"
               defaultValue="30"
               min="5"
               name="durationMinutes"
@@ -157,8 +254,9 @@ export function ServiceCatalogSection({
           </label>
           <label className="block text-sm">
             Buffer posterior (minutos)
-            <input
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-3 py-2"
+            <Input
+              {...createFieldProps}
+              className="mt-1"
               defaultValue="0"
               min="0"
               name="bufferMinutes"
@@ -167,17 +265,21 @@ export function ServiceCatalogSection({
               type="number"
             />
           </label>
-          <button
-            className="w-fit rounded bg-teal-300 px-4 py-2 font-medium text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+          <Button
             disabled={create.isPending || catalog.data?.doctors.length === 0}
             type="submit"
           >
             {create.isPending ? "Creando…" : "Crear Servicio"}
-          </button>
+          </Button>
+          {create.error ? (
+            <FieldError className="sm:col-span-2" id={createErrorId}>
+              {create.error.message}
+            </FieldError>
+          ) : null}
         </form>
       ) : null}
-      {canCreateServices && catalog.data?.doctors.length === 0 ? (
-        <p className="text-sm text-amber-300">
+      {canManageServices && catalog.data?.doctors.length === 0 ? (
+        <p className="text-muted-foreground text-sm">
           Invite y active al menos un Médico antes de crear un Servicio.
         </p>
       ) : null}
@@ -188,15 +290,16 @@ export function ServiceCatalogSection({
           No hay Servicios configurados todavía.
         </p>
       ) : null}
-      {result ? <p className="text-sm text-teal-300">{result}</p> : null}
-      {(create.error ?? add.error ?? update.error ?? deactivate.error) ? (
-        <div className="space-y-2 text-sm text-rose-300">
-          <p>
-            {
-              (create.error ?? add.error ?? update.error ?? deactivate.error)
-                ?.message
-            }
-          </p>
+      {result ? (
+        <p className="text-muted-foreground text-sm" role="status">
+          {result}
+        </p>
+      ) : null}
+      {deactivate.error ? (
+        <div className="text-destructive space-y-2 text-sm">
+          <FieldError id={deactivateErrorId}>
+            {deactivate.error.message}
+          </FieldError>
           <CapacityConflicts
             conflicts={deactivate.error?.data?.capacityConflicts}
           />
@@ -205,35 +308,112 @@ export function ServiceCatalogSection({
       <div className="space-y-3">
         {catalog.data?.services.map((service) => (
           <article
-            className="rounded-lg border border-slate-800 p-4"
+            className="border-border rounded-lg border p-4"
             key={service.id}
           >
             <h3 className="font-medium">{service.name}</h3>
-            <p className="mt-1 text-sm text-slate-300">{service.description}</p>
-            {canCreateServices ? (
+            <p className="text-muted-foreground mt-1 text-sm">
+              {service.description}
+            </p>
+            {canManageServices ? (
               <form
-                className="mt-3 grid items-end gap-2 rounded border border-slate-800 p-3 sm:grid-cols-4"
+                aria-label={`Editar Servicio ${service.name}`}
+                className="mt-3 grid gap-3 rounded-lg border p-3 sm:grid-cols-2"
+                onSubmit={updateServiceInfo}
+              >
+                <input name="serviceId" type="hidden" value={service.id} />
+                <label className="text-sm">
+                  Nombre del Servicio
+                  <Input
+                    {...(updateServiceMutation.error !== undefined &&
+                    serviceUpdateErrorId === service.id
+                      ? {
+                          "aria-describedby": `service-catalog-update-${service.id}-error`,
+                          "aria-invalid": true,
+                        }
+                      : {})}
+                    className="mt-1"
+                    defaultValue={service.name}
+                    maxLength={120}
+                    name="name"
+                    required
+                  />
+                </label>
+                <label className="text-sm sm:col-span-2">
+                  Descripción pública
+                  <Textarea
+                    {...(updateServiceMutation.error !== undefined &&
+                    serviceUpdateErrorId === service.id
+                      ? {
+                          "aria-describedby": `service-catalog-update-${service.id}-error`,
+                          "aria-invalid": true,
+                        }
+                      : {})}
+                    className="mt-1 min-h-20"
+                    defaultValue={service.description}
+                    maxLength={1000}
+                    name="description"
+                    required
+                  />
+                </label>
+                <Button
+                  className="w-fit"
+                  disabled={updateServiceMutation.isPending}
+                  type="submit"
+                >
+                  {updateServiceMutation.isPending
+                    ? "Guardando…"
+                    : "Guardar Servicio"}
+                </Button>
+                {updateServiceMutation.error !== undefined &&
+                serviceUpdateErrorId === service.id ? (
+                  <FieldError
+                    className="sm:col-span-2"
+                    id={`service-catalog-update-${service.id}-error`}
+                  >
+                    {updateServiceMutation.error?.message}
+                  </FieldError>
+                ) : null}
+              </form>
+            ) : null}
+            {canManageOffers ? (
+              <form
+                className="mt-3 grid items-end gap-2 rounded border p-3 sm:grid-cols-4"
                 onSubmit={addOffer}
               >
                 <input name="serviceId" type="hidden" value={service.id} />
                 <label className="text-sm">
                   Médico
-                  <select
-                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                  <NativeSelect
+                    {...(add.error !== undefined &&
+                    addErrorServiceId === service.id
+                      ? {
+                          "aria-describedby": `service-catalog-add-${service.id}-error`,
+                          "aria-invalid": true,
+                        }
+                      : {})}
+                    className="mt-1 w-full"
                     name="doctorId"
                     required
                   >
                     {catalog.data?.doctors.map((doctor) => (
-                      <option key={doctor.id} value={doctor.id}>
+                      <NativeSelectOption key={doctor.id} value={doctor.id}>
                         {doctor.publicName}
-                      </option>
+                      </NativeSelectOption>
                     ))}
-                  </select>
+                  </NativeSelect>
                 </label>
                 <label className="text-sm">
                   Precio (USD)
-                  <input
-                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                  <Input
+                    {...(add.error !== undefined &&
+                    addErrorServiceId === service.id
+                      ? {
+                          "aria-describedby": `service-catalog-add-${service.id}-error`,
+                          "aria-invalid": true,
+                        }
+                      : {})}
+                    className="mt-1"
                     defaultValue="0.00"
                     name="priceUsd"
                     pattern="[0-9]+\.[0-9]{2}"
@@ -242,8 +422,15 @@ export function ServiceCatalogSection({
                 </label>
                 <label className="text-sm">
                   Duración
-                  <input
-                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                  <Input
+                    {...(add.error !== undefined &&
+                    addErrorServiceId === service.id
+                      ? {
+                          "aria-describedby": `service-catalog-add-${service.id}-error`,
+                          "aria-invalid": true,
+                        }
+                      : {})}
+                    className="mt-1"
                     defaultValue="30"
                     min="5"
                     name="durationMinutes"
@@ -254,8 +441,15 @@ export function ServiceCatalogSection({
                 </label>
                 <label className="text-sm">
                   Buffer
-                  <input
-                    className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                  <Input
+                    {...(add.error !== undefined &&
+                    addErrorServiceId === service.id
+                      ? {
+                          "aria-describedby": `service-catalog-add-${service.id}-error`,
+                          "aria-invalid": true,
+                        }
+                      : {})}
+                    className="mt-1"
                     defaultValue="0"
                     min="0"
                     name="bufferMinutes"
@@ -264,13 +458,21 @@ export function ServiceCatalogSection({
                     type="number"
                   />
                 </label>
-                <button
-                  className="w-fit rounded border border-teal-300 px-3 py-1 text-sm text-teal-300 disabled:opacity-50"
+                <Button
+                  className="w-fit"
                   disabled={add.isPending}
                   type="submit"
                 >
                   {add.isPending ? "Agregando…" : "Agregar Oferta"}
-                </button>
+                </Button>
+                {add.error !== undefined && addErrorServiceId === service.id ? (
+                  <FieldError
+                    className="sm:col-span-4"
+                    id={`service-catalog-add-${service.id}-error`}
+                  >
+                    {add.error?.message}
+                  </FieldError>
+                ) : null}
               </form>
             ) : null}
             <div className="mt-3 space-y-3">
@@ -282,17 +484,24 @@ export function ServiceCatalogSection({
                 return (
                   <form
                     aria-label={`Oferta de ${doctorName}`}
-                    className="grid items-end gap-2 rounded border border-slate-800 p-3 sm:grid-cols-4"
+                    className="grid items-end gap-2 rounded border p-3 sm:grid-cols-4"
                     key={offer.id}
                     onSubmit={updateOffer}
                   >
                     <input name="offerId" type="hidden" value={offer.id} />
                     <label className="text-sm">
                       Precio (USD)
-                      <input
-                        className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                      <Input
+                        {...(update.error !== undefined &&
+                        offerUpdateErrorId === offer.id
+                          ? {
+                              "aria-describedby": `service-catalog-offer-${offer.id}-error`,
+                              "aria-invalid": true,
+                            }
+                          : {})}
+                        className="mt-1"
                         defaultValue={offer.priceUsd}
-                        disabled={!offer.active}
+                        disabled={!offer.active || !canManageOffers}
                         name="priceUsd"
                         pattern="[0-9]+\.[0-9]{2}"
                         required
@@ -300,10 +509,17 @@ export function ServiceCatalogSection({
                     </label>
                     <label className="text-sm">
                       Duración
-                      <input
-                        className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                      <Input
+                        {...(update.error !== undefined &&
+                        offerUpdateErrorId === offer.id
+                          ? {
+                              "aria-describedby": `service-catalog-offer-${offer.id}-error`,
+                              "aria-invalid": true,
+                            }
+                          : {})}
+                        className="mt-1"
                         defaultValue={offer.durationMinutes}
-                        disabled={!offer.active}
+                        disabled={!offer.active || !canManageOffers}
                         min="5"
                         name="durationMinutes"
                         required
@@ -313,10 +529,17 @@ export function ServiceCatalogSection({
                     </label>
                     <label className="text-sm">
                       Buffer
-                      <input
-                        className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1"
+                      <Input
+                        {...(update.error !== undefined &&
+                        offerUpdateErrorId === offer.id
+                          ? {
+                              "aria-describedby": `service-catalog-offer-${offer.id}-error`,
+                              "aria-invalid": true,
+                            }
+                          : {})}
+                        className="mt-1"
                         defaultValue={offer.bufferMinutes}
-                        disabled={!offer.active}
+                        disabled={!offer.active || !canManageOffers}
                         min="0"
                         name="bufferMinutes"
                         required
@@ -324,23 +547,33 @@ export function ServiceCatalogSection({
                         type="number"
                       />
                     </label>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        className="rounded border border-teal-300 px-3 py-1 text-sm text-teal-300 disabled:opacity-50"
-                        disabled={!offer.active || update.isPending}
-                        type="submit"
+                    {canManageOffers ? (
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          disabled={!offer.active || update.isPending}
+                          type="submit"
+                        >
+                          Guardar
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          disabled={!offer.active || deactivate.isPending}
+                          onClick={() => setOfferToDeactivate(offer.id)}
+                          type="button"
+                        >
+                          {offer.active ? "Desactivar" : "Desactivada"}
+                        </Button>
+                      </div>
+                    ) : null}
+                    {update.error !== undefined &&
+                    offerUpdateErrorId === offer.id ? (
+                      <FieldError
+                        className="sm:col-span-4"
+                        id={`service-catalog-offer-${offer.id}-error`}
                       >
-                        Guardar
-                      </button>
-                      <button
-                        className="rounded border border-rose-300 px-3 py-1 text-sm text-rose-300 disabled:opacity-50"
-                        disabled={!offer.active || deactivate.isPending}
-                        onClick={() => deactivate.mutate({ offerId: offer.id })}
-                        type="button"
-                      >
-                        {offer.active ? "Desactivar" : "Desactivada"}
-                      </button>
-                    </div>
+                        {update.error?.message}
+                      </FieldError>
+                    ) : null}
                   </form>
                 );
               })}
@@ -348,6 +581,73 @@ export function ServiceCatalogSection({
           </article>
         ))}
       </div>
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!open) setOfferToDeactivate(undefined);
+        }}
+        open={offerToDeactivate !== undefined}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>¿Desactivar esta Oferta?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Las Citas existentes conservan su configuración. Las nuevas Opciones
+            dejarán de usar esta Oferta; si la acción reduce capacidad, se
+            mostrará el conflicto y no se aplicará parcialmente.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deactivate.isPending}
+              onClick={() => {
+                if (offerToDeactivate !== undefined) {
+                  deactivate.mutate({ offerId: offerToDeactivate });
+                }
+              }}
+            >
+              {deactivate.isPending ? "Desactivando…" : "Desactivar Oferta"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!open && !update.isPending) setOfferToUpdate(undefined);
+        }}
+        open={offerToUpdate !== undefined}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>
+            ¿Confirmar actualización de Oferta?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {offerToUpdate !== undefined &&
+            offerToUpdate.previous.durationMinutes +
+              offerToUpdate.previous.bufferMinutes <
+              offerToUpdate.input.durationMinutes +
+                offerToUpdate.input.bufferMinutes
+              ? `La nueva Oferta ocupará ${offerToUpdate.input.durationMinutes + offerToUpdate.input.bufferMinutes} minutos en las Opciones futuras, frente a ${offerToUpdate.previous.durationMinutes + offerToUpdate.previous.bufferMinutes} minutos actuales; esto puede reducir la capacidad disponible.`
+              : "La nueva duración y buffer se usarán al recalcular Opciones futuras."}{" "}
+            Las Citas confirmadas conservan la duración, buffer y precio
+            cotizados al crearse; este cambio no las modifica.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={update.isPending}>
+              Volver
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={update.isPending || offerToUpdate === undefined}
+              onClick={() => {
+                if (offerToUpdate !== undefined) {
+                  setOfferUpdateErrorId(offerToUpdate.input.offerId);
+                  update.mutate(offerToUpdate.input);
+                }
+              }}
+            >
+              {update.isPending ? "Guardando…" : "Confirmar actualización"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

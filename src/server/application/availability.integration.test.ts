@@ -88,7 +88,7 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
           {
             clinicId: fixture.clinicId,
             doctorId: fixture.ownerDoctorId,
-            effectiveFrom: "2026-08-01",
+            effectiveFrom: "2030-08-01",
             identityId: fixture.ownerIdentityId,
             periods: [{ dayOfWeek: 1, endTime: "12:00", startTime: "08:00" }],
           },
@@ -100,23 +100,23 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             await transaction.insert(appointments).values({
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              endsAt: new Date("2026-08-10T14:30:00.000Z"),
-              startsAt: new Date("2026-08-10T05:50:00.000Z"),
+              endsAt: new Date("2030-08-05T14:30:00.000Z"),
+              startsAt: new Date("2030-08-05T05:50:00.000Z"),
             });
             await transaction.insert(temporaryReservations).values([
               {
                 clinicId: fixture.clinicId,
                 doctorId: fixture.ownerDoctorId,
-                endsAt: new Date("2026-08-10T17:00:00.000Z"),
-                expiresAt: new Date("2030-01-01T00:00:00.000Z"),
-                startsAt: new Date("2026-08-10T16:00:00.000Z"),
+                endsAt: new Date("2030-08-05T17:00:00.000Z"),
+                expiresAt: new Date("2031-01-01T00:00:00.000Z"),
+                startsAt: new Date("2030-08-05T16:00:00.000Z"),
               },
               {
                 clinicId: fixture.clinicId,
                 doctorId: fixture.ownerDoctorId,
-                endsAt: new Date("2026-08-10T18:00:00.000Z"),
-                expiresAt: new Date("2026-08-10T13:00:00.000Z"),
-                startsAt: new Date("2026-08-10T17:00:00.000Z"),
+                endsAt: new Date("2030-08-05T18:00:00.000Z"),
+                expiresAt: new Date("2020-08-05T13:00:00.000Z"),
+                startsAt: new Date("2030-08-05T17:00:00.000Z"),
               },
             ]);
           },
@@ -125,10 +125,10 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
           {
             clinicId: fixture.clinicId,
             doctorId: fixture.ownerDoctorId,
-            endsAt: new Date("2026-08-10T16:00:00.000Z"),
+            endsAt: new Date("2030-08-05T16:00:00.000Z"),
             identityId: fixture.ownerIdentityId,
             privateLabel: "Reunión privada",
-            startsAt: new Date("2026-08-10T15:00:00.000Z"),
+            startsAt: new Date("2030-08-05T15:00:00.000Z"),
           },
           drizzleAvailabilityStore,
         );
@@ -137,19 +137,19 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
           {
             clinicId: fixture.clinicId,
             doctorId: fixture.ownerDoctorId,
-            from: "2026-08-10",
+            from: "2030-08-05",
             identityId: fixture.ownerIdentityId,
             serviceId: service.id,
-            to: "2026-08-10",
+            to: "2030-08-05",
           },
           drizzleCareOptionsStore,
-          new Date("2026-08-10T13:00:00.000Z"),
+          new Date("2030-08-05T13:00:00.000Z"),
         );
         expect(options.map((option) => option.startsAt.toISOString())).toEqual([
-          "2026-08-10T17:00:00.000Z",
-          "2026-08-10T17:05:00.000Z",
-          "2026-08-10T17:10:00.000Z",
-          "2026-08-10T17:15:00.000Z",
+          "2030-08-05T17:00:00.000Z",
+          "2030-08-05T17:05:00.000Z",
+          "2030-08-05T17:10:00.000Z",
+          "2030-08-05T17:15:00.000Z",
         ]);
         expect(options.every((option) => !("privateLabel" in option))).toBe(
           true,
@@ -167,17 +167,17 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             {
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              from: "2026-08-10",
+              from: "2030-08-05",
               identityId: fixture.ownerIdentityId,
               serviceId: service.id,
-              to: "2026-08-10",
+              to: "2030-08-05",
             },
             drizzleCareOptionsStore,
-            new Date("2026-08-10T13:00:00.000Z"),
+            new Date("2030-08-05T13:00:00.000Z"),
           ),
         ).resolves.toEqual(
           expect.arrayContaining([
-            { startsAt: new Date("2026-08-10T14:00:00.000Z") },
+            { startsAt: new Date("2030-08-05T14:00:00.000Z") },
           ]),
         );
         await expect(
@@ -185,10 +185,10 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             {
               clinicId: fixture.otherClinicId,
               doctorId: fixture.ownerDoctorId,
-              from: "2026-08-10",
+              from: "2030-08-05",
               identityId: fixture.otherClinicOwnerId,
               serviceId: service.id,
-              to: "2026-08-10",
+              to: "2030-08-05",
             },
             drizzleCareOptionsStore,
           ),
@@ -204,10 +204,10 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             {
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              from: "2026-08-10",
+              from: "2030-08-05",
               identityId: secretaryIdentityId,
               serviceId: service.id,
-              to: "2026-08-10",
+              to: "2030-08-05",
             },
             drizzleCareOptionsStore,
           ),
@@ -225,14 +225,38 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
               .where(eq(doctors.id, fixture.ownerDoctorId)),
         );
         await expect(
+          configureEffectiveSchedule(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.ownerDoctorId,
+              effectiveFrom: "2030-08-05",
+              identityId: fixture.ownerIdentityId,
+              periods: [{ dayOfWeek: 1, endTime: "12:00", startTime: "08:00" }],
+            },
+            drizzleAvailabilityStore,
+          ),
+        ).rejects.toThrow("La Identidad no puede configurar");
+        await expect(
+          createAvailabilityBlock(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.ownerDoctorId,
+              endsAt: new Date("2030-08-05T16:00:00.000Z"),
+              identityId: fixture.ownerIdentityId,
+              startsAt: new Date("2030-08-05T15:00:00.000Z"),
+            },
+            drizzleAvailabilityStore,
+          ),
+        ).rejects.toThrow("La Identidad no puede configurar");
+        await expect(
           calculateCareOptions(
             {
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              from: "2026-08-10",
+              from: "2030-08-05",
               identityId: fixture.ownerIdentityId,
               serviceId: service.id,
-              to: "2026-08-10",
+              to: "2030-08-05",
             },
             drizzleCareOptionsStore,
           ),
@@ -251,11 +275,23 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
     async () => {
       const fixture = await createFixture();
       try {
+        await expect(
+          configureEffectiveSchedule(
+            {
+              clinicId: fixture.clinicId,
+              doctorId: fixture.ownerDoctorId,
+              effectiveFrom: "2020-08-01",
+              identityId: fixture.ownerIdentityId,
+              periods: [{ dayOfWeek: 1, endTime: "12:00", startTime: "08:00" }],
+            },
+            drizzleAvailabilityStore,
+          ),
+        ).rejects.toThrow("La vigencia del Horario no puede ser retroactiva");
         await configureEffectiveSchedule(
           {
             clinicId: fixture.clinicId,
             doctorId: fixture.ownerDoctorId,
-            effectiveFrom: "2026-08-01",
+            effectiveFrom: "2030-08-01",
             identityId: fixture.ownerIdentityId,
             periods: [{ dayOfWeek: 1, endTime: "12:00", startTime: "08:00" }],
           },
@@ -267,15 +303,15 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             await transaction.insert(appointments).values({
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              endsAt: new Date("2026-08-10T15:00:00.000Z"),
-              startsAt: new Date("2026-08-10T14:00:00.000Z"),
+              endsAt: new Date("2030-08-05T15:00:00.000Z"),
+              startsAt: new Date("2030-08-05T14:00:00.000Z"),
             });
             await transaction.insert(temporaryReservations).values({
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              endsAt: new Date("2026-08-10T17:00:00.000Z"),
+              endsAt: new Date("2030-08-05T17:00:00.000Z"),
               expiresAt: new Date("2030-01-01T00:00:00.000Z"),
-              startsAt: new Date("2026-08-10T16:00:00.000Z"),
+              startsAt: new Date("2030-08-05T16:00:00.000Z"),
             });
           },
         );
@@ -285,7 +321,7 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             {
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              effectiveFrom: "2026-08-10",
+              effectiveFrom: "2030-08-05",
               identityId: fixture.ownerIdentityId,
               periods: [{ dayOfWeek: 1, endTime: "12:00", startTime: "09:00" }],
             },
@@ -304,7 +340,7 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             {
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              effectiveFrom: "2026-08-10",
+              effectiveFrom: "2030-08-05",
               identityId: fixture.ownerIdentityId,
               periods: [{ dayOfWeek: 1, endTime: "10:00", startTime: "08:00" }],
             },
@@ -323,9 +359,9 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             {
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              endsAt: new Date("2026-08-10T14:30:00.000Z"),
+              endsAt: new Date("2030-08-05T14:30:00.000Z"),
               identityId: fixture.ownerIdentityId,
-              startsAt: new Date("2026-08-10T13:30:00.000Z"),
+              startsAt: new Date("2030-08-05T13:30:00.000Z"),
             },
             drizzleAvailabilityStore,
           ),
@@ -335,21 +371,46 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             {
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              effectiveFrom: "2026-08-10",
+              effectiveFrom: "2030-08-05",
               identityId: fixture.ownerIdentityId,
               periods: [{ dayOfWeek: 1, endTime: "12:00", startTime: "08:00" }],
             },
             drizzleAvailabilityStore,
           ),
-        ).resolves.toMatchObject({ effectiveFrom: "2026-08-10" });
+        ).resolves.toMatchObject({ effectiveFrom: "2030-08-05" });
+        const futureSchedule = await configureEffectiveSchedule(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.ownerDoctorId,
+            effectiveFrom: "2031-08-10",
+            identityId: fixture.ownerIdentityId,
+            periods: [{ dayOfWeek: 1, endTime: "12:00", startTime: "08:00" }],
+          },
+          drizzleAvailabilityStore,
+        );
+        const replacedSchedule = await configureEffectiveSchedule(
+          {
+            clinicId: fixture.clinicId,
+            doctorId: fixture.ownerDoctorId,
+            effectiveFrom: "2031-08-10",
+            identityId: fixture.ownerIdentityId,
+            periods: [{ dayOfWeek: 1, endTime: "13:00", startTime: "08:00" }],
+          },
+          drizzleAvailabilityStore,
+        );
+        expect(replacedSchedule).toMatchObject({
+          effectiveFrom: "2031-08-10",
+          periods: [{ dayOfWeek: 1, endTime: "13:00", startTime: "08:00" }],
+        });
+        expect(replacedSchedule.id).not.toBe(futureSchedule.id);
         await expect(
           createAvailabilityBlock(
             {
               clinicId: fixture.clinicId,
               doctorId: fixture.ownerDoctorId,
-              endsAt: new Date("2026-08-11T16:00:00.000Z"),
+              endsAt: new Date("2030-08-06T16:00:00.000Z"),
               identityId: fixture.doctorIdentityId,
-              startsAt: new Date("2026-08-11T14:00:00.000Z"),
+              startsAt: new Date("2030-08-06T14:00:00.000Z"),
             },
             drizzleAvailabilityStore,
           ),
@@ -360,10 +421,10 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
             {
               clinicId: fixture.clinicId,
               doctorIds: [fixture.ownerDoctorId, fixture.otherDoctorId],
-              endsAt: new Date("2026-08-11T16:00:00.000Z"),
+              endsAt: new Date("2030-08-06T16:00:00.000Z"),
               identityId: fixture.ownerIdentityId,
               privateLabel: "Vacaciones",
-              startsAt: new Date("2026-08-11T14:00:00.000Z"),
+              startsAt: new Date("2030-08-06T14:00:00.000Z"),
             },
             drizzleAvailabilityStore,
           ),
@@ -425,6 +486,9 @@ describe("Horarios vigentes y Bloqueos persistentes", () => {
         ).toBe(true);
         expect(
           audit.some((event) => event.action === "effective-schedule-closed"),
+        ).toBe(true);
+        expect(
+          audit.some((event) => event.action === "effective-schedule-replaced"),
         ).toBe(true);
         expect(
           audit.filter(

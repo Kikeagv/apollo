@@ -70,6 +70,7 @@ describe("configurar Horarios vigentes", () => {
 describe("crear Bloqueos", () => {
   it("normaliza la etiqueta privada y conserva el intervalo local de la Clínica", async () => {
     const create = vi.fn().mockResolvedValue({
+      doctorId: "doctor-1",
       endsAt: new Date("2026-08-12T16:00:00.000Z"),
       id: "block-1",
       privateLabel: "Vacaciones",
@@ -123,12 +124,14 @@ describe("crear Bloqueos", () => {
   it("convierte un Bloqueo masivo en Bloqueos individuales", async () => {
     const createMany = vi.fn().mockResolvedValue([
       {
+        doctorId: "doctor-1",
         endsAt: new Date("2026-08-12T16:00:00.000Z"),
         id: "block-1",
         privateLabel: null,
         startsAt: new Date("2026-08-12T14:00:00.000Z"),
       },
       {
+        doctorId: "doctor-2",
         endsAt: new Date("2026-08-12T16:00:00.000Z"),
         id: "block-2",
         privateLabel: null,

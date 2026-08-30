@@ -28,6 +28,7 @@ describe("calcular Opciones de atención", () => {
           temporaryReservations: [],
         }),
       },
+      new Date("2026-08-01T00:00:00.000Z"),
     );
 
     expect(options).toEqual([
@@ -66,6 +67,7 @@ describe("calcular Opciones de atención", () => {
           temporaryReservations: [],
         }),
       },
+      new Date("2026-08-01T00:00:00.000Z"),
     );
 
     expect(options).toEqual([
@@ -126,6 +128,7 @@ describe("calcular Opciones de atención", () => {
           temporaryReservations: [],
         }),
       },
+      new Date("2026-08-01T00:00:00.000Z"),
     );
 
     expect(options.map((option) => option.startsAt.toISOString())).toEqual([
@@ -174,7 +177,7 @@ describe("calcular Opciones de atención", () => {
           ],
         }),
       },
-      new Date("2026-08-03T14:00:00.000Z"),
+      new Date("2026-08-03T13:59:00.000Z"),
     );
 
     expect(options.map((option) => option.startsAt.toISOString())).toEqual([
@@ -200,5 +203,44 @@ describe("calcular Opciones de atención", () => {
         { find: async () => undefined },
       ),
     ).resolves.toEqual([]);
+  });
+
+  it("no ofrece inicios que ya quedaron en el pasado", async () => {
+    const options = await calculateCareOptions(
+      {
+        clinicId: "clinic-1",
+        doctorId: "doctor-1",
+        from: "2026-08-03",
+        identityId: "owner-1",
+        serviceId: "service-1",
+        to: "2026-08-03",
+      },
+      {
+        find: async () => ({
+          appointments: [],
+          blocks: [],
+          offer: { bufferMinutes: 0, durationMinutes: 15 },
+          schedules: [
+            {
+              effectiveFrom: "2026-08-01",
+              effectiveUntil: null,
+              periods: [{ dayOfWeek: 1, endTime: "09:00", startTime: "08:00" }],
+            },
+          ],
+          temporaryReservations: [],
+        }),
+      },
+      new Date("2026-08-03T14:10:00.000Z"),
+    );
+
+    expect(options.map((option) => option.startsAt.toISOString())).toEqual([
+      "2026-08-03T14:15:00.000Z",
+      "2026-08-03T14:20:00.000Z",
+      "2026-08-03T14:25:00.000Z",
+      "2026-08-03T14:30:00.000Z",
+      "2026-08-03T14:35:00.000Z",
+      "2026-08-03T14:40:00.000Z",
+      "2026-08-03T14:45:00.000Z",
+    ]);
   });
 });

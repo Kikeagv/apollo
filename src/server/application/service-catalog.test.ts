@@ -5,6 +5,8 @@ import {
   createService,
   deactivateServiceOffer,
   type ServiceCatalogStore,
+  type ServiceCatalogUpdater,
+  updateService,
   updateServiceOffer,
 } from "./service-catalog";
 
@@ -228,5 +230,58 @@ describe("configurar el catálogo de Servicios", () => {
       priceUsd: "30.00",
       serviceId: "service-1",
     });
+  });
+
+  it("edita el nombre y la descripción pública de un Servicio", async () => {
+    const updateServicePersistence = vi.fn().mockResolvedValue({
+      description: "Seguimiento especializado",
+      id: "service-1",
+      name: "  Seguimiento especializado  ",
+      offers: [],
+    });
+    const store: ServiceCatalogUpdater = {
+      updateService: updateServicePersistence,
+    };
+
+    await expect(
+      updateService(
+        {
+          clinicId: "clinic-1",
+          description: "  Seguimiento especializado  ",
+          identityId: "owner-1",
+          name: "  Seguimiento   especializado  ",
+          serviceId: "service-1",
+        },
+        store,
+      ),
+    ).resolves.toMatchObject({ id: "service-1" });
+
+    expect(updateServicePersistence).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      description: "Seguimiento especializado",
+      identityId: "owner-1",
+      name: "Seguimiento especializado",
+      normalizedName: "seguimiento especializado",
+      serviceId: "service-1",
+    });
+  });
+
+  it("valida la edición pública antes de tocar persistencia", async () => {
+    const updateServicePersistence = vi.fn();
+
+    await expect(
+      updateService(
+        {
+          clinicId: "clinic-1",
+          description: "Descripción válida",
+          identityId: "owner-1",
+          name: "   ",
+          serviceId: "service-1",
+        },
+        { updateService: updateServicePersistence },
+      ),
+    ).rejects.toThrow("El nombre del Servicio es obligatorio");
+
+    expect(updateServicePersistence).not.toHaveBeenCalled();
   });
 });

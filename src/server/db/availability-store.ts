@@ -47,6 +47,9 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
   async replace(input) {
     return inClinicTransaction(input, async (transaction) => {
       if (!(await canManageDoctor(transaction, input))) return undefined;
+      if (input.effectiveFrom < localDate(new Date())) {
+        throw new Error("La vigencia del Horario no puede ser retroactiva");
+      }
       await lockDoctor(transaction, input.doctorId);
 
       const future = await transaction.query.effectiveSchedules.findFirst({
@@ -59,29 +62,125 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
         ),
       });
 
-      const current = await transaction.query.effectiveSchedules.findFirst({
+      const exact = await transaction.query.effectiveSchedules.findFirst({
         columns: {
           effectiveFrom: true,
           effectiveUntil: true,
           id: true,
+          timezone: true,
         },
-        orderBy: [desc(effectiveSchedules.effectiveFrom)],
         where: and(
           eq(effectiveSchedules.clinicId, input.clinicId),
           eq(effectiveSchedules.doctorId, input.doctorId),
-          lte(effectiveSchedules.effectiveFrom, input.effectiveFrom),
-          or(
-            isNull(effectiveSchedules.effectiveUntil),
-            gte(effectiveSchedules.effectiveUntil, input.effectiveFrom),
-          ),
+          eq(effectiveSchedules.effectiveFrom, input.effectiveFrom),
         ),
       });
+      const current =
+        exact === undefined
+          ? await transaction.query.effectiveSchedules.findFirst({
+              columns: {
+                effectiveFrom: true,
+                effectiveUntil: true,
+                id: true,
+              },
+              orderBy: [desc(effectiveSchedules.effectiveFrom)],
+              where: and(
+                eq(effectiveSchedules.clinicId, input.clinicId),
+                eq(effectiveSchedules.doctorId, input.doctorId),
+                lte(effectiveSchedules.effectiveFrom, input.effectiveFrom),
+                or(
+                  isNull(effectiveSchedules.effectiveUntil),
+                  gte(effectiveSchedules.effectiveUntil, input.effectiveFrom),
+                ),
+              ),
+            })
+          : undefined;
+      const previousPeriods =
+        exact === undefined
+          ? []
+          : await transaction.query.effectiveSchedulePeriods.findMany({
+              columns: { dayOfWeek: true, endTime: true, startTime: true },
+              where: and(
+                eq(effectiveSchedulePeriods.clinicId, input.clinicId),
+                eq(effectiveSchedulePeriods.scheduleId, exact.id),
+              ),
+            });
       const conflicts = await scheduleConflicts(transaction, {
         ...input,
         effectiveUntil:
           future === undefined ? null : previousLocalDate(future.effectiveFrom),
       });
       if (conflicts.length > 0) throw new CapacityConflictError(conflicts);
+
+      if (exact !== undefined) {
+        if (exact.effectiveFrom <= localDate(new Date())) {
+          throw new Error(
+            "El Horario ya vigente no se puede reescribir; use una fecha futura",
+          );
+        }
+        await transaction
+          .delete(effectiveSchedulePeriods)
+          .where(
+            and(
+              eq(effectiveSchedulePeriods.clinicId, input.clinicId),
+              eq(effectiveSchedulePeriods.scheduleId, exact.id),
+            ),
+          );
+        await transaction
+          .delete(effectiveSchedules)
+          .where(
+            and(
+              eq(effectiveSchedules.clinicId, input.clinicId),
+              eq(effectiveSchedules.id, exact.id),
+            ),
+          );
+        const [replacement] = await transaction
+          .insert(effectiveSchedules)
+          .values({
+            clinicId: input.clinicId,
+            doctorId: input.doctorId,
+            effectiveFrom: input.effectiveFrom,
+            effectiveUntil:
+              future === undefined
+                ? null
+                : previousLocalDate(future.effectiveFrom),
+            timezone: input.timezone,
+          })
+          .returning({
+            effectiveFrom: effectiveSchedules.effectiveFrom,
+            effectiveUntil: effectiveSchedules.effectiveUntil,
+            id: effectiveSchedules.id,
+          });
+        if (replacement === undefined) {
+          throw new Error("No se pudo reemplazar el Horario vigente");
+        }
+        await transaction.insert(effectiveSchedulePeriods).values(
+          input.periods.map((period) => ({
+            ...period,
+            clinicId: input.clinicId,
+            doctorId: input.doctorId,
+            scheduleId: replacement.id,
+          })),
+        );
+        await transaction.insert(configurationAuditEvents).values({
+          action: "effective-schedule-replaced",
+          actorIdentityId: input.identityId,
+          afterValues: scheduleAuditValues({
+            ...replacement,
+            periods: input.periods,
+          }),
+          beforeValues: scheduleAuditValues({
+            effectiveFrom: exact.effectiveFrom,
+            effectiveUntil: exact.effectiveUntil,
+            id: exact.id,
+            periods: previousPeriods,
+          }),
+          clinicId: input.clinicId,
+          entity: "effective-schedule",
+          entityId: replacement.id,
+        });
+        return { ...replacement, periods: input.periods };
+      }
 
       if (current !== undefined) {
         const effectiveUntil = previousLocalDate(input.effectiveFrom);
@@ -163,9 +262,19 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
       const eligible = await transaction
         .select({ id: doctors.id })
         .from(doctors)
+        .innerJoin(
+          clinicUsers,
+          and(
+            eq(doctors.clinicId, clinicUsers.clinicId),
+            eq(doctors.clinicUserId, clinicUsers.id),
+          ),
+        )
         .where(
           and(
             eq(doctors.clinicId, input.clinicId),
+            eq(doctors.active, true),
+            eq(clinicUsers.active, true),
+            inArray(clinicUsers.role, ["owner", "doctor"]),
             inArray(doctors.id, input.doctorIds),
           ),
         );
@@ -274,9 +383,26 @@ export async function listAvailabilityConfiguration(input: {
             eq(doctors.clinicUserId, membership.id),
           );
     const managedDoctors = await transaction
-      .select({ id: doctors.id, publicName: doctors.publicName })
+      .select({
+        active: doctors.active,
+        id: doctors.id,
+        publicName: doctors.publicName,
+      })
       .from(doctors)
-      .where(doctorWhere);
+      .innerJoin(
+        clinicUsers,
+        and(
+          eq(doctors.clinicId, clinicUsers.clinicId),
+          eq(doctors.clinicUserId, clinicUsers.id),
+        ),
+      )
+      .where(
+        and(
+          doctorWhere,
+          eq(clinicUsers.active, true),
+          inArray(clinicUsers.role, ["owner", "doctor"]),
+        ),
+      );
     const doctorIds = managedDoctors.map((doctor) => doctor.id);
     if (doctorIds.length === 0)
       return { blocks: [], doctors: [], schedules: [] };
@@ -305,6 +431,7 @@ export async function listAvailabilityConfiguration(input: {
     return {
       blocks,
       doctors: managedDoctors.map((doctor) => ({
+        active: doctor.active,
         id: doctor.id,
         publicName: doctor.publicName ?? "Médico sin nombre público",
       })),
@@ -336,6 +463,7 @@ async function insertBlock(
       startsAt: input.startsAt,
     })
     .returning({
+      doctorId: availabilityBlocks.doctorId,
       endsAt: availabilityBlocks.endsAt,
       id: availabilityBlocks.id,
       privateLabel: availabilityBlocks.privateLabel,
@@ -460,16 +588,37 @@ async function canManageDoctor(
     ),
   });
   if (member === undefined || member.role === "secretary") return false;
-  if (member.role === "owner") return true;
-  const doctor = await transaction.query.doctors.findFirst({
-    columns: { id: true },
-    where: and(
-      eq(doctors.clinicId, input.clinicId),
-      eq(doctors.clinicUserId, member.id),
-      eq(doctors.id, input.doctorId),
-    ),
-  });
-  return doctor !== undefined;
+  const doctorWhere =
+    member.role === "owner"
+      ? and(
+          eq(doctors.clinicId, input.clinicId),
+          eq(doctors.id, input.doctorId),
+        )
+      : and(
+          eq(doctors.clinicId, input.clinicId),
+          eq(doctors.clinicUserId, member.id),
+          eq(doctors.id, input.doctorId),
+        );
+  const doctor = await transaction
+    .select({ id: doctors.id })
+    .from(doctors)
+    .innerJoin(
+      clinicUsers,
+      and(
+        eq(doctors.clinicId, clinicUsers.clinicId),
+        eq(doctors.clinicUserId, clinicUsers.id),
+      ),
+    )
+    .where(
+      and(
+        doctorWhere,
+        eq(doctors.active, true),
+        eq(clinicUsers.active, true),
+        inArray(clinicUsers.role, ["owner", "doctor"]),
+      ),
+    )
+    .limit(1);
+  return doctor.length > 0;
 }
 
 async function isOwner(
@@ -567,6 +716,7 @@ function scheduleAuditValues(schedule: EffectiveSchedule) {
 
 function blockAuditValues(block: AvailabilityBlock) {
   return {
+    doctorId: block.doctorId,
     endsAt: block.endsAt.toISOString(),
     privateLabel: block.privateLabel,
     startsAt: block.startsAt.toISOString(),

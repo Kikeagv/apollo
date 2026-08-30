@@ -70,6 +70,7 @@ import type {
 import type { ContactPhoneMatch } from "~/server/application/administrative-records";
 import { joinPatientName } from "~/lib/patient-identity";
 import { api } from "~/trpc/react";
+import { AvailabilityBlockDialog } from "./availability-block-dialog";
 import { formValue } from "./form-values";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 import { RecordField } from "./record-field";
@@ -85,8 +86,17 @@ type ManualAppointmentRequest = {
   startsAt: Date;
 };
 
+type CalendarBlockSelection = {
+  endsAt: string;
+  startsAt: string;
+};
+
 /** Calendario operativo y alta de Citas manuales autorizadas por la Agenda. */
-export function ManualAppointmentsSection() {
+export function ManualAppointmentsSection({
+  canManageAvailability = false,
+}: {
+  canManageAvailability?: boolean;
+} = {}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const urlQuery = searchParams.toString();
@@ -103,6 +113,9 @@ export function ManualAppointmentsSection() {
   const [patientId, setPatientId] = useState("");
   const [appointmentDialogOpen, setAppointmentDialogOpen] = useState(false);
   const [appointmentStartsAt, setAppointmentStartsAt] = useState("");
+  const [calendarBlockSelection, setCalendarBlockSelection] =
+    useState<CalendarBlockSelection>();
+  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
   const [serviceOfferId, setServiceOfferId] = useState("");
   const [patientRegistrationOpen, setPatientRegistrationOpen] = useState(false);
   const [registrationPatientGivenNames, setRegistrationPatientGivenNames] =
@@ -164,6 +177,10 @@ export function ManualAppointmentsSection() {
   const cancelledAppointments =
     api.panacea.listCancelledManualAppointments.useQuery();
   const calendarDoctors = api.panacea.listPanaceaCalendarDoctors.useQuery();
+  const availabilityConfiguration =
+    api.panacea.listAvailabilityConfiguration.useQuery(undefined, {
+      enabled: canManageAvailability,
+    });
   const visibleDates = calendarDates(calendarDate, view);
   const calendarPeriod = calendarPeriodFor(calendarDate, view);
   const calendarAgenda = api.panacea.listPanaceaCalendar.useQuery({
@@ -211,6 +228,16 @@ export function ManualAppointmentsSection() {
     }
     return [...doctorsById.values()];
   }, [calendarAgenda.data, calendarDoctors.data, formData.data]);
+  const blockDoctors = useMemo(
+    () =>
+      (availabilityConfiguration.data?.doctors ?? [])
+        .filter((doctor) => doctor.active)
+        .map((doctor) => ({
+          id: doctor.id,
+          name: doctor.publicName,
+        })),
+    [availabilityConfiguration.data?.doctors],
+  );
   const calendarEntries = calendarAgenda.data ?? [];
   const selectedPatient = formData.data?.patients.find(
     (patient) => patient.id === patientId,
@@ -769,6 +796,36 @@ export function ManualAppointmentsSection() {
             <Plus aria-hidden="true" />
             Nueva Cita manual
           </Button>
+          {canManageAvailability && blockDoctors.length > 0 ? (
+            <AvailabilityBlockDialog
+              doctors={blockDoctors}
+              initialDoctorId={doctorId || undefined}
+              initialEndsAt={
+                calendarBlockSelection?.endsAt ?? `${calendarDate}T10:00`
+              }
+              initialStartsAt={
+                calendarBlockSelection?.startsAt ?? `${calendarDate}T09:00`
+              }
+              onOpenChange={setBlockDialogOpen}
+              onSuccess={() => {
+                setCalendarBlockSelection(undefined);
+                void calendarAgenda.refetch();
+              }}
+              open={blockDialogOpen}
+              triggerLabel={
+                calendarBlockSelection ? "Bloquear selección" : undefined
+              }
+            />
+          ) : null}
+          {canManageAvailability && availabilityConfiguration.error ? (
+            <div className="basis-full">
+              <PanaceaQueryError
+                error={availabilityConfiguration.error}
+                onRetry={() => void availabilityConfiguration.refetch()}
+                title="Bloqueos contextuales"
+              />
+            </div>
+          ) : null}
         </div>
 
         <div
@@ -842,7 +899,13 @@ export function ManualAppointmentsSection() {
               <CalendarTimeline
                 dates={visibleDates}
                 entries={calendarEntries}
-                onCreate={(startsAt) => openAppointmentDialog(startsAt)}
+                onCreate={(startsAt) => {
+                  setCalendarBlockSelection({
+                    endsAt: addClinicMinutes(startsAt, 30),
+                    startsAt,
+                  });
+                  openAppointmentDialog(startsAt);
+                }}
                 onSelect={(id) => updateCalendarUrl({ selectedId: id }, "push")}
                 showDoctor={doctorId === ""}
               />
@@ -1748,6 +1811,24 @@ function isCalendarBlock(
   entry: CalendarEntry | undefined,
 ): entry is CalendarBlock {
   return entry !== undefined && "privateLabel" in entry;
+}
+
+function addClinicMinutes(value: string, minutes: number) {
+  const shifted = new Date(
+    clinicDateTime(value).valueOf() + minutes * 60 * 1000,
+  );
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
+    month: "2-digit",
+    timeZone: CLINIC_TIMEZONE,
+    year: "numeric",
+  }).formatToParts(shifted);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
 }
 
 function clinicDateTime(value: string) {

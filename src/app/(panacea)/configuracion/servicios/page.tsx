@@ -1,3 +1,4 @@
+import { canAccessPanaceaConfigurationSection } from "~/domain/panacea-shell";
 import { PanaceaDestinationPage } from "~/app/panacea-destination-page";
 import { ServiceCatalogSection } from "~/app/service-catalog-section";
 
@@ -13,7 +14,11 @@ export default async function ServicesSettingsPage() {
       title="Servicios"
     >
       <ServiceCatalogSection
-        canCreateServices={context.clinic.role === "owner"}
+        canManageServices={context.clinic.role === "owner"}
+        canManageOffers={canAccessPanaceaConfigurationSection(
+          context.clinic.role,
+          "services",
+        )}
       />
     </PanaceaDestinationPage>
   );
