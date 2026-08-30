@@ -359,24 +359,34 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
     await expect(
       page.getByRole("status", { name: "Comprobando sesiones de soporte…" }),
     ).toHaveCount(0);
+    const header = page.locator('main[data-sidebar="inset"] > header');
+    const heading = page.getByRole("heading", {
+      level: 1,
+      name: "Calendario",
+    });
+    const profileAlert = page
+      .locator('[role="alert"]')
+      .filter({ hasText: "Su perfil de Médico está incompleto" });
+    await expect(profileAlert).toBeVisible();
     await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const header = document.querySelector(
-            'main[data-sidebar="inset"] > header',
-          );
-          const heading = document.querySelector(
-            'main[data-sidebar="inset"] h1',
-          );
-          if (header === null || heading === null) {
-            return Number.POSITIVE_INFINITY;
-          }
-          return (
-            heading.getBoundingClientRect().top -
-            header.getBoundingClientRect().bottom
-          );
-        }),
-      )
+      .poll(async () => {
+        const [headerBox, headingBox, profileAlertBox] = await Promise.all([
+          header.boundingBox(),
+          heading.boundingBox(),
+          profileAlert.boundingBox(),
+        ]);
+        if (
+          headerBox === null ||
+          headingBox === null ||
+          profileAlertBox === null
+        ) {
+          return Number.POSITIVE_INFINITY;
+        }
+        expect(headingBox.y).toBeGreaterThanOrEqual(
+          headerBox.y + headerBox.height,
+        );
+        return headingBox.y - (profileAlertBox.y + profileAlertBox.height);
+      })
       .toBeLessThan(40);
 
     const sidebar = page.locator('aside[data-sidebar="sidebar"]');

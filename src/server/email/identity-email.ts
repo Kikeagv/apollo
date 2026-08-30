@@ -1,5 +1,7 @@
 import "server-only";
 
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
+
 import { env } from "~/env";
 import { createResendIdentityEmailSender } from "~/server/email/resend-identity-email";
 import { simulatedIdentityEmailSender } from "~/server/email/simulated-identity-email";
@@ -32,10 +34,12 @@ export function assertIdentityEmailDeliveryAllowed(input: {
   }
 }
 
-assertIdentityEmailDeliveryAllowed({
-  delivery: env.IDENTITY_EMAIL_DELIVERY,
-  nodeEnv: env.NODE_ENV,
-});
+if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) {
+  assertIdentityEmailDeliveryAllowed({
+    delivery: env.IDENTITY_EMAIL_DELIVERY,
+    nodeEnv: env.NODE_ENV,
+  });
+}
 
 /**
  * Selección por configuración del adaptador de correo de Identidad. El modo
