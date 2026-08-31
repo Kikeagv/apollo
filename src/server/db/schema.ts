@@ -25,6 +25,7 @@ import type {
 } from "~/server/application/simulated-whatsapp-booking";
 import type { PendingPriority } from "~/domain/pending";
 import type { DemoRequestRateLimitScope } from "~/server/application/demo-request";
+import type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -32,7 +33,7 @@ export type ClinicUserRole = "owner" | "doctor" | "secretary";
 export type ClinicInvitationRole = "owner" | "doctor";
 export type AppointmentOrigin = "manual" | "reservation";
 export type AppointmentStatus = "confirmed" | "cancelled";
-export type NoShowPolicy = "alert" | "cancel-after-third-reminder";
+export type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
 export type SubscriptionStatus = "active" | "suspended";
 export const user = pgTable("user", {
   id: text("id").primaryKey(),

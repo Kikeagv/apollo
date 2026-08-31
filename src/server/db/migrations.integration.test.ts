@@ -127,6 +127,39 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
+          const whatsappPolicy = await migrated<
+            Array<{ command: "UPDATE"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_clinic'
+              and cmd = 'UPDATE'
+              and policyname = 'clinic_owner_updates_whatsapp_policies'
+          `;
+          expect(whatsappPolicy).toEqual([
+            {
+              command: "UPDATE",
+              name: "clinic_owner_updates_whatsapp_policies",
+            },
+          ]);
+          const whatsappUpdateColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.column_privileges
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_clinic'
+              and grantee = 'panacea_clinical_access'
+              and privilege_type = 'UPDATE'
+            order by column_name
+          `;
+          expect(whatsappUpdateColumns).toEqual([
+            { column_name: "escalation_notifications_enabled" },
+            { column_name: "escalation_secretary_phone_e164" },
+            { column_name: "no_show_policy" },
+            { column_name: "voice_transcription_enabled" },
+          ]);
         } finally {
           await migrated.end();
         }
@@ -256,6 +289,64 @@ describe("migraciones de PostgreSQL", () => {
           expect(secretaryMemberships).toEqual([
             { clinic_id: rlsClinicId, identity_id: rlsIdentities.secretary },
           ]);
+
+          const visibleClinics = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "owner",
+              clinicUserId: rlsMemberships.owner,
+              identityId: rlsIdentities.owner,
+            },
+            (transaction) =>
+              transaction<Array<{ id: string }>>`
+                select id
+                from "pg-drizzle_clinic"
+                order by id
+              `,
+          );
+          expect(visibleClinics).toEqual([{ id: rlsClinicId }]);
+
+          await expect(
+            withClinicContext(
+              restricted,
+              {
+                clinicId: rlsClinicId,
+                clinicRole: "owner",
+                clinicUserId: rlsMemberships.owner,
+                identityId: rlsIdentities.owner,
+              },
+              (transaction) =>
+                transaction`
+                  update "pg-drizzle_clinic"
+                  set
+                    no_show_policy = 'cancel-after-third-reminder',
+                    escalation_notifications_enabled = true,
+                    escalation_secretary_phone_e164 = '+50370000000',
+                    voice_transcription_enabled = true
+                  where id = ${rlsClinicId}
+                  returning id
+                `,
+            ),
+          ).resolves.toEqual([{ id: rlsClinicId }]);
+
+          await expect(
+            withClinicContext(
+              restricted,
+              {
+                clinicId: rlsClinicId,
+                clinicRole: "doctor",
+                clinicUserId: rlsMemberships.doctor,
+                identityId: rlsIdentities.doctor,
+              },
+              (transaction) =>
+                transaction`
+                  update "pg-drizzle_clinic"
+                  set no_show_policy = 'alert'
+                  where id = ${rlsClinicId}
+                `,
+            ),
+          ).resolves.toEqual([]);
 
           const ownerDoctors = await withClinicContext(
             restricted,
