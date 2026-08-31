@@ -1,3 +1,5 @@
+import { normalizeSecretaryPhoneE164 } from "~/domain/whatsapp-operational-policies";
+
 export type ConversationEscalationTrigger =
   | "human-request"
   | "frustration"
@@ -91,18 +93,18 @@ export async function setEscalationNotificationSettings(
   },
   store: EscalationNotificationSettingsStore,
 ) {
-  if (
-    input.enabled &&
-    (input.secretaryPhoneE164 === null ||
-      !/^\+[1-9]\d{1,14}$/.test(input.secretaryPhoneE164))
-  ) {
+  const secretaryPhoneE164 = normalizeSecretaryPhoneE164(
+    input.secretaryPhoneE164,
+  );
+  if (input.enabled && secretaryPhoneE164 === null) {
     throw new Error("El aviso requiere un número E.164 de secretaria");
   }
-  if (!(await store.setEscalationNotificationSettings(input))) {
+  const normalizedInput = { ...input, secretaryPhoneE164 };
+  if (!(await store.setEscalationNotificationSettings(normalizedInput))) {
     throw new EscalationNotificationSettingsAccessError();
   }
   return {
     enabled: input.enabled,
-    secretaryPhoneE164: input.secretaryPhoneE164,
+    secretaryPhoneE164,
   };
 }

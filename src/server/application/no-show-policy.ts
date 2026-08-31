@@ -1,4 +1,7 @@
-import type { NoShowPolicy } from "~/server/db/schema";
+import {
+  isNoShowPolicy,
+  type NoShowPolicy,
+} from "~/domain/whatsapp-operational-policies";
 
 export type NoShowPolicyStore = {
   getNoShowPolicy(input: {
@@ -36,6 +39,9 @@ export async function setNoShowPolicy(
   input: { clinicId: string; identityId: string; policy: NoShowPolicy },
   store: NoShowPolicyStore,
 ) {
+  if (!isNoShowPolicy(input.policy)) {
+    throw new Error("La política de inasistencia no es válida");
+  }
   if (!(await store.setNoShowPolicy(input)))
     throw new NoShowPolicyAccessError();
   return input.policy;

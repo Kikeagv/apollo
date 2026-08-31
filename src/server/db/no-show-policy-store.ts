@@ -3,6 +3,10 @@ import { and, eq } from "drizzle-orm";
 import type { NoShowPolicyStore } from "~/server/application/no-show-policy";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import { clinicUsers, clinics } from "~/server/db/schema";
+import {
+  lockWhatsAppOperationalPolicies,
+  recordWhatsAppOperationalPolicyAudit,
+} from "~/server/db/whatsapp-operational-policies-store";
 
 /** Persistencia de la Política de inasistencia exclusiva del Médico propietario. */
 export const drizzleNoShowPolicyStore: NoShowPolicyStore = {
@@ -39,12 +43,32 @@ export const drizzleNoShowPolicyStore: NoShowPolicyStore = {
         ),
       });
       if (owner === undefined) return false;
+      await lockWhatsAppOperationalPolicies(transaction, input.clinicId);
+      const currentClinic = await transaction.query.clinics.findFirst({
+        columns: { id: true, noShowPolicy: true },
+        where: eq(clinics.id, input.clinicId),
+      });
+      if (currentClinic === undefined) return false;
+      if (currentClinic.noShowPolicy === input.policy) return true;
       const [clinic] = await transaction
         .update(clinics)
         .set({ noShowPolicy: input.policy })
-        .where(eq(clinics.id, input.clinicId))
+        .where(
+          and(
+            eq(clinics.id, input.clinicId),
+            eq(clinics.noShowPolicy, currentClinic.noShowPolicy),
+          ),
+        )
         .returning({ id: clinics.id });
-      return clinic !== undefined;
+      if (clinic === undefined) return false;
+      await recordWhatsAppOperationalPolicyAudit(transaction, {
+        action: "whatsapp-no-show-policy-updated",
+        actorIdentityId: input.identityId,
+        afterValues: { noShowPolicy: input.policy },
+        beforeValues: { noShowPolicy: currentClinic.noShowPolicy },
+        clinicId: input.clinicId,
+      });
+      return true;
     });
   },
 };

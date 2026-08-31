@@ -144,10 +144,7 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await expect(
       configurationIndex.getByText("Requiere atención", { exact: true }),
     ).toBeVisible();
-    await expectNoAccessibilityViolations(
-      page,
-      '[data-settings-index="true"]',
-    );
+    await expectNoAccessibilityViolations(page, '[data-settings-index="true"]');
     const teamLink = configurationIndex.getByRole("link", {
       name: "Abrir Equipo",
       exact: true,
@@ -195,6 +192,95 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await expect(
       page.getByText("La acción clínica sintética quedó registrada."),
     ).toBeVisible();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("el propietario configura las políticas operativas de WhatsApp", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    await goToPanaceaRoute(page, "/configuracion/whatsapp");
+
+    await expect(
+      page.getByRole("heading", {
+        level: 1,
+        name: "Atención por WhatsApp",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.locator('[data-whatsapp-activation-boundary="true"]'),
+    ).toContainText("no activan WhatsApp real");
+
+    const noShow = page.locator('[data-whatsapp-policy="no-show"]');
+    const noShowSelect = noShow.locator('select[name="no-show-policy"]');
+    await expect(noShowSelect).toHaveValue("alert");
+    await noShow.getByRole("button", { name: "Guardar política" }).click();
+    await expect(noShow.getByText("Configuración guardada")).toBeVisible();
+
+    const escalation = page.locator(
+      '[data-whatsapp-policy="escalation-notifications"]',
+    );
+    const secretaryPhone = escalation.locator('input[name="secretary-phone"]');
+    await secretaryPhone.fill("503-7000-0000");
+    await expect(
+      escalation.locator("#secretary-phone-description"),
+    ).toContainText(
+      "Valor actual: sin número de secretaria. Use formato E.164, por ejemplo +50370000000.",
+    );
+    await escalation.getByRole("button", { name: "Guardar avisos" }).click();
+    await expect(
+      escalation.getByText("El número de secretaria debe usar formato E.164", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await secretaryPhone.fill("+50370000000");
+    await escalation.getByRole("switch").click();
+    await expect(
+      escalation.getByText(
+        /Valor actual: Desactivado.*Cambio pendiente: Activado/,
+      ),
+    ).toBeVisible();
+    await escalation.getByRole("button", { name: "Guardar avisos" }).click();
+    await expect(escalation.getByText("Configuración guardada")).toBeVisible();
+
+    const voice = page.locator('[data-whatsapp-policy="voice-transcription"]');
+    const voiceSwitch = voice.getByRole("switch");
+    await expect(voiceSwitch).toHaveClass(/motion-reduce:transition-none/);
+    await voiceSwitch.focus();
+    await expect(voiceSwitch).toBeFocused();
+    await voiceSwitch.press("Space");
+    await expect(
+      voice.getByText(/Valor actual: Desactivado.*Cambio pendiente: Activado/),
+    ).toBeVisible();
+    let failVoiceSave = true;
+    await page.route(
+      "**/api/trpc/panacea.setVoiceTranscriptionSettings*",
+      async (route) => {
+        if (failVoiceSave) {
+          failVoiceSave = false;
+          await route.abort("failed");
+          return;
+        }
+        await route.continue();
+      },
+    );
+    await voice.getByRole("button", { name: "Guardar transcripción" }).click();
+    await expect(
+      voice.getByText("No se pudo guardar la configuración"),
+    ).toBeVisible();
+    await voice.getByRole("button", { name: "Reintentar guardado" }).click();
+    await expect(voice.getByText("Configuración guardada")).toBeVisible();
+    await expect(voice.getByText(/Valor actual: Activado/)).toBeVisible();
+    await expectNoAccessibilityViolations(page, "[data-sidebar=inset]");
   } finally {
     await fixture.cleanup();
   }

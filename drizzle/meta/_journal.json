@@ -365,6 +365,13 @@
       "when": 1788110000000,
       "tag": "0052_apo63_services_availability",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1788192000000,
+      "tag": "0053_apo64_whatsapp_operational_policies",
+      "breakpoints": true
     }
   ]
 }

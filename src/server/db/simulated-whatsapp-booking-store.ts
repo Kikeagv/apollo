@@ -50,6 +50,10 @@ import {
   temporaryReservations,
   whatsappConversations,
 } from "~/server/db/schema";
+import {
+  lockWhatsAppOperationalPolicies,
+  recordWhatsAppOperationalPolicyAudit,
+} from "~/server/db/whatsapp-operational-policies-store";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -715,15 +719,60 @@ export const drizzleEscalationNotificationSettingsStore: EscalationNotificationS
     async setEscalationNotificationSettings(input) {
       return inClinicTransaction(input, async (transaction) => {
         if (!(await hasActiveClinicOwner(transaction, input))) return false;
+        await lockWhatsAppOperationalPolicies(transaction, input.clinicId);
+        const currentClinic = await transaction.query.clinics.findFirst({
+          columns: {
+            escalationNotificationsEnabled: true,
+            escalationSecretaryPhoneE164: true,
+            id: true,
+          },
+          where: eq(clinics.id, input.clinicId),
+        });
+        if (currentClinic === undefined) return false;
+        if (
+          currentClinic.escalationNotificationsEnabled === input.enabled &&
+          currentClinic.escalationSecretaryPhoneE164 ===
+            input.secretaryPhoneE164
+        ) {
+          return true;
+        }
         const [clinic] = await transaction
           .update(clinics)
           .set({
             escalationNotificationsEnabled: input.enabled,
             escalationSecretaryPhoneE164: input.secretaryPhoneE164,
           })
-          .where(eq(clinics.id, input.clinicId))
+          .where(
+            and(
+              eq(clinics.id, input.clinicId),
+              eq(
+                clinics.escalationNotificationsEnabled,
+                currentClinic.escalationNotificationsEnabled,
+              ),
+              currentClinic.escalationSecretaryPhoneE164 === null
+                ? isNull(clinics.escalationSecretaryPhoneE164)
+                : eq(
+                    clinics.escalationSecretaryPhoneE164,
+                    currentClinic.escalationSecretaryPhoneE164,
+                  ),
+            ),
+          )
           .returning({ id: clinics.id });
-        return clinic !== undefined;
+        if (clinic === undefined) return false;
+        await recordWhatsAppOperationalPolicyAudit(transaction, {
+          action: "whatsapp-escalation-notifications-updated",
+          actorIdentityId: input.identityId,
+          afterValues: {
+            enabled: String(input.enabled),
+            secretaryPhoneE164: input.secretaryPhoneE164,
+          },
+          beforeValues: {
+            enabled: String(currentClinic.escalationNotificationsEnabled),
+            secretaryPhoneE164: currentClinic.escalationSecretaryPhoneE164,
+          },
+          clinicId: input.clinicId,
+        });
+        return true;
       });
     },
   };
@@ -746,12 +795,38 @@ export const drizzleVoiceTranscriptionSettingsStore: VoiceTranscriptionSettingsS
     async setVoiceTranscriptionSettings(input) {
       return inClinicTransaction(input, async (transaction) => {
         if (!(await hasActiveClinicOwner(transaction, input))) return false;
+        await lockWhatsAppOperationalPolicies(transaction, input.clinicId);
+        const currentClinic = await transaction.query.clinics.findFirst({
+          columns: { id: true, voiceTranscriptionEnabled: true },
+          where: eq(clinics.id, input.clinicId),
+        });
+        if (currentClinic === undefined) return false;
+        if (currentClinic.voiceTranscriptionEnabled === input.enabled)
+          return true;
         const [clinic] = await transaction
           .update(clinics)
           .set({ voiceTranscriptionEnabled: input.enabled })
-          .where(eq(clinics.id, input.clinicId))
+          .where(
+            and(
+              eq(clinics.id, input.clinicId),
+              eq(
+                clinics.voiceTranscriptionEnabled,
+                currentClinic.voiceTranscriptionEnabled,
+              ),
+            ),
+          )
           .returning({ id: clinics.id });
-        return clinic !== undefined;
+        if (clinic === undefined) return false;
+        await recordWhatsAppOperationalPolicyAudit(transaction, {
+          action: "whatsapp-voice-transcription-updated",
+          actorIdentityId: input.identityId,
+          afterValues: { enabled: String(input.enabled) },
+          beforeValues: {
+            enabled: String(currentClinic.voiceTranscriptionEnabled),
+          },
+          clinicId: input.clinicId,
+        });
+        return true;
       });
     },
   };

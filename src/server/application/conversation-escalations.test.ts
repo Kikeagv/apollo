@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  EscalationNotificationSettingsAccessError,
+  getEscalationNotificationSettings,
   listConversationEscalations,
   resolveConversationEscalation,
+  setEscalationNotificationSettings,
 } from "./conversation-escalations";
 
 describe("Escalamientos humanos", () => {
@@ -45,5 +48,93 @@ describe("Escalamientos humanos", () => {
       ),
     ).resolves.toBe(true);
     expect(calls).toEqual(["list", "resolve"]);
+  });
+});
+
+describe("avisos de Escalamiento", () => {
+  it("normaliza el teléfono y guarda la configuración del propietario", async () => {
+    let settings = {
+      enabled: false,
+      secretaryPhoneE164: null as string | null,
+    };
+    const store = {
+      async getEscalationNotificationSettings() {
+        return settings;
+      },
+      async setEscalationNotificationSettings(input: typeof settings) {
+        settings = input;
+        return true;
+      },
+    };
+
+    await expect(
+      getEscalationNotificationSettings(
+        { clinicId: "clinic-1", identityId: "owner-1" },
+        store,
+      ),
+    ).resolves.toEqual({ enabled: false, secretaryPhoneE164: null });
+    await expect(
+      setEscalationNotificationSettings(
+        {
+          clinicId: "clinic-1",
+          enabled: true,
+          identityId: "owner-1",
+          secretaryPhoneE164: " +50370000000 ",
+        },
+        store,
+      ),
+    ).resolves.toEqual({
+      enabled: true,
+      secretaryPhoneE164: "+50370000000",
+    });
+  });
+
+  it("valida el teléfono antes de habilitar el aviso", async () => {
+    const setSettings = vi.fn(async () => true);
+    const store = {
+      getEscalationNotificationSettings: async () => ({
+        enabled: false,
+        secretaryPhoneE164: null,
+      }),
+      setEscalationNotificationSettings: setSettings,
+    };
+
+    await expect(
+      setEscalationNotificationSettings(
+        {
+          clinicId: "clinic-1",
+          enabled: true,
+          identityId: "owner-1",
+          secretaryPhoneE164: null,
+        },
+        store,
+      ),
+    ).rejects.toThrow("El aviso requiere un número E.164 de secretaria");
+    expect(setSettings).not.toHaveBeenCalled();
+  });
+
+  it("rechaza la configuración cuando la identidad no es propietaria", async () => {
+    const store = {
+      getEscalationNotificationSettings: async () => undefined,
+      setEscalationNotificationSettings: async () => false,
+    };
+
+    await expect(
+      getEscalationNotificationSettings(
+        { clinicId: "clinic-1", identityId: "doctor-1" },
+        store,
+      ),
+    ).rejects.toBeInstanceOf(EscalationNotificationSettingsAccessError);
+    await expect(
+      setEscalationNotificationSettings(
+        {
+          clinicId: "clinic-1",
+          enabled: false,
+          identityId: "secretary-1",
+          secretaryPhoneE164: null,
+        },
+        store,
+      ),
+    ).rejects.toBeInstanceOf(EscalationNotificationSettingsAccessError);
   });
 });
