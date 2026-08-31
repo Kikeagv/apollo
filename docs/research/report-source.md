@@ -379,6 +379,8 @@ Criterio responsive aprobado: en móvil la ilustración puede recortarse o pasar
 
 Contenido aprobado para la home: añadir una FAQ visible de 4–6 preguntas sobre automatización, control del equipo, límites del asistente, público objetivo, atención por WhatsApp y el proceso posterior a la demo. Será contenido útil de la página, no una promesa de resultado enriquecido mediante `FAQPage`.
 
+Arquitectura de navegación aprobada: `Producto`, `Cómo funciona` y `Para clínicas` apuntarán a secciones internas rastreables; `Iniciar sesión` llevará a `app.usepraxia.com`; “Solicitar una demo” llevará a `/demo`; y el footer enlazará privacidad y términos.
+
 Preguntas de investigación a resolver con clientes y Search Console:
 
 - ¿Los compradores dicen “agenda médica”, “agenda de citas”, “gestión de clínicas” u otra variante?
