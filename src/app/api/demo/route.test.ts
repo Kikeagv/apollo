@@ -42,6 +42,7 @@ describe("adaptador HTTP de Solicitud de demo", () => {
       formRequest({
         clinicName: "Clínica Aurora",
         email: "ana@example.test",
+        privacyConsent: "accepted",
         representativeName: "Ana Reyes",
         role: "owner",
         turnstileToken: "turnstile-token",
@@ -65,6 +66,7 @@ describe("adaptador HTTP de Solicitud de demo", () => {
       formRequest({
         clinicName: "Clínica Aurora",
         email: "ana@example.test",
+        privacyConsent: "accepted",
         representativeName: "Ana Reyes",
         role: "owner",
         turnstileToken: "turnstile-token",
@@ -91,6 +93,7 @@ describe("adaptador HTTP de Solicitud de demo", () => {
       {
         clinicName: "Clínica Aurora",
         email: "ana@example.test",
+        privacyConsent: "accepted",
         representativeName: "Ana Reyes",
         role: "secretary",
         turnstileToken: "turnstile-token",

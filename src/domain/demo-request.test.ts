@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { demoRequestFormSchema, toDemoRequest } from "./demo-request";
+import {
+  DEMO_PRIVACY_NOTICE_VERSION,
+  demoRequestFormSchema,
+  toDemoRequest,
+} from "./demo-request";
 
 describe("contrato de Solicitud de demo", () => {
   it("normaliza el contacto y separa atribución de datos de entrega", () => {
@@ -10,6 +14,7 @@ describe("contrato de Solicitud de demo", () => {
       email: " ANA@EXAMPLE.TEST ",
       landingPage: "/demo",
       phone: "+503 7000-0000",
+      privacyConsent: "accepted",
       representativeName: " Ana Reyes ",
       role: "owner",
       turnstileToken: "turnstile-token",
@@ -17,7 +22,9 @@ describe("contrato de Solicitud de demo", () => {
       website: "",
     });
 
-    expect(toDemoRequest(parsed)).toEqual({
+    const acceptedAt = new Date("2026-08-31T20:00:00.000Z");
+
+    expect(toDemoRequest(parsed, acceptedAt)).toEqual({
       request: {
         attribution: {
           landingPage: "/demo",
@@ -27,6 +34,10 @@ describe("contrato de Solicitud de demo", () => {
         context: "agenda",
         email: "ana@example.test",
         preferredContact: "email",
+        privacyConsent: {
+          acceptedAt,
+          noticeVersion: DEMO_PRIVACY_NOTICE_VERSION,
+        },
         representativeName: "Ana Reyes",
         role: "owner",
       },
@@ -60,5 +71,30 @@ describe("contrato de Solicitud de demo", () => {
         website: "",
       }).success,
     ).toBe(false);
+  });
+
+  it("exige una aceptación explícita del aviso de privacidad", () => {
+    const baseInput = {
+      clinicName: "Clínica Aurora",
+      email: "ana@example.test",
+      representativeName: "Ana Reyes",
+      role: "owner",
+      turnstileToken: "turnstile-token",
+      website: "",
+    } as const;
+
+    expect(demoRequestFormSchema.safeParse(baseInput).success).toBe(false);
+    expect(
+      demoRequestFormSchema.safeParse({
+        ...baseInput,
+        privacyConsent: "not-accepted",
+      }).success,
+    ).toBe(false);
+    expect(
+      demoRequestFormSchema.safeParse({
+        ...baseInput,
+        privacyConsent: "accepted",
+      }).success,
+    ).toBe(true);
   });
 });

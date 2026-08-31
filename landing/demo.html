@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Solicita una demo de Praxia para revisar la operación de tu clínica."
+      content="Solicita una demo de Praxia para revisar la operación administrativa de tu Clínica, sin compartir datos de Pacientes."
     />
     <meta name="theme-color" content="#fbfdff" />
     <link
@@ -52,8 +52,9 @@
       <section class="demo-intro" aria-labelledby="demo-title">
         <h1 id="demo-title">Conversemos sobre la operación de tu clínica.</h1>
         <p>
-          Cuéntanos quién eres y qué te gustaría revisar. El equipo comercial
-          conocerá tu contexto antes de responderte.
+          Cuéntanos quién eres y qué te gustaría revisar. El equipo de Praxia
+          conocerá tu contexto antes de responderte. No compartas aquí datos de
+          Pacientes, información de salud, DUI ni documentos de tutela.
         </p>
         <ul class="demo-points">
           <li>Agenda y capacidad de atención en un solo flujo.</li>
@@ -133,13 +134,14 @@
                 aria-describedby="phone-help"
               />
               <small id="phone-help"
-                >Solo lo usaremos si eliges WhatsApp.</small
+                >Lo usaremos para contactarte por WhatsApp si eliges ese canal;
+                no para mensajes promocionales.</small
               >
             </div>
 
             <div class="demo-field">
               <label for="preferred-contact"
-                >¿Por dónde prefieres que te contactemos?</label
+                >¿Por qué canal prefieres que te contactemos?</label
               >
               <select id="preferred-contact" name="preferredContact">
                 <option value="email" selected>Correo electrónico</option>
@@ -196,11 +198,29 @@
           <input name="referrer" type="hidden" value="" />
 
           <p class="demo-privacy">
-            Al enviar esta solicitud aceptas que tratemos estos datos para
-            responderte sobre Praxia. No pedimos datos de pacientes ni
-            información clínica. Consulta el
-            <a href="/privacidad">Aviso de privacidad</a>.
+            Para recibir y responderte sobre Praxia, K31 SOFTWARE tratará tu
+            nombre, el nombre de tu Clínica, tu rol, correo electrónico, teléfono
+            o WhatsApp opcional si eliges ese canal, canal preferido, tema y
+            datos técnicos de atribución. No envíes datos de Pacientes,
+            información de salud, DUI ni documentos de tutela. Esta solicitud no
+            crea una cuenta, una Cita ni un registro de Paciente.
           </p>
+          <div class="demo-consent">
+            <input
+              id="privacy-consent"
+              name="privacyConsent"
+              type="checkbox"
+              value="accepted"
+              required
+              aria-required="true"
+            />
+            <label for="privacy-consent">
+              He leído el
+              <a href="/privacidad">Aviso de privacidad</a> y autorizo a K31
+              SOFTWARE a tratar mis datos personales para recibir y responder
+              esta Solicitud de demo. *
+            </label>
+          </div>
           <button class="button" type="submit">Enviar solicitud</button>
           <noscript>
             <p class="demo-noscript">

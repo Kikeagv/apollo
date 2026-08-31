@@ -34,6 +34,10 @@ const request: DemoRequest = {
   context: "agenda",
   email: "ana@example.test",
   phone: "+50370000000",
+  privacyConsent: {
+    acceptedAt: new Date("2026-08-31T20:00:00.000Z"),
+    noticeVersion: "1.0",
+  },
   preferredContact: "whatsapp",
   representativeName: "Ana Reyes",
   role: "owner",
@@ -71,6 +75,8 @@ describe("adaptador Resend de Solicitud de demo", () => {
     expect(body.text).toContain("Clínica Aurora");
     expect(body.text).toContain("Agenda y capacidad de atención");
     expect(body.text).toContain("google");
+    expect(body.text).toContain("Aviso aceptado: versión 1.0");
+    expect(body.text).toContain("Aceptado en servidor: 2026-08-31T20:00:00.000Z");
     expect(body.text).not.toContain("turnstile-token");
     expect(body.text).not.toContain("203.0.113.9");
   });

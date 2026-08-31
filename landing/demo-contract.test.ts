@@ -23,6 +23,10 @@ describe("contrato público de Solicitud de demo", () => {
     expect(demo).toContain('name="website"');
     expect(demo).toContain('name="context"');
     expect(demo).toContain('value="agenda"');
+    expect(demo).toMatch(
+      /<input\b[^>]*id="privacy-consent"[^>]*name="privacyConsent"[^>]*type="checkbox"[^>]*required/s,
+    );
+    expect(demo).toContain("He leído el");
     expect(demo).toContain('href="/privacidad"');
     expect(demo).toContain("<noscript>");
 

@@ -15,6 +15,13 @@ export const DEMO_REQUEST_CONTEXTS = [
 ] as const;
 export type DemoRequestContext = (typeof DEMO_REQUEST_CONTEXTS)[number];
 
+export const DEMO_PRIVACY_NOTICE_VERSION = "1.0";
+
+export type DemoRequestPrivacyConsent = {
+  acceptedAt: Date;
+  noticeVersion: string;
+};
+
 export type DemoRequestAttribution = {
   landingPage?: string;
   referrer?: string;
@@ -29,6 +36,7 @@ export type DemoRequest = {
   context?: DemoRequestContext;
   email: string;
   phone?: string;
+  privacyConsent: DemoRequestPrivacyConsent;
   preferredContact: DemoRequestContactChannel;
   representativeName: string;
   role: DemoRequestRole;
@@ -84,6 +92,7 @@ export const demoRequestFormSchema = z
       .transform((value) => value.toLowerCase()),
     landingPage: optionalAttribution(2_048),
     phone,
+    privacyConsent: z.literal("accepted"),
     preferredContact: z.enum(DEMO_REQUEST_CONTACT_CHANNELS).default("email"),
     referrer: optionalAttribution(2_048),
     representativeName: z.string().trim().min(2).max(120),
@@ -108,7 +117,10 @@ export const demoRequestFormSchema = z
 export type DemoRequestForm = z.input<typeof demoRequestFormSchema>;
 export type ParsedDemoRequestForm = z.output<typeof demoRequestFormSchema>;
 
-export function toDemoRequest(form: ParsedDemoRequestForm): {
+export function toDemoRequest(
+  form: ParsedDemoRequestForm,
+  acceptedAt = new Date(),
+): {
   request: DemoRequest;
   turnstileToken: string;
   website: string;
@@ -128,6 +140,10 @@ export function toDemoRequest(form: ParsedDemoRequestForm): {
   return {
     request: {
       ...requestFields,
+      privacyConsent: {
+        acceptedAt,
+        noticeVersion: DEMO_PRIVACY_NOTICE_VERSION,
+      },
       ...(form.preferredContact === "whatsapp" && phone !== undefined
         ? { phone }
         : {}),
