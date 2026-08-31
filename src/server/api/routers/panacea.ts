@@ -190,24 +190,6 @@ export const panaceaRouter = {
       ),
     ),
 
-  resolvePendingCase: clinicProcedure
-    .input(
-      z.object({
-        category: z.enum(["conversation", "appointment", "delivery"]),
-        id: z.string().uuid(),
-      }),
-    )
-    .mutation(({ ctx, input }) =>
-      resolvePendingCase(
-        {
-          ...input,
-          clinicId: ctx.clinic.clinicId,
-          identityId: ctx.clinic.identityId,
-        },
-        drizzlePendingResolver,
-      ),
-    ),
-
   getConfigurationOverview: clinicProcedure.query(async ({ ctx }) => {
     const overview = await getPanaceaConfigurationOverview(
       {
@@ -228,6 +210,24 @@ export const panaceaRouter = {
       drizzlePanaceaTeamReader,
     ),
   ),
+
+  resolvePendingCase: clinicProcedure
+    .input(
+      z.object({
+        category: z.enum(["conversation", "appointment", "delivery"]),
+        id: z.string().uuid(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      resolvePendingCase(
+        {
+          ...input,
+          clinicId: ctx.clinic.clinicId,
+          identityId: ctx.clinic.identityId,
+        },
+        drizzlePendingResolver,
+      ),
+    ),
 
   listTransactionalDeliveryAlerts: clinicProcedure.query(({ ctx }) =>
     listTransactionalDeliveryAlerts({
