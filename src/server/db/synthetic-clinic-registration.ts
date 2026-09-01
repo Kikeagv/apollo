@@ -4,6 +4,7 @@ import { type SyntheticClinicRegistration } from "~/server/application/create-sy
 import { inSuperadminTransaction } from "~/server/db/clinic-context";
 import { hashClinicInvitationToken } from "~/server/db/clinic-invitation-token";
 import {
+  clinicReadiness,
   clinics,
   clinicInvitations,
   identityAuditEvents,
@@ -28,6 +29,9 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
         await transaction.execute(
           sql`select set_config('app.subscription_status', 'active', true)`,
         );
+        await transaction.insert(clinicReadiness).values({
+          clinicId: createdClinic.id,
+        });
         await transaction.insert(clinicInvitations).values({
           clinicId: createdClinic.id,
           email: input.invitation.ownerEmail,

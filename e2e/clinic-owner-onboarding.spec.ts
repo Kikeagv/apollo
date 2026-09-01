@@ -197,6 +197,79 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
   }
 });
 
+test("el propietario retoma la configuración y declara la primera ruta para Asclepio", async ({
+  page,
+}) => {
+  const fixture = await createFixture();
+  const careDate = nextClinicMonday();
+
+  try {
+    await activateAndOpenPanacea(
+      page,
+      fixture.invitationToken,
+      fixture.ownerEmail,
+    );
+    await goToPanaceaRoute(page, "/configuracion/inicial");
+
+    const wizard = page.locator('[data-clinic-setup-wizard="true"]');
+    await expect(
+      wizard.getByRole("heading", {
+        name: "Prepare la primera ruta de atención",
+      }),
+    ).toBeVisible();
+    await expect(wizard.getByText("Configuración pendiente")).toBeVisible();
+    await expect(
+      wizard.getByRole("button", {
+        name: "Declarar lista para Asclepio",
+        exact: true,
+      }),
+    ).not.toBeVisible();
+
+    await configureCalendarScenario({
+      careDate,
+      doctorName: "Dra. APO-65",
+      page,
+      serviceDescription: "Consulta para validar la ruta inicial",
+      serviceName: "Consulta APO-65",
+    });
+    await goToPanaceaRoute(page, "/configuracion/inicial?step=review");
+
+    await expect(
+      wizard.getByText("Primera ruta válida", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      wizard.getByText("Dra. APO-65 · Consulta APO-65"),
+    ).toBeVisible();
+    const declaration = wizard.getByRole("button", {
+      name: "Declarar lista para Asclepio",
+      exact: true,
+    });
+    await declaration.focus();
+    await expect(declaration).toBeFocused();
+    await declaration.click();
+
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("button", { name: "Volver", exact: true }),
+    ).toBeFocused();
+    await dialog
+      .getByRole("button", { name: "Declarar lista", exact: true })
+      .click();
+    await expect(wizard.getByText("Asclepio está habilitado")).toBeVisible();
+    await expectNoAccessibilityViolations(
+      page,
+      '[data-clinic-setup-wizard="true"]',
+    );
+
+    await page.setViewportSize({ height: 844, width: 390 });
+    await expect(wizard.getByRole("navigation")).toBeVisible();
+    await expect(declaration).not.toBeVisible();
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("el propietario configura las políticas operativas de WhatsApp", async ({
   page,
 }) => {

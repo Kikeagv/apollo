@@ -26,6 +26,7 @@ import {
 import type { CareOptionsStore } from "~/server/application/care-options";
 import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import { inClinicTransaction } from "~/server/db/clinic-context";
+import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
 import type { db } from "~/server/db";
 import {
   appointments,
@@ -179,6 +180,10 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
           entity: "effective-schedule",
           entityId: replacement.id,
         });
+        await recalculateClinicReadiness(transaction, {
+          actorIdentityId: input.identityId,
+          clinicId: input.clinicId,
+        });
         return { ...replacement, periods: input.periods };
       }
 
@@ -242,6 +247,10 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
         entity: "effective-schedule",
         entityId: schedule.id,
       });
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
+      });
       return { ...schedule, periods: input.periods };
     });
   },
@@ -252,7 +261,12 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
       await lockDoctor(transaction, input.doctorId);
       const conflicts = await intervalConflicts(transaction, input);
       if (conflicts.length > 0) throw new CapacityConflictError(conflicts);
-      return insertBlock(transaction, input);
+      const block = await insertBlock(transaction, input);
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
+      });
+      return block;
     });
   },
 
@@ -289,11 +303,16 @@ export const drizzleAvailabilityStore: EffectiveScheduleReplacer &
         )
       ).flat();
       if (conflicts.length > 0) throw new CapacityConflictError(conflicts);
-      return Promise.all(
+      const blocks = await Promise.all(
         input.doctorIds.map((doctorId) =>
           insertBlock(transaction, { ...input, doctorId }),
         ),
       );
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
+      });
+      return blocks;
     });
   },
 };

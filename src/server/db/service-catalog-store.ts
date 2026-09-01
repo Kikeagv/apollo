@@ -11,6 +11,7 @@ import {
 } from "~/server/application/service-catalog";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import { capacityConflictsForDoctor } from "~/server/db/doctor-occupancy-store";
+import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
 import {
   clinicUsers,
   configurationAuditEvents,
@@ -120,6 +121,10 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
           entityId: offer.id,
         })),
       ]);
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
+      });
 
       return { ...service, offers: createdOffers };
     });
@@ -263,6 +268,10 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
         entity: "service-offer",
         entityId: offer.id,
       });
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
+      });
       return offer;
     });
   },
@@ -321,6 +330,10 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
         clinicId: input.clinicId,
         entity: "service-offer",
         entityId: updated.id,
+      });
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
       });
       return updated;
     });
@@ -405,6 +418,10 @@ export const drizzleServiceCatalogStore: ServiceCatalogStore &
         clinicId: input.clinicId,
         entity: "service-offer",
         entityId: deactivated.id,
+      });
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
       });
       return deactivated as ServiceOffer & { active: false };
     });

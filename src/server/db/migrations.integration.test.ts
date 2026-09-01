@@ -157,9 +157,35 @@ describe("migraciones de PostgreSQL", () => {
           expect(whatsappUpdateColumns).toEqual([
             { column_name: "escalation_notifications_enabled" },
             { column_name: "escalation_secretary_phone_e164" },
+            { column_name: "name" },
             { column_name: "no_show_policy" },
             { column_name: "voice_transcription_enabled" },
           ]);
+          const clinicReadinessPolicies = await migrated<
+            Array<{ command: "INSERT" | "SELECT" | "UPDATE"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_clinic_readiness'
+            order by cmd, policyname
+          `;
+          expect(clinicReadinessPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "INSERT",
+                name: "clinic_readiness_owner_insert",
+              },
+              {
+                command: "SELECT",
+                name: "clinic_readiness_clinic_read",
+              },
+              {
+                command: "UPDATE",
+                name: "clinic_readiness_owner_update",
+              },
+            ]),
+          );
         } finally {
           await migrated.end();
         }

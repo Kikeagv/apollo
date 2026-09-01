@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import { inClinicTransaction } from "~/server/db/clinic-context";
+import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
 import {
   clinicUsers,
   configurationAuditEvents,
@@ -146,6 +147,10 @@ export const drizzleDoctorProfileUpdater: DoctorProfileUpdater = {
         clinicId: input.clinicId,
         entity: "doctor-profile",
         entityId: profile.id,
+      });
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
       });
       return updated;
     });

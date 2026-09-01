@@ -12,6 +12,7 @@ import {
 } from "~/server/application/care-options";
 import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import { inSimulatedWhatsAppClinicTransaction } from "~/server/db/clinic-context";
+import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
 import type { db } from "~/server/db";
 import { appointmentEvents, appointments } from "~/server/db/schema";
 
@@ -96,6 +97,9 @@ export const drizzleAgendaAppointmentRescheduler: AgendaAppointmentRescheduler =
             reason: input.startsAt.toISOString(),
             type: "rescheduled",
           });
+          await recalculateClinicReadiness(transaction, {
+            clinicId: input.clinicId,
+          });
           return { ...rescheduled, kind: "rescheduled" as const };
         },
       );
@@ -143,6 +147,9 @@ export const drizzleAgendaAppointmentCanceller: AgendaAppointmentCanceller = {
           appointmentId: cancelled.id,
           clinicId: input.clinicId,
           type: "cancelled",
+        });
+        await recalculateClinicReadiness(transaction, {
+          clinicId: input.clinicId,
         });
         return { ...cancelled, kind: "cancelled" as const };
       },

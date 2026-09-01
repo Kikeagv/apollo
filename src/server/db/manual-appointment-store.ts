@@ -20,6 +20,7 @@ import {
 } from "~/server/application/manual-appointments";
 import { type AppointmentReminderStore } from "~/server/application/appointment-reminders";
 import { inClinicTransaction } from "~/server/db/clinic-context";
+import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
 import type { db } from "~/server/db";
 import {
   appointmentEvents,
@@ -44,22 +45,26 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   AppointmentReminderStore &
   PanaceaCalendarReader &
   PanaceaCalendarDoctorReader = {
-  async create(input) {
+  async create(input, now = new Date()) {
     return inClinicTransaction(input, async (transaction) => {
       await setCalendarOperation(transaction);
       await lockDoctor(transaction, input.doctorId);
       const appointmentInput = await appointmentInputs(transaction, input);
       if (appointmentInput === undefined) return undefined;
       const capacity: CareOptionInputs = {
-        ...(await readAgendaCapacity(transaction, {
-          clinicId: input.clinicId,
-          doctorId: input.doctorId,
-          endsAt: addMinutes(
-            input.startsAt,
-            appointmentInput.durationMinutes + appointmentInput.bufferMinutes,
-          ),
-          startsAt: input.startsAt,
-        })),
+        ...(await readAgendaCapacity(
+          transaction,
+          {
+            clinicId: input.clinicId,
+            doctorId: input.doctorId,
+            endsAt: addMinutes(
+              input.startsAt,
+              appointmentInput.durationMinutes + appointmentInput.bufferMinutes,
+            ),
+            startsAt: input.startsAt,
+          },
+          now,
+        )),
         offer: appointmentInput,
       };
 
@@ -74,6 +79,7 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
           to: localDate,
         },
         { find: async () => capacity },
+        now,
       );
       const fitsSchedule = options.some(
         (option) => option.startsAt.valueOf() === input.startsAt.valueOf(),
@@ -116,6 +122,10 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         appointmentId: appointment.id,
         clinicId: input.clinicId,
         type: "manual-created",
+      });
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
       });
       return {
         ...appointment,
@@ -322,6 +332,10 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         clinicId: input.clinicId,
         reason: input.reason,
         type: "cancelled",
+      });
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
       });
       return {
         ...appointment,

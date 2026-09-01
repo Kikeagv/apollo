@@ -129,6 +129,7 @@ export type ManualAppointmentOutsideScheduleConfirmation = {
 export type ManualAppointmentCreator = {
   create(
     input: CreateManualAppointmentInput,
+    now?: Date,
   ): Promise<
     ManualAppointment | ManualAppointmentOutsideScheduleConfirmation | undefined
   >;
@@ -224,7 +225,7 @@ export async function createManualAppointment(
       "La Cita manual debe iniciar en la cuadrícula de cinco minutos",
     );
   }
-  const appointment = await store.create(input);
+  const appointment = await store.create(input, now);
   if (appointment === undefined) throw new ManualAppointmentUnavailableError();
   if ("requiresOutsideScheduleConfirmation" in appointment) {
     throw new ManualAppointmentOutsideScheduleConfirmationRequiredError();

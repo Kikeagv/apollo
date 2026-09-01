@@ -27,6 +27,11 @@ import {
 } from "~/server/db/agenda-appointment-rescheduler";
 import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import {
+  isAsclepioEnabled,
+  listAsclepioOfferIds,
+  recalculateClinicReadiness,
+} from "~/server/db/clinic-setup-store";
+import {
   inClinicTransaction,
   inSimulatedWhatsAppClinicTransaction,
   inSimulatedWhatsAppInboundTransaction,
@@ -268,6 +273,13 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
+          if (!(await isAsclepioEnabled(transaction, input.clinicId))) {
+            return [];
+          }
+          const validOfferIds = await listAsclepioOfferIds(
+            transaction,
+            input.clinicId,
+          );
           const offers = await transaction
             .select({
               doctorId: doctors.id,
@@ -306,14 +318,19 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                 eq(clinicUsers.active, true),
               ),
             );
-          return offers.map(
-            (offer) =>
-              ({
-                ...offer,
-                doctorName: offer.doctorName ?? "Médico sin nombre público",
-                priceUsd: offer.priceUsd,
-              }) satisfies PublicOffer,
-          );
+          return offers
+            .filter(
+              (offer) =>
+                validOfferIds === undefined || validOfferIds.has(offer.id),
+            )
+            .map(
+              (offer) =>
+                ({
+                  ...offer,
+                  doctorName: offer.doctorName ?? "Médico sin nombre público",
+                  priceUsd: offer.priceUsd,
+                }) satisfies PublicOffer,
+            );
         },
       );
     },
@@ -393,6 +410,19 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
+          if (!(await isAsclepioEnabled(transaction, input.clinicId))) {
+            return undefined;
+          }
+          const validOfferIds = await listAsclepioOfferIds(
+            transaction,
+            input.clinicId,
+          );
+          if (
+            validOfferIds !== undefined &&
+            !validOfferIds.has(input.offerId)
+          ) {
+            return undefined;
+          }
           if (!(await linkedPatientExists(transaction, input)))
             return undefined;
           const offer = await activeOffer(
@@ -417,6 +447,19 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
+          if (!(await isAsclepioEnabled(transaction, input.clinicId))) {
+            return undefined;
+          }
+          const validOfferIds = await listAsclepioOfferIds(
+            transaction,
+            input.clinicId,
+          );
+          if (
+            validOfferIds !== undefined &&
+            !validOfferIds.has(input.offerId)
+          ) {
+            return undefined;
+          }
           const offer = await activeOffer(
             transaction,
             input.clinicId,
@@ -463,6 +506,9 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               expiresAt: temporaryReservations.expiresAt,
               id: temporaryReservations.id,
             });
+          await recalculateClinicReadiness(transaction, {
+            clinicId: input.clinicId,
+          });
           return reservation;
         },
       );
@@ -550,6 +596,9 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
             appointmentId: appointment.id,
             clinicId: input.clinicId,
             type: "reservation-confirmed",
+          });
+          await recalculateClinicReadiness(transaction, {
+            clinicId: input.clinicId,
           });
           return {
             id: appointment.id,

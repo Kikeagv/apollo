@@ -5,6 +5,12 @@ import { env } from "~/env";
 import { filterPanaceaConfigurationOverview } from "~/domain/panacea-configuration";
 import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
 import { getPanaceaConfigurationOverview } from "~/server/application/panacea-configuration";
+import {
+  declareClinicReady,
+  getClinicSetup,
+  saveClinicSetupStep,
+  updateClinicBasics,
+} from "~/server/application/clinic-setup";
 import { listPanaceaTeam } from "~/server/application/panacea-team";
 import { inviteAdditionalDoctor } from "~/server/application/doctor-invitations";
 import { completeOwnDoctorProfile } from "~/server/application/doctor-profile";
@@ -200,6 +206,44 @@ export const panaceaRouter = {
     );
     return filterPanaceaConfigurationOverview(overview, ctx.clinic.role);
   }),
+
+  getClinicSetup: clinicProcedure.query(({ ctx }) =>
+    getClinicSetup({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    }),
+  ),
+
+  saveClinicSetupStep: clinicProcedure
+    .input(
+      z.object({
+        step: z.enum(["availability", "clinic", "review", "services", "team"]),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      saveClinicSetupStep({
+        ...input,
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      }),
+    ),
+
+  updateClinicBasics: clinicProcedure
+    .input(z.object({ name: z.string().trim().min(1).max(120) }))
+    .mutation(({ ctx, input }) =>
+      updateClinicBasics({
+        ...input,
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      }),
+    ),
+
+  declareClinicReady: clinicProcedure.mutation(({ ctx }) =>
+    declareClinicReady({
+      clinicId: ctx.clinic.clinicId,
+      identityId: ctx.clinic.identityId,
+    }),
+  ),
 
   listTeam: clinicProcedure.query(({ ctx }) =>
     listPanaceaTeam(

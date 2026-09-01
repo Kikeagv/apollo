@@ -16,6 +16,7 @@ import {
   type PanaceaRole,
 } from "~/domain/panacea-shell";
 import { api } from "~/trpc/react";
+import { ClinicSetupEntryCard } from "./clinic-setup-wizard";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 export function PanaceaSettingsIndex({ role }: { role: PanaceaRole }) {
@@ -37,6 +38,7 @@ export function PanaceaSettingsIndex({ role }: { role: PanaceaRole }) {
           Clínica.
         </p>
       </div>
+      {role === "owner" ? <ClinicSetupEntryCard /> : null}
       {overview.error ? (
         <PanaceaQueryError
           error={overview.error}

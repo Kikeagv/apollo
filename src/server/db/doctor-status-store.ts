@@ -8,6 +8,7 @@ import {
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import { capacityConflictsForDoctor } from "~/server/db/doctor-occupancy-store";
+import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
 import {
   clinicUsers,
   configurationAuditEvents,
@@ -60,6 +61,10 @@ export const drizzleDoctorStatusStore: DoctorDeactivator = {
         clinicId: input.clinicId,
         entity: "doctor",
         entityId: doctor.id,
+      });
+      await recalculateClinicReadiness(transaction, {
+        actorIdentityId: input.identityId,
+        clinicId: input.clinicId,
       });
       return deactivated as DoctorSummary & { active: false };
     });

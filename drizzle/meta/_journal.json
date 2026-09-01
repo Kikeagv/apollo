@@ -372,6 +372,13 @@
       "when": 1788192000000,
       "tag": "0053_apo64_whatsapp_operational_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1788195600000,
+      "tag": "0054_apo65_clinic_readiness",
+      "breakpoints": true
     }
   ]
 }

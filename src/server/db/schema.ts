@@ -26,6 +26,7 @@ import type {
 import type { PendingPriority } from "~/domain/pending";
 import type { DemoRequestRateLimitScope } from "~/server/application/demo-request";
 import type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
+import type { ClinicReadinessStatus } from "~/domain/clinic-setup";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -116,6 +117,26 @@ export const clinics = createTable("clinic", {
     .default("active")
     .notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+/** Estado resumible de la configuración y habilitación explícita de Asclepio. */
+export const clinicReadiness = createTable("clinic_readiness", {
+  clinicId: uuid("clinic_id")
+    .primaryKey()
+    .references(() => clinics.id, { onDelete: "cascade" }),
+  currentStep: integer("current_step").default(1).notNull(),
+  readinessStatus: text("readiness_status")
+    .$type<ClinicReadinessStatus>()
+    .default("pending")
+    .notNull(),
+  asclepioEnabled: boolean("asclepio_enabled").default(false).notNull(),
+  asclepioEnabledAt: timestamp("asclepio_enabled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
 });

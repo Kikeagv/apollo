@@ -134,14 +134,17 @@ describe("crear una Cita manual", () => {
       startsAt: new Date("2026-08-10T14:00:00.000Z"),
     });
 
-    expect(create).toHaveBeenCalledWith({
-      clinicId: "clinic-1",
-      doctorId: "doctor-1",
-      identityId: "operator-1",
-      patientId: "patient-1",
-      serviceOfferId: "offer-1",
-      startsAt: new Date("2026-08-10T14:00:00.000Z"),
-    });
+    expect(create).toHaveBeenCalledWith(
+      {
+        clinicId: "clinic-1",
+        doctorId: "doctor-1",
+        identityId: "operator-1",
+        patientId: "patient-1",
+        serviceOfferId: "offer-1",
+        startsAt: new Date("2026-08-10T14:00:00.000Z"),
+      },
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
   });
 
   it("rechaza un inicio pasado o fuera de la cuadrícula de cinco minutos antes de reservar capacidad", async () => {
@@ -193,7 +196,10 @@ describe("crear una Cita manual", () => {
         new Date("2026-08-01T00:00:00.000Z"),
       ),
     ).rejects.toThrow("La Agenda ya no autoriza esta Cita manual");
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ startsAt }));
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ startsAt }),
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
   });
 
   it("exige una confirmación explícita antes de crear una Cita fuera del Horario vigente", async () => {
