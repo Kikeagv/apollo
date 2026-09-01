@@ -62,7 +62,7 @@ describe("alta controlada de Clínica sintética", () => {
     );
   });
 
-  it("rechaza a una Identidad que no es superadmin de Apolo", async () => {
+  it("rechaza a una Identidad no autorizada para esta operación", async () => {
     const registry = createRegistry([]);
 
     await expect(
@@ -74,7 +74,7 @@ describe("alta controlada de Clínica sintética", () => {
         },
         { registry, sendOwnerInvitation: async () => undefined },
       ),
-    ).rejects.toThrow("La Identidad no es superadmin de Apolo");
+    ).rejects.toThrow("La Identidad no está autorizada para esta operación");
   });
 
   it("audita una invitación fallida sin conservar su secreto", async () => {
@@ -121,7 +121,7 @@ function createRegistry(superadminIdentityIds: string[]) {
       input: Parameters<SyntheticClinicRegistration["register"]>[0],
     ) {
       if (!superadminIdentityIds.includes(input.actorIdentityId)) {
-        throw new Error("La Identidad no es superadmin de Apolo");
+        throw new Error("La Identidad no está autorizada para esta operación");
       }
 
       const clinic = {

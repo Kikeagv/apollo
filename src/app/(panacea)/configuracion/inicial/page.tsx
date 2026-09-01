@@ -11,7 +11,7 @@ export default async function InitialClinicSetupPage() {
 
   return (
     <PanaceaDestinationPage
-      description="Configure la capacidad mínima de la Clínica y declare de forma explícita cuándo Asclepio puede ofrecer nuevas Opciones."
+      description="Configure la capacidad mínima de la Clínica y declare de forma explícita cuándo Praxia puede ofrecer nuevas Opciones por WhatsApp."
       eyebrow="Configuración · Inicio"
       title="Configuración inicial"
     >

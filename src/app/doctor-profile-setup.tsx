@@ -70,7 +70,7 @@ export function DoctorProfileSetup({
           <p className="text-muted-foreground leading-6 text-pretty">
             Su perfil de Médico ya está vinculado a esta Clínica. Complete estos
             datos para publicar su capacidad de atención; esta tarea no bloquea
-            su acceso normal a Panacea.
+            su acceso normal a Praxia.
           </p>
         </CardHeader>
         <CardContent className="space-y-5 pt-6">
@@ -87,7 +87,7 @@ export function DoctorProfileSetup({
             <Alert variant="warning">
               <AlertTitle>Perfil pendiente, sin bloqueo</AlertTitle>
               <AlertDescription>
-                Puede seguir usando Panacea y revisar esta configuración cuando
+                Puede seguir usando Praxia y revisar esta configuración cuando
                 esté listo. Complete los dos datos para publicar su capacidad de
                 atención.
               </AlertDescription>

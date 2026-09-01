@@ -84,7 +84,7 @@ export function PanaceaShell({
               <AlertTitle>Su perfil de Médico está incompleto</AlertTitle>
               <AlertDescription>
                 Complete su nombre público y especialidad para publicar su
-                capacidad. Puede seguir usando Panacea mientras termina esta
+                capacidad. Puede seguir usando Praxia mientras termina esta
                 configuración.{" "}
                 <Link
                   className="focus-visible:border-ring focus-visible:ring-ring/30 rounded-sm font-medium underline underline-offset-4 outline-none focus-visible:ring-3"

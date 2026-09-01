@@ -124,7 +124,7 @@ export function DoctorsSection() {
             {incompleteProfiles.length === 1
               ? "Un Médico todavía debe completar su perfil."
               : `${incompleteProfiles.length} Médicos todavía deben completar su perfil.`}{" "}
-            El equipo puede seguir usando Panacea mientras se completa la
+            El equipo puede seguir usando Praxia mientras se completa la
             configuración.
           </AlertDescription>
         </Alert>

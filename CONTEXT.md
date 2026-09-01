@@ -4,9 +4,13 @@ Praxia es la plataforma para consultorios y clínicas pequeñas en El Salvador. 
 
 ## Language
 
+**Regla de nomenclatura pública**:
+Para cualquier cliente, Clínica, Médico o Paciente, la única marca visible del producto es Praxia. Apolo, Asclepio y Panacea son nombres internos y nunca deben aparecer en copy, interfaces, documentos ni comunicaciones externas; al agente se le describe como "asistente de la clínica por WhatsApp".
+_Avoid_: mostrar nombres internos al cliente o presentar Asclepio y Panacea como marcas públicas
+
 **Praxia**:
-La marca comercial que ven clínicas, médicos y pacientes.
-_Avoid_: Apolo, Asclepio, Panacea
+La única marca pública del producto, utilizada en las superficies y comunicaciones que ven clínicas, médicos y pacientes.
+_Avoid_: Apolo, Asclepio o Panacea en cualquier material visible para clientes
 
 **Lead cualificado**:
 La persona que representa a una Clínica y que inicia una conversación comercial con intención verificable de evaluar Praxia. No es un Paciente, un visitante meramente informativo ni una persona que solo accede a Panacea.
@@ -17,24 +21,24 @@ La petición de una persona representante de una Clínica para conocer y evaluar
 _Avoid_: Cita, reserva de paciente, agendamiento clínico
 
 **Apolo**:
-El nombre interno de la plataforma completa, su infraestructura y despliegue.
-_Avoid_: Praxia cuando se habla de componentes internos
+El nombre interno de la plataforma completa y de su contexto técnico.
+_Avoid_: usarlo ante clientes o como marca pública; para el producto visible usar Praxia
 
 **Asclepio**:
-El agente interno de agendamiento por WhatsApp. Ante un paciente se identifica como asistente de la clínica, no como Asclepio ni Praxia.
-_Avoid_: bot de Praxia
+El nombre interno del agente de agendamiento por WhatsApp. Nunca se muestra a clientes, clínicas, médicos ni pacientes; públicamente se describe como "asistente de la clínica por WhatsApp".
+_Avoid_: mostrar Asclepio, llamarlo bot de Praxia o presentarlo como una marca
 
 **Asistente de la clínica por WhatsApp**:
-La forma pública de describir a Asclepio ante clínicas y pacientes. Puede reservar, reprogramar y cancelar Citas de forma autónoma dentro de las reglas de la Clínica; cuando una solicitud requiere decisión humana, la entrega al equipo y deja de intervenir.
-_Avoid_: agente de Praxia, Asclepio ante pacientes, bot de Praxia
+La descripción pública del agente de agendamiento de Praxia ante clínicas y pacientes. Puede reservar, reprogramar y cancelar Citas de forma autónoma dentro de las reglas de la Clínica; cuando una solicitud requiere decisión humana, la entrega al equipo y deja de intervenir.
+_Avoid_: agente de Praxia, Asclepio ante clientes o pacientes, bot de Praxia
 
 **Atención administrativa por WhatsApp**:
 La interacción por WhatsApp para consultar disponibilidad y gestionar Citas de una Clínica, incluyendo reservas, reprogramaciones y cancelaciones dentro de sus reglas. No incluye diagnóstico, orientación médica ni decisiones clínicas.
 _Avoid_: consulta médica, atención clínica automatizada, diagnóstico por WhatsApp
 
 **Panacea**:
-El CRM y panel interno para operar agenda, pacientes y, en fases posteriores, expediente.
-_Avoid_: Praxia cuando se habla del panel
+El nombre interno del CRM y panel para operar agenda, pacientes y, en fases posteriores, expediente.
+_Avoid_: usarlo ante clientes o como nombre visible del panel; públicamente usar Praxia o panel de Praxia
 
 **Calendario de Panacea**:
 La superficie central de la Operación diaria de agenda. Abre en vista semanal de toda la Clínica, permite cambiar a vista diaria y aplica el mismo filtro de Médico a ambas vistas; al filtrar muestra las Citas y Bloqueos de ese Médico. Muestra solo Citas activas para que una cancelación libere visualmente el espacio; la Cita cancelada permanece consultable desde la ficha del Paciente y sus eventos. Cada Cita muestra el nombre del Paciente y Servicio, y también el Médico cuando no hay filtro; los datos de Contacto aparecen solo en el detalle. Su tablero lateral mínimo presenta el detalle de la Cita seleccionada, sus eventos y las acciones de cancelación y ficha; no incluye Escalamientos ni conversaciones.

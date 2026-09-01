@@ -146,7 +146,7 @@ function createStore(
     supportSessions,
     async assertSuperadmin(identityId) {
       if (!superadminIdentityIds.includes(identityId)) {
-        throw new Error("La Identidad no es superadmin de Apolo");
+        throw new Error("La Identidad no está autorizada para esta operación");
       }
     },
     async authorizeClinicIdentity() {

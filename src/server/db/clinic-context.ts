@@ -78,7 +78,7 @@ export async function inSuperadminTransaction<T>(
       where: eq(apoloSuperadmins.identityId, identityId),
     });
     if (operator === undefined)
-      throw new Error("La Identidad no es superadmin de Apolo");
+      throw new Error("La Identidad no está autorizada para esta operación");
 
     await transaction.execute(
       sql`select set_config('app.superadmin_id', ${identityId}, true)`,
@@ -98,7 +98,7 @@ export async function inCommercialSubscriptionTransaction<T>(
       where: eq(apoloSuperadmins.identityId, identityId),
     });
     if (operator === undefined) {
-      throw new Error("La Identidad no es superadmin de Apolo");
+      throw new Error("La Identidad no está autorizada para esta operación");
     }
     await transaction.execute(
       sql`select set_config('app.superadmin_id', ${identityId}, true)`,
