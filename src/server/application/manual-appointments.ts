@@ -29,8 +29,11 @@ export type AppointmentEventType = (typeof appointmentEventTypes)[number];
 
 export type ManualAppointmentFormData = {
   offers: {
+    bufferMinutes: number;
     doctorId: string;
     doctorName: string;
+    durationMinutes: number;
+    priceUsd: string;
     serviceName: string;
     serviceOfferId: string;
   }[];

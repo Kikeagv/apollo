@@ -773,6 +773,11 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
         name: /Crear Cita en .* desde la cuadrícula temporal/,
       })
       .first();
+    await emptyCalendarDay.press("ArrowDown");
+    await expect(emptyCalendarDay).toHaveAttribute(
+      "data-calendar-context-time",
+      /T09:05$/,
+    );
     await emptyCalendarDay.press("Enter");
     const contextualAppointmentDialog = page.getByRole("dialog", {
       name: "Nueva Cita manual",
@@ -793,15 +798,33 @@ test("el Calendario muestra una agenda temporal y abre la nueva Cita en un modal
     });
     await expect(
       selectedBlockDialog.locator('input[name="startsAt"]'),
-    ).toHaveValue(/T09:00$/);
+    ).toHaveValue(/T09:05$/);
     await expect(
       selectedBlockDialog.locator('input[name="endsAt"]'),
-    ).toHaveValue(/T09:30$/);
+    ).toHaveValue(/T09:35$/);
     await expectNoAccessibilityViolations(page, '[role="dialog"]');
     await expect(
       selectedBlockDialog.locator('select[name="doctorId"]'),
     ).toBeFocused();
     await selectedBlockDialog.getByRole("button", { name: "Cancelar" }).click();
+
+    const emptyCalendarDayBox = await emptyCalendarDay.boundingBox();
+    if (emptyCalendarDayBox === null) throw new Error("Falta la cuadrícula");
+    await emptyCalendarDay.click({
+      position: {
+        x: emptyCalendarDayBox.width / 2,
+        y: emptyCalendarDayBox.height * ((10 * 60 + 15 - 7 * 60) / (14 * 60)),
+      },
+    });
+    await expect(
+      page
+        .getByRole("dialog", { name: "Nueva Cita manual" })
+        .locator('input[name="startsAt"]'),
+    ).toHaveValue(/T10:15$/);
+    await page
+      .getByRole("dialog", { name: "Nueva Cita manual" })
+      .getByRole("button", { name: "Cancelar" })
+      .click();
 
     await calendar
       .getByRole("button", { name: "Nueva Cita manual", exact: true })
@@ -1238,6 +1261,29 @@ test("Panacea repite la nueva Cita sin navegación nativa", async ({ page }) => 
     });
 
     const calendar = calendarSection(page);
+    await calendar.locator('input[type="date"]').fill(careDate);
+    await calendar.getByLabel("Médico").selectOption({ label: doctorName });
+    const contextualCalendarAction = calendar.locator(
+      `[data-calendar-context-time^="${careDate}"]`,
+    );
+    await contextualCalendarAction.press("Enter");
+    const contextualAppointmentDialog = page.getByRole("dialog", {
+      name: "Nueva Cita manual",
+    });
+    await expect(
+      contextualAppointmentDialog.locator('input[name="startsAt"]'),
+    ).toHaveValue(`${careDate}T09:00`);
+    await expect(
+      contextualAppointmentDialog.locator('select[name="serviceOfferId"]'),
+    ).toHaveValue(/.+/);
+    await expect(
+      contextualAppointmentDialog
+        .locator('select[name="serviceOfferId"] option:checked')
+        .filter({ hasText: `${doctorName} · ${serviceName}` }),
+    ).toHaveCount(1);
+    await contextualAppointmentDialog
+      .getByRole("button", { name: "Cancelar" })
+      .click();
     const nativeNavigationsDuringAppointmentCreation: string[] = [];
     page.on("request", (request) => {
       if (
@@ -1832,6 +1878,14 @@ async function createManualAppointmentInCalendar(
     .selectOption({
       label: `${input.doctorName} · ${input.serviceName}`,
     });
+  const offerSummary = appointmentDialog.getByRole("region", {
+    name: "Resumen de la Oferta de servicio",
+  });
+  await expect(offerSummary).toContainText("Servicio");
+  await expect(offerSummary).toContainText("Duración");
+  await expect(offerSummary).toContainText("30 min");
+  await expect(offerSummary).toContainText("Buffer");
+  await expect(offerSummary).toContainText("US$ 35.00");
   await appointmentDialog
     .getByRole("button", { name: "Crear Cita manual" })
     .click();

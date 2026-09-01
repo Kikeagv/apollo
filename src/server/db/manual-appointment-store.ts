@@ -438,8 +438,11 @@ async function readManualAppointmentFormData(input: {
         .orderBy(asc(patients.name)),
       transaction
         .select({
+          bufferMinutes: serviceOffers.bufferMinutes,
           doctorId: doctors.id,
           doctorName: doctors.publicName,
+          durationMinutes: serviceOffers.durationMinutes,
+          priceUsd: serviceOffers.priceUsd,
           serviceName: services.name,
           serviceOfferId: serviceOffers.id,
         })
@@ -478,8 +481,11 @@ async function readManualAppointmentFormData(input: {
     ]);
     return {
       offers: activeOffers.map((offer) => ({
+        bufferMinutes: offer.bufferMinutes,
         doctorId: offer.doctorId,
         doctorName: offer.doctorName ?? "Médico sin nombre público",
+        durationMinutes: offer.durationMinutes,
+        priceUsd: offer.priceUsd,
         serviceName: offer.serviceName,
         serviceOfferId: offer.serviceOfferId,
       })),

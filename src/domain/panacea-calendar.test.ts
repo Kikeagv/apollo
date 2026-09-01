@@ -4,8 +4,10 @@ import {
   calendarDates,
   calendarEntryEnd,
   calendarPeriodFor,
+  calendarKeyboardMinute,
   calendarSegments,
   parseCalendarDate,
+  shiftCalendarKeyboardMinute,
 } from "./panacea-calendar";
 
 describe("dominio temporal del Calendario de Panacea", () => {
@@ -114,5 +116,19 @@ describe("dominio temporal del Calendario de Panacea", () => {
       { id: "appointment-1", lane: 0, laneCount: 2 },
       { id: "block-1", lane: 1, laneCount: 2 },
     ]);
+  });
+
+  it("mantiene la selección accesible dentro de la cuadrícula de 5 minutos", () => {
+    const bounds = { endMinute: 17 * 60 + 10, startMinute: 7 * 60 + 5 };
+
+    expect(calendarKeyboardMinute(undefined, bounds)).toBe(9 * 60);
+    expect(calendarKeyboardMinute(7 * 60, bounds)).toBe(7 * 60 + 5);
+    expect(calendarKeyboardMinute(18 * 60, bounds)).toBe(17 * 60 + 5);
+    expect(shiftCalendarKeyboardMinute(9 * 60, bounds, "previous")).toBe(
+      8 * 60 + 55,
+    );
+    expect(shiftCalendarKeyboardMinute(9 * 60, bounds, "next")).toBe(
+      9 * 60 + 5,
+    );
   });
 });

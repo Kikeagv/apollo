@@ -2,6 +2,7 @@
 
 import {
   type FormEvent,
+  type KeyboardEvent,
   type MouseEvent,
   useEffect,
   useMemo,
@@ -25,11 +26,14 @@ import {
   calendarDates,
   calendarEntryEnd,
   calendarGridBounds,
+  calendarKeyboardMinute,
   calendarPeriodFor,
   calendarSegments,
+  type CalendarGridBounds,
   type CalendarEntrySegment,
   parseCalendarDate,
   type CalendarView,
+  shiftCalendarKeyboardMinute,
 } from "~/domain/panacea-calendar";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -87,6 +91,7 @@ type ManualAppointmentRequest = {
 };
 
 type CalendarBlockSelection = {
+  doctorId?: string;
   endsAt: string;
   startsAt: string;
 };
@@ -196,6 +201,7 @@ export function ManualAppointmentsSection({
     onSuccess: async (appointment) => {
       setOutsideScheduleConfirmation(undefined);
       setAppointmentDialogOpen(false);
+      setCalendarBlockSelection(undefined);
       updateCalendarUrl({ selectedId: appointment.id }, "push");
       await calendarAgenda.refetch();
     },
@@ -241,6 +247,9 @@ export function ManualAppointmentsSection({
   const calendarEntries = calendarAgenda.data ?? [];
   const selectedPatient = formData.data?.patients.find(
     (patient) => patient.id === patientId,
+  );
+  const selectedOffer = formData.data?.offers.find(
+    (offer) => offer.serviceOfferId === serviceOfferId,
   );
   const queryError =
     formData.error ??
@@ -299,6 +308,13 @@ export function ManualAppointmentsSection({
     if (changes.doctorId !== undefined) setDoctorId(nextDoctorId);
     if ("selectedId" in changes) setSelectedId(changes.selectedId);
     if (changes.view !== undefined) setView(nextView);
+    if (
+      changes.date !== undefined ||
+      changes.doctorId !== undefined ||
+      changes.view !== undefined
+    ) {
+      setCalendarBlockSelection(undefined);
+    }
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -381,7 +397,11 @@ export function ManualAppointmentsSection({
   function openAppointmentDialog(
     startsAt = `${calendarDate}T09:00`,
     preferredDoctorId = doctorId,
+    options: { preserveCalendarBlockSelection?: boolean } = {},
   ) {
+    if (options.preserveCalendarBlockSelection !== true) {
+      setCalendarBlockSelection(undefined);
+    }
     setAppointmentStartsAt(startsAt);
     setServiceOfferId(
       preferredDoctorId === ""
@@ -484,10 +504,47 @@ export function ManualAppointmentsSection({
                     setAppointmentStartsAt(event.target.value)
                   }
                   required
+                  step={5 * 60}
                   type="datetime-local"
                   value={appointmentStartsAt}
                 />
               </label>
+              {selectedOffer ? (
+                <section
+                  aria-label="Resumen de la Oferta de servicio"
+                  className="bg-muted/40 rounded-lg border p-3 text-sm sm:col-span-2"
+                >
+                  <h3 className="font-medium">
+                    Resumen de la Oferta de servicio
+                  </h3>
+                  <dl className="text-muted-foreground mt-2 grid gap-x-4 gap-y-1 tabular-nums sm:grid-cols-4">
+                    <div>
+                      <dt>Servicio</dt>
+                      <dd className="text-foreground font-medium">
+                        {selectedOffer.serviceName}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Duración</dt>
+                      <dd className="text-foreground font-medium">
+                        {formatMinutes(selectedOffer.durationMinutes)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Buffer</dt>
+                      <dd className="text-foreground font-medium">
+                        {formatMinutes(selectedOffer.bufferMinutes)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Precio</dt>
+                      <dd className="text-foreground font-medium">
+                        US$ {selectedOffer.priceUsd}
+                      </dd>
+                    </div>
+                  </dl>
+                </section>
+              ) : null}
               <label className="flex items-center gap-2 self-end pb-2 text-sm">
                 <input
                   checked={sendConfirmation}
@@ -799,7 +856,9 @@ export function ManualAppointmentsSection({
           {canManageAvailability && blockDoctors.length > 0 ? (
             <AvailabilityBlockDialog
               doctors={blockDoctors}
-              initialDoctorId={doctorId || undefined}
+              initialDoctorId={
+                (calendarBlockSelection?.doctorId ?? doctorId) || undefined
+              }
               initialEndsAt={
                 calendarBlockSelection?.endsAt ?? `${calendarDate}T10:00`
               }
@@ -901,10 +960,13 @@ export function ManualAppointmentsSection({
                 entries={calendarEntries}
                 onCreate={(startsAt) => {
                   setCalendarBlockSelection({
+                    doctorId: doctorId || undefined,
                     endsAt: addClinicMinutes(startsAt, 30),
                     startsAt,
                   });
-                  openAppointmentDialog(startsAt);
+                  openAppointmentDialog(startsAt, doctorId, {
+                    preserveCalendarBlockSelection: true,
+                  });
                 }}
                 onSelect={(id) => updateCalendarUrl({ selectedId: id }, "push")}
                 showDoctor={doctorId === ""}
@@ -1075,17 +1137,10 @@ function CalendarTimeline({
                 >
                   {dates.map((date) => (
                     <div className="relative" key={date}>
-                      <button
-                        aria-label={`Crear Cita en ${formatCalendarDate(date)} desde la cuadrícula temporal`}
-                        className="focus-visible:ring-ring/40 hover:bg-primary/5 focus-visible:bg-primary/10 absolute inset-0 z-0 w-full cursor-crosshair appearance-none rounded-none border-0 bg-transparent p-0 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-inset"
-                        onClick={(event) =>
-                          onCreate(
-                            `${date}T${formatInputTime(
-                              calendarMinutesFromPointer(event, bounds),
-                            )}`,
-                          )
-                        }
-                        type="button"
+                      <CalendarEmptyGridAction
+                        bounds={bounds}
+                        date={date}
+                        onCreate={onCreate}
                       />
                       {segments
                         .filter((segment) => segment.date === date)
@@ -1121,6 +1176,62 @@ function CalendarTimeline({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function CalendarEmptyGridAction({
+  bounds,
+  date,
+  onCreate,
+}: {
+  bounds: CalendarGridBounds;
+  date: string;
+  onCreate: (startsAt: string) => void;
+}) {
+  const [keyboardMinute, setKeyboardMinute] = useState(() =>
+    calendarKeyboardMinute(undefined, bounds),
+  );
+  const selectedMinute = calendarKeyboardMinute(keyboardMinute, bounds);
+
+  function moveWithKeyboard(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      setKeyboardMinute((current) =>
+        shiftCalendarKeyboardMinute(
+          current,
+          bounds,
+          event.key === "ArrowUp" ? "previous" : "next",
+        ),
+      );
+      return;
+    }
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      setKeyboardMinute(
+        calendarKeyboardMinute(
+          event.key === "Home" ? bounds.startMinute : bounds.endMinute - 5,
+          bounds,
+        ),
+      );
+    }
+  }
+
+  return (
+    <button
+      aria-keyshortcuts="ArrowUp ArrowDown Home End"
+      aria-label={`Crear Cita en ${formatCalendarDate(date)} a las ${formatTime(clinicDateTime(`${date}T${formatInputTime(selectedMinute)}`))} desde la cuadrícula temporal`}
+      className="focus-visible:ring-ring/40 hover:bg-primary/5 focus-visible:bg-primary/10 absolute inset-0 z-0 w-full cursor-crosshair appearance-none rounded-none border-0 bg-transparent p-0 text-left transition-colors outline-none focus-visible:ring-3 focus-visible:ring-inset"
+      data-calendar-context-time={`${date}T${formatInputTime(selectedMinute)}`}
+      onClick={(event) =>
+        onCreate(
+          `${date}T${formatInputTime(
+            calendarMinutesFromActivation(event, bounds, selectedMinute),
+          )}`,
+        )
+      }
+      onKeyDown={moveWithKeyboard}
+      type="button"
+    />
   );
 }
 
@@ -1742,16 +1853,13 @@ function formatInputTime(minute: number) {
   return `${String(hour).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 }
 
-function calendarMinutesFromPointer(
+function calendarMinutesFromActivation(
   event: MouseEvent<HTMLButtonElement>,
-  bounds: { endMinute: number; startMinute: number },
+  bounds: CalendarGridBounds,
+  keyboardMinute?: number,
 ) {
-  const defaultMinute = 9 * 60;
   if (event.detail === 0) {
-    return Math.min(
-      bounds.endMinute - 5,
-      Math.max(bounds.startMinute, defaultMinute),
-    );
+    return calendarKeyboardMinute(keyboardMinute, bounds);
   }
 
   const rect = event.currentTarget.getBoundingClientRect();
@@ -1761,10 +1869,7 @@ function calendarMinutesFromPointer(
   );
   const rawMinute =
     bounds.startMinute + ratio * (bounds.endMinute - bounds.startMinute);
-  return Math.min(
-    bounds.endMinute - 5,
-    Math.max(bounds.startMinute, Math.round(rawMinute / 5) * 5),
-  );
+  return calendarKeyboardMinute(Math.round(rawMinute / 5) * 5, bounds);
 }
 
 function formatWeekday(value: string) {

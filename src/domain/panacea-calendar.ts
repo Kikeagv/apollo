@@ -92,6 +92,31 @@ export function calendarGridBounds(
   return { endMinute, startMinute };
 }
 
+/** Normaliza una hora de teclado al primer y último inicio de slot de 5 minutos. */
+export function calendarKeyboardMinute(
+  minute: number | undefined,
+  bounds: CalendarGridBounds,
+) {
+  const firstSlot = ceilToStep(bounds.startMinute, 5);
+  const lastSlot = Math.max(firstSlot, floorToStep(bounds.endMinute - 5, 5));
+  const preferredMinute = minute ?? 9 * 60;
+  const normalizedMinute = Math.round(preferredMinute / 5) * 5;
+  return Math.min(lastSlot, Math.max(firstSlot, normalizedMinute));
+}
+
+/** Desplaza el contexto de creación con las flechas sin salir de la cuadrícula. */
+export function shiftCalendarKeyboardMinute(
+  minute: number | undefined,
+  bounds: CalendarGridBounds,
+  direction: "next" | "previous",
+) {
+  const delta = direction === "next" ? 5 : -5;
+  return calendarKeyboardMinute(
+    calendarKeyboardMinute(minute, bounds) + delta,
+    bounds,
+  );
+}
+
 export function calendarSegments<T extends CalendarTimedEntry>(
   entries: readonly T[],
   dates: readonly string[],
@@ -219,6 +244,14 @@ function floorToHour(value: number) {
 
 function ceilToHour(value: number) {
   return Math.ceil(value / 60) * 60;
+}
+
+function floorToStep(value: number, step: number) {
+  return Math.floor(value / step) * step;
+}
+
+function ceilToStep(value: number, step: number) {
+  return Math.ceil(value / step) * step;
 }
 
 function toDate(value: Date | string) {

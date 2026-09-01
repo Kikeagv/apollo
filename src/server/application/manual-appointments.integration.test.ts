@@ -392,8 +392,11 @@ describe("Citas manuales persistentes", () => {
         const expected = {
           offers: [
             {
+              bufferMinutes: 5,
               doctorId: fixture.doctorId,
               doctorName: "Dra. Sol",
+              durationMinutes: 30,
+              priceUsd: "35.00",
               serviceName: "Consulta",
               serviceOfferId: fixture.serviceOfferId,
             },
