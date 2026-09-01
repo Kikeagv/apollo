@@ -42,6 +42,7 @@ import { Input } from "~/components/ui/input";
 import { Progress } from "~/components/ui/progress";
 import {
   CLINIC_SETUP_STEPS,
+  CLINIC_TERMS_URL,
   type ClinicSetupReview,
   type ClinicSetupStepId,
 } from "~/domain/clinic-setup";
@@ -72,13 +73,14 @@ export function ClinicSetupEntryCard() {
           <div>
             <CardTitle>Configuración inicial de la Clínica</CardTitle>
             <CardDescription className="mt-1">
-              Prepare la primera ruta de atención y decida cuándo habilitar
-              Asclepio.
+              Prepare la primera ruta de atención y decida cuándo habilitar la
+              atención por WhatsApp de Praxia.
             </CardDescription>
           </div>
           <ReadinessBadge
             status={status}
             enabled={setup.data.readiness.asclepioEnabled}
+            termsAccepted={setup.data.terms.accepted}
           />
         </div>
         <Progress
@@ -107,6 +109,7 @@ export function ClinicSetupWizard() {
   const [activeStep, setActiveStep] = useState<ClinicSetupStepId>();
   const [declarationOpen, setDeclarationOpen] = useState(false);
   const [savedBasics, setSavedBasics] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   const saveStep = api.panacea.saveClinicSetupStep.useMutation({
     onSuccess: () => {
@@ -202,6 +205,7 @@ export function ClinicSetupWizard() {
             <ReadinessBadge
               enabled={review.readiness.asclepioEnabled}
               status={review.readiness.status}
+              termsAccepted={review.terms.accepted}
             />
           </div>
           <div className="flex items-center gap-3">
@@ -266,9 +270,11 @@ export function ClinicSetupWizard() {
                         onContinue={continueTo}
                         onOpenConfiguration={openConfiguration}
                         onSubmitBasics={submitBasics}
+                        onTermsAcceptedChange={setTermsAccepted}
                         review={review}
                         savedBasics={savedBasics}
                         step={candidate}
+                        termsAccepted={termsAccepted}
                         updateBasicsPending={updateBasics.isPending}
                       />
                     </div>
@@ -318,9 +324,12 @@ export function ClinicSetupWizard() {
           <AlertDialogContent>
             <AlertDialogTitle>¿Declarar lista la Clínica?</AlertDialogTitle>
             <AlertDialogDescription>
-              Asclepio podrá ofrecer nuevas Opciones usando la ruta válida que
-              acaba de revisar. Podrá seguir ajustando la configuración y las
-              Citas existentes no se modificarán.
+              Praxia podrá ofrecer nuevas Opciones por WhatsApp usando la ruta
+              válida que acaba de revisar. Podrá seguir ajustando la
+              configuración y las Citas existentes no se modificarán. Al
+              confirmar, registraremos la aceptación de los Términos de uso de
+              Praxia, versión {review.terms.currentVersion}, junto con su
+              identidad.
             </AlertDialogDescription>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={declareReady.isPending}>
@@ -328,7 +337,7 @@ export function ClinicSetupWizard() {
               </AlertDialogCancel>
               <AlertDialogAction
                 disabled={declareReady.isPending}
-                onClick={() => declareReady.mutate()}
+                onClick={() => declareReady.mutate({ termsAccepted: true })}
               >
                 {declareReady.isPending ? "Declarando…" : "Declarar lista"}
               </AlertDialogAction>
@@ -345,18 +354,22 @@ function StepContent({
   onContinue,
   onOpenConfiguration,
   onSubmitBasics,
+  onTermsAcceptedChange,
   review,
   savedBasics,
   step,
+  termsAccepted,
   updateBasicsPending,
 }: {
   onDeclare: () => void;
   onContinue: (step: ClinicSetupStepId) => void;
   onOpenConfiguration: (step: ClinicSetupStepId, href: string) => void;
   onSubmitBasics: (event: FormEvent<HTMLFormElement>) => void;
+  onTermsAcceptedChange: (accepted: boolean) => void;
   review: ClinicSetupReview;
   savedBasics: boolean;
   step: ClinicSetupReview["steps"][number];
+  termsAccepted: boolean;
   updateBasicsPending: boolean;
 }) {
   switch (step.id) {
@@ -366,7 +379,7 @@ function StepContent({
           <CardHeader>
             <CardTitle>{step.label}</CardTitle>
             <CardDescription>
-              Confirme el nombre que identificará a esta Clínica en Panacea.
+              Confirme el nombre que identificará a esta Clínica en Praxia.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -386,7 +399,8 @@ function StepContent({
                         required
                       />
                       <FieldDescription>
-                        Este dato no habilita Asclepio por sí solo.
+                        Este dato no habilita la atención por WhatsApp de Praxia
+                        por sí solo.
                       </FieldDescription>
                     </FieldContent>
                   </Field>
@@ -477,7 +491,9 @@ function StepContent({
         <ReviewStep
           onDeclare={onDeclare}
           onContinue={onContinue}
+          onTermsAcceptedChange={onTermsAcceptedChange}
           review={review}
+          termsAccepted={termsAccepted}
         />
       );
   }
@@ -539,20 +555,26 @@ function StepFooter({
 function ReviewStep({
   onDeclare,
   onContinue,
+  onTermsAcceptedChange,
   review,
+  termsAccepted,
 }: {
   onContinue: (step: ClinicSetupStepId) => void;
   onDeclare: () => void;
+  onTermsAcceptedChange: (accepted: boolean) => void;
   review: ClinicSetupReview;
+  termsAccepted: boolean;
 }) {
   const route = review.firstValidRoute;
+  const hasAcceptedTerms = review.terms.accepted || termsAccepted;
   return (
     <Card className="shadow-none ring-1">
       <CardHeader>
         <CardTitle>Revisión de capacidad</CardTitle>
         <CardDescription>
-          Esta comprobación usa la misma Agenda que consultará Asclepio. La
-          declaración final requiere una acción explícita del propietario.
+          Esta comprobación usa la misma Agenda que utilizará Praxia para
+          atender por WhatsApp. La declaración final requiere una acción
+          explícita del propietario.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -619,9 +641,60 @@ function ReviewStep({
             </p>
           </div>
         ) : null}
+        <div
+          className="border-border bg-muted/20 rounded-xl border p-4"
+          data-clinic-setup-terms="true"
+        >
+          <p className="text-primary text-xs font-semibold tracking-wide uppercase">
+            Condiciones de uso
+          </p>
+          <h3 className="mt-1 font-medium">Aceptación de la Clínica</h3>
+          <p className="text-muted-foreground mt-2 text-sm leading-6">
+            Para habilitar la atención por WhatsApp de Praxia, el propietario
+            debe aceptar los términos que regulan el acceso y uso de Praxia por
+            la Clínica y su equipo.
+          </p>
+          <label className="border-border bg-background mt-4 flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 text-sm leading-6 has-[:disabled]:cursor-default has-[:disabled]:opacity-75">
+            <input
+              aria-describedby="clinic-setup-terms-description"
+              checked={hasAcceptedTerms}
+              className="accent-primary focus-visible:border-ring focus-visible:ring-ring/30 mt-0.5 size-5 shrink-0 rounded outline-none focus-visible:ring-3"
+              disabled={review.terms.accepted}
+              id="clinic-setup-terms"
+              onChange={(event) => onTermsAcceptedChange(event.target.checked)}
+              type="checkbox"
+            />
+            <span>
+              He leído y acepto los{" "}
+              <Link
+                className="text-primary font-medium underline underline-offset-4"
+                href={CLINIC_TERMS_URL}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Términos de uso de Praxia
+              </Link>{" "}
+              (versión {review.terms.currentVersion}) y confirmo que tengo
+              autorización para aceptarlos en nombre de la Clínica.
+            </span>
+          </label>
+          <p
+            className="text-muted-foreground mt-3 text-xs leading-5"
+            id="clinic-setup-terms-description"
+          >
+            Esta aceptación de la Clínica no sustituye el aviso ni el
+            consentimiento que correspondan a Pacientes, Contactos, Tutores o
+            personal.
+          </p>
+          {review.terms.accepted ? (
+            <p className="text-success-foreground mt-3 text-sm" role="status">
+              Aceptación registrada para la versión {review.terms.version}.
+            </p>
+          ) : null}
+        </div>
         {review.readiness.asclepioEnabled ? (
           <Alert variant="success">
-            <AlertTitle>Asclepio está habilitado</AlertTitle>
+            <AlertTitle>Praxia está habilitada</AlertTitle>
             <AlertDescription>
               Las nuevas Opciones se calculan con la capacidad vigente de la
               Clínica.
@@ -631,24 +704,30 @@ function ReviewStep({
           <Alert variant="default">
             <AlertTitle>La declaración sigue pendiente</AlertTitle>
             <AlertDescription>
-              Guardar la configuración no habilita Asclepio. Use el botón de
-              declaración para confirmar esta decisión.
+              Guardar la configuración no habilita la atención por WhatsApp de
+              Praxia. Use el botón de declaración para confirmar esta decisión.
             </AlertDescription>
           </Alert>
         ) : null}
         {!review.readiness.asclepioEnabled && route ? (
           <Button
             data-clinic-setup-declare="true"
+            disabled={!hasAcceptedTerms}
             onClick={onDeclare}
             type="button"
           >
-            Declarar lista para Asclepio
+            Declarar lista para Praxia
           </Button>
+        ) : null}
+        {!review.readiness.asclepioEnabled && route && !hasAcceptedTerms ? (
+          <p className="text-muted-foreground text-sm leading-6" role="status">
+            Acepte los Términos de uso para habilitar la declaración.
+          </p>
         ) : null}
         {!route && review.readiness.status === "pending" ? (
           <p className="text-muted-foreground text-sm leading-6">
-            Al perder la última ruta, Asclepio deja de ofrecer nuevas Opciones.
-            Las Citas existentes permanecen intactas.
+            Al perder la última ruta, la atención por WhatsApp de Praxia deja de
+            ofrecer nuevas Opciones. Las Citas existentes permanecen intactas.
           </p>
         ) : null}
       </CardContent>
@@ -701,11 +780,16 @@ function StepStateMark({
 function ReadinessBadge({
   enabled,
   status,
+  termsAccepted,
 }: {
   enabled: boolean;
   status: "pending" | "ready";
+  termsAccepted: boolean;
 }) {
-  if (enabled) return <Badge variant="success">Asclepio habilitado</Badge>;
+  if (enabled) return <Badge variant="success">Praxia habilitada</Badge>;
+  if (status === "ready" && !termsAccepted) {
+    return <Badge variant="warning">Aceptación pendiente</Badge>;
+  }
   if (status === "ready") {
     return <Badge variant="warning">Listo para declarar</Badge>;
   }

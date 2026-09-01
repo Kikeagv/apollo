@@ -379,6 +379,13 @@
       "when": 1788195600000,
       "tag": "0054_apo65_clinic_readiness",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1788296440665,
+      "tag": "0055_apo5_clinic_terms_acceptance",
+      "breakpoints": true
     }
   ]
 }

@@ -7,12 +7,16 @@ import {
   getClinicSetup,
   saveClinicSetupStep,
   updateClinicBasics,
+  ClinicTermsNotAcceptedError,
   type ClinicSetupBasicsUpdater,
   type ClinicSetupProgressWriter,
   type ClinicSetupReader,
   type ClinicReadinessDeclarer,
 } from "./clinic-setup";
-import type { ClinicSetupEvaluationInput } from "~/domain/clinic-setup";
+import {
+  CLINIC_TERMS_VERSION,
+  type ClinicSetupEvaluationInput,
+} from "~/domain/clinic-setup";
 
 const readyEvaluation: ClinicSetupEvaluationInput = {
   availability: { activeSchedules: 1, futureCareOptions: 2 },
@@ -28,6 +32,10 @@ const readyEvaluation: ClinicSetupEvaluationInput = {
     },
   },
   services: { activeOffers: 1, activeServices: 1 },
+  terms: {
+    acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
+    version: CLINIC_TERMS_VERSION,
+  },
   team: { activeDoctors: 1, completedProfiles: 1, pendingInvitations: 0 },
 };
 
@@ -90,7 +98,11 @@ describe("caso de uso de Configuración inicial", () => {
     };
 
     const review = await declareClinicReady(
-      { clinicId: "clinic-1", identityId: "owner-1" },
+      {
+        clinicId: "clinic-1",
+        identityId: "owner-1",
+        termsAccepted: true,
+      },
       declarer,
     );
 
@@ -101,7 +113,25 @@ describe("caso de uso de Configuración inicial", () => {
     expect(declare).toHaveBeenCalledWith({
       clinicId: "clinic-1",
       identityId: "owner-1",
+      termsAccepted: true,
     });
+  });
+
+  it("exige la aceptación explícita de los Términos antes de declarar lista la Clínica", async () => {
+    const declare = vi.fn();
+    const declarer: ClinicReadinessDeclarer = { declare };
+
+    await expect(
+      declareClinicReady(
+        {
+          clinicId: "clinic-1",
+          identityId: "owner-1",
+          termsAccepted: false,
+        },
+        declarer,
+      ),
+    ).rejects.toBeInstanceOf(ClinicTermsNotAcceptedError);
+    expect(declare).not.toHaveBeenCalled();
   });
 
   it("rechaza la declaración si la última ruta desapareció", async () => {
@@ -115,7 +145,11 @@ describe("caso de uso de Configuración inicial", () => {
 
     await expect(
       declareClinicReady(
-        { clinicId: "clinic-1", identityId: "owner-1" },
+        {
+          clinicId: "clinic-1",
+          identityId: "owner-1",
+          termsAccepted: true,
+        },
         declarer,
       ),
     ).rejects.toBeInstanceOf(ClinicReadinessNotReadyError);

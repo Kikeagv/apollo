@@ -34,6 +34,7 @@ export type ClinicReadinessDeclarer = {
   declare(input: {
     clinicId: string;
     identityId: string;
+    termsAccepted: true;
   }): Promise<ClinicSetupEvaluationInput | undefined>;
 };
 
@@ -47,9 +48,18 @@ export class ClinicSetupAccessError extends Error {
 export class ClinicReadinessNotReadyError extends Error {
   constructor() {
     super(
-      "La Clínica necesita una ruta válida de Médico, Oferta y Horario antes de habilitar Asclepio",
+      "La Clínica necesita una ruta válida de Médico, Oferta y Horario antes de habilitar la atención por WhatsApp de Praxia",
     );
     this.name = "ClinicReadinessNotReadyError";
+  }
+}
+
+export class ClinicTermsNotAcceptedError extends Error {
+  constructor() {
+    super(
+      "Debe aceptar los Términos de uso de Praxia antes de habilitar la atención por WhatsApp.",
+    );
+    this.name = "ClinicTermsNotAcceptedError";
   }
 }
 
@@ -93,16 +103,24 @@ export async function updateClinicBasics(
   return evaluation;
 }
 
-/** Habilita explícitamente Asclepio después de volver a comprobar la capacidad. */
+/** Habilita explícitamente la atención por WhatsApp de Praxia después de volver a comprobar la capacidad. */
 export async function declareClinicReady(
-  input: { clinicId: string; identityId: string },
+  input: {
+    clinicId: string;
+    identityId: string;
+    termsAccepted: boolean;
+  },
   declarer: ClinicReadinessDeclarer = drizzleClinicSetupStore,
 ) {
-  const evaluation = await declarer.declare(input);
+  if (!input.termsAccepted) throw new ClinicTermsNotAcceptedError();
+  const evaluation = await declarer.declare({ ...input, termsAccepted: true });
   if (evaluation === undefined) throw new ClinicSetupAccessError();
   const review = buildClinicSetupReview(evaluation);
   if (review.firstValidRoute === null) {
     throw new ClinicReadinessNotReadyError();
+  }
+  if (!review.terms.accepted) {
+    throw new ClinicTermsNotAcceptedError();
   }
   return {
     ...review,

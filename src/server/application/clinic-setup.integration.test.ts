@@ -28,9 +28,11 @@ import {
   clinicReadiness,
   clinicUsers,
   clinics,
+  configurationAuditEvents,
   doctors,
   user as identities,
 } from "../db/schema";
+import { CLINIC_TERMS_VERSION } from "../../domain/clinic-setup";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
@@ -109,10 +111,58 @@ describe("Configuración inicial y preparación de Asclepio", () => {
           service: { name: "Consulta APO-65" },
         });
 
-        const declared = await declareClinicReady(fixture.primary);
+        const declared = await declareClinicReady({
+          ...fixture.primary,
+          termsAccepted: true,
+        });
         expect(declared.readiness).toEqual({
           asclepioEnabled: true,
           status: "ready",
+        });
+        const readiness = await inClinicTransaction(
+          fixture.primary,
+          (transaction) =>
+            transaction.query.clinicReadiness.findFirst({
+              columns: {
+                termsAcceptedAt: true,
+                termsAcceptedByIdentityId: true,
+                termsAcceptedVersion: true,
+              },
+              where: eq(clinicReadiness.clinicId, fixture.primary.clinicId),
+            }),
+        );
+        if (readiness === undefined) {
+          throw new Error("Falta la aceptación de Términos de la Clínica");
+        }
+        expect(readiness.termsAcceptedAt).toBeInstanceOf(Date);
+        expect(readiness.termsAcceptedByIdentityId).toBe(
+          fixture.primary.identityId,
+        );
+        expect(readiness.termsAcceptedVersion).toBe(CLINIC_TERMS_VERSION);
+
+        await expect(
+          inClinicTransaction(fixture.primary, (transaction) =>
+            transaction.query.configurationAuditEvents.findFirst({
+              columns: {
+                action: true,
+                actorIdentityId: true,
+                afterValues: true,
+                entity: true,
+              },
+              where: and(
+                eq(configurationAuditEvents.clinicId, fixture.primary.clinicId),
+                eq(configurationAuditEvents.action, "clinic-terms-accepted"),
+              ),
+            }),
+          ),
+        ).resolves.toMatchObject({
+          action: "clinic-terms-accepted",
+          actorIdentityId: fixture.primary.identityId,
+          afterValues: {
+            termsAccepted: "true",
+            termsVersion: CLINIC_TERMS_VERSION,
+          },
+          entity: "clinic-terms",
         });
 
         const otherReadiness = await inClinicTransaction(

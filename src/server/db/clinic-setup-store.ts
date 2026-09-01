@@ -2,9 +2,11 @@ import { and, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
+  CLINIC_TERMS_VERSION,
   type ClinicSetupEvaluationInput,
   type ClinicSetupFirstValidRoute,
   type ClinicSetupStepId,
+  isCurrentClinicTermsAccepted,
 } from "~/domain/clinic-setup";
 import { doctorProfileProgress } from "~/domain/panacea-team";
 import { calculateCareOptionsFromInputs } from "~/server/application/care-options";
@@ -122,6 +124,11 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
   async declare(input) {
     return inClinicTransaction(input, async (transaction) => {
       if (!(await isOwner(transaction, input))) return undefined;
+      if (input.termsAccepted !== true) {
+        throw new Error(
+          "Debe aceptar los Términos de uso de Praxia antes de habilitar la atención por WhatsApp.",
+        );
+      }
       const evaluation = await recalculateClinicReadiness(transaction, {
         actorIdentityId: input.identityId,
         clinicId: input.clinicId,
@@ -131,6 +138,39 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
       if (evaluation.firstValidRoute === null) return evaluation;
 
       const readiness = await ensureReadinessRow(transaction, input.clinicId);
+      let termsAcceptedAt = readiness.termsAcceptedAt;
+      if (
+        !isCurrentClinicTermsAccepted({
+          acceptedAt: readiness.termsAcceptedAt,
+          version: readiness.termsAcceptedVersion,
+        })
+      ) {
+        const now = new Date();
+        termsAcceptedAt = now;
+        await transaction
+          .update(clinicReadiness)
+          .set({
+            termsAcceptedAt: now,
+            termsAcceptedByIdentityId: input.identityId,
+            termsAcceptedVersion: CLINIC_TERMS_VERSION,
+            updatedAt: now,
+          })
+          .where(eq(clinicReadiness.clinicId, input.clinicId));
+        await recordReadinessAudit(transaction, {
+          action: "clinic-terms-accepted",
+          actorIdentityId: input.identityId,
+          afterValues: {
+            termsAccepted: "true",
+            termsVersion: CLINIC_TERMS_VERSION,
+          },
+          beforeValues: {
+            termsAccepted: "false",
+            termsVersion: readiness.termsAcceptedVersion,
+          },
+          clinicId: input.clinicId,
+          entity: "clinic-terms",
+        });
+      }
       if (!readiness.asclepioEnabled) {
         const now = new Date();
         await transaction
@@ -159,6 +199,10 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
       return {
         ...evaluation,
         clinic: { ...evaluation.clinic, asclepioEnabled: true },
+        terms: {
+          acceptedAt: termsAcceptedAt,
+          version: CLINIC_TERMS_VERSION,
+        },
       };
     });
   },
@@ -275,6 +319,8 @@ async function evaluateClinicSetup(
   readiness: {
     asclepioEnabled: boolean;
     currentStep: number;
+    termsAcceptedAt: Date | null;
+    termsAcceptedVersion: string | null;
   },
   now: Date,
 ): Promise<EvaluatedClinicSetup> {
@@ -481,6 +527,10 @@ async function evaluateClinicSetup(
       completedProfiles: completedDoctorIds.size,
       pendingInvitations: pendingInvitations.length,
     },
+    terms: {
+      acceptedAt: readiness.termsAcceptedAt,
+      version: readiness.termsAcceptedVersion,
+    },
     validOfferIds,
   };
 }
@@ -493,6 +543,7 @@ function withoutInternalEvaluation(
     clinic: evaluation.clinic,
     firstValidRoute: evaluation.firstValidRoute,
     services: evaluation.services,
+    terms: evaluation.terms,
     team: evaluation.team,
   };
 }
@@ -524,6 +575,8 @@ async function readReadinessRow(
       asclepioEnabledAt: true,
       currentStep: true,
       readinessStatus: true,
+      termsAcceptedAt: true,
+      termsAcceptedVersion: true,
     },
     where: eq(clinicReadiness.clinicId, clinicId),
   });

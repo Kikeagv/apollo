@@ -197,7 +197,7 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
   }
 });
 
-test("el propietario retoma la configuración y declara la primera ruta para Asclepio", async ({
+test("el propietario retoma la configuración y declara la primera ruta para Praxia", async ({
   page,
 }) => {
   const fixture = await createFixture();
@@ -210,6 +210,9 @@ test("el propietario retoma la configuración y declara la primera ruta para Asc
       fixture.ownerEmail,
     );
     await goToPanaceaRoute(page, "/configuracion/inicial");
+    await expect(page.locator("body")).not.toContainText(
+      /Asclepio|Panacea|Apolo/,
+    );
 
     const wizard = page.locator('[data-clinic-setup-wizard="true"]');
     await expect(
@@ -220,7 +223,7 @@ test("el propietario retoma la configuración y declara la primera ruta para Asc
     await expect(wizard.getByText("Configuración pendiente")).toBeVisible();
     await expect(
       wizard.getByRole("button", {
-        name: "Declarar lista para Asclepio",
+        name: "Declarar lista para Praxia",
         exact: true,
       }),
     ).not.toBeVisible();
@@ -241,9 +244,16 @@ test("el propietario retoma la configuración y declara la primera ruta para Asc
       wizard.getByText("Dra. APO-65 · Consulta APO-65"),
     ).toBeVisible();
     const declaration = wizard.getByRole("button", {
-      name: "Declarar lista para Asclepio",
+      name: "Declarar lista para Praxia",
       exact: true,
     });
+    const terms = wizard.getByRole("checkbox", {
+      name: /He leído y acepto los Términos de uso de Praxia/,
+    });
+    await expect(terms).not.toBeChecked();
+    await expect(declaration).toBeDisabled();
+    await terms.check();
+    await expect(declaration).toBeEnabled();
     await declaration.focus();
     await expect(declaration).toBeFocused();
     await declaration.click();
@@ -256,7 +266,12 @@ test("el propietario retoma la configuración y declara la primera ruta para Asc
     await dialog
       .getByRole("button", { name: "Declarar lista", exact: true })
       .click();
-    await expect(wizard.getByText("Asclepio está habilitado")).toBeVisible();
+    await expect(wizard.getByText("Praxia está habilitada")).toBeVisible();
+    await page.reload();
+    await waitForPanaceaInteractivity(page);
+    await expect(wizard.getByText("Praxia está habilitada")).toBeVisible();
+    await expect(terms).toBeChecked();
+    await expect(terms).toBeDisabled();
     await expectNoAccessibilityViolations(
       page,
       '[data-clinic-setup-wizard="true"]',

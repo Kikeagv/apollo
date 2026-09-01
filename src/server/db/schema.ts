@@ -133,6 +133,12 @@ export const clinicReadiness = createTable("clinic_readiness", {
     .notNull(),
   asclepioEnabled: boolean("asclepio_enabled").default(false).notNull(),
   asclepioEnabledAt: timestamp("asclepio_enabled_at", { withTimezone: true }),
+  termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+  termsAcceptedByIdentityId: text("terms_accepted_by_identity_id").references(
+    () => user.id,
+    { onDelete: "set null" },
+  ),
+  termsAcceptedVersion: text("terms_accepted_version"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

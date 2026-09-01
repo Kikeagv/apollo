@@ -20,6 +20,7 @@ const initialConfiguration: ClinicSetupEvaluationInput = {
     activeOffers: 0,
     activeServices: 1,
   },
+  terms: { acceptedAt: null, version: null },
   team: {
     activeDoctors: 2,
     completedProfiles: 1,
@@ -98,6 +99,10 @@ describe("guía de Configuración inicial de Clínica", () => {
         },
       },
       services: { activeOffers: 1, activeServices: 1 },
+      terms: {
+        acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
+        version: "1.0",
+      },
       team: { activeDoctors: 3, completedProfiles: 1, pendingInvitations: 1 },
     });
 
@@ -106,6 +111,12 @@ describe("guía de Configuración inicial de Clínica", () => {
       status: "ready",
     });
     expect(review.canDeclareReady).toBe(true);
+    expect(review.terms).toEqual({
+      accepted: true,
+      acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
+      currentVersion: "1.0",
+      version: "1.0",
+    });
     expect(review.progress).toEqual({ completed: 5, total: 5 });
     expect(review.firstValidRoute?.doctor.name).toBe("Dra. Aurora");
     expect(review.firstValidRoute?.service.name).toBe("Consulta general");
@@ -141,5 +152,33 @@ describe("guía de Configuración inicial de Clínica", () => {
         expect.objectContaining({ code: "availability" }),
       ]),
     );
+  });
+
+  it("mantiene pendiente la declaración hasta registrar la aceptación vigente", () => {
+    const review = buildClinicSetupReview({
+      ...initialConfiguration,
+      availability: { activeSchedules: 1, futureCareOptions: 2 },
+      clinic: { ...initialConfiguration.clinic, currentStep: 5 },
+      firstValidRoute: {
+        doctor: {
+          id: "doctor-1",
+          name: "Dra. Aurora",
+          specialty: "Medicina general",
+        },
+        firstOptionStartsAt: new Date("2026-09-01T14:00:00.000Z"),
+        scheduleEffectiveFrom: "2026-08-01",
+        service: {
+          durationMinutes: 30,
+          id: "service-1",
+          name: "Consulta general",
+        },
+      },
+      services: { activeOffers: 1, activeServices: 1 },
+      team: { activeDoctors: 1, completedProfiles: 1, pendingInvitations: 0 },
+    });
+
+    expect(review.readiness.status).toBe("ready");
+    expect(review.terms.accepted).toBe(false);
+    expect(review.canDeclareReady).toBe(false);
   });
 });

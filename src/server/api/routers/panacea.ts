@@ -238,12 +238,15 @@ export const panaceaRouter = {
       }),
     ),
 
-  declareClinicReady: clinicProcedure.mutation(({ ctx }) =>
-    declareClinicReady({
-      clinicId: ctx.clinic.clinicId,
-      identityId: ctx.clinic.identityId,
-    }),
-  ),
+  declareClinicReady: clinicProcedure
+    .input(z.object({ termsAccepted: z.literal(true) }))
+    .mutation(({ ctx, input }) =>
+      declareClinicReady({
+        ...input,
+        clinicId: ctx.clinic.clinicId,
+        identityId: ctx.clinic.identityId,
+      }),
+    ),
 
   listTeam: clinicProcedure.query(({ ctx }) =>
     listPanaceaTeam(

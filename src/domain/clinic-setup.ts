@@ -1,3 +1,6 @@
+export const CLINIC_TERMS_URL = "https://www.usepraxia.com/terminos";
+export const CLINIC_TERMS_VERSION = "1.0";
+
 export const CLINIC_SETUP_STEPS = [
   {
     description: "Identidad y datos que verá el equipo de la Clínica.",
@@ -24,7 +27,8 @@ export const CLINIC_SETUP_STEPS = [
     label: "Horarios y Disponibilidad",
   },
   {
-    description: "Revise la primera ruta válida antes de habilitar Asclepio.",
+    description:
+      "Revise la primera ruta válida antes de habilitar la atención por WhatsApp de Praxia.",
     href: "/configuracion/inicial?step=review",
     id: "review",
     label: "Revisión de capacidad",
@@ -33,6 +37,11 @@ export const CLINIC_SETUP_STEPS = [
 
 export type ClinicSetupStepId = (typeof CLINIC_SETUP_STEPS)[number]["id"];
 export type ClinicReadinessStatus = "pending" | "ready";
+
+export type ClinicTermsAcceptance = {
+  acceptedAt: Date | null;
+  version: string | null;
+};
 
 export type ClinicSetupFirstValidRoute = {
   doctor: {
@@ -64,6 +73,7 @@ export type ClinicSetupEvaluationInput = {
     activeOffers: number;
     activeServices: number;
   };
+  terms: ClinicTermsAcceptance;
   team: {
     activeDoctors: number;
     completedProfiles: number;
@@ -100,6 +110,12 @@ export type ClinicSetupReview = {
     status: ClinicReadinessStatus;
   };
   steps: ClinicSetupStep[];
+  terms: {
+    accepted: boolean;
+    acceptedAt: Date | null;
+    currentVersion: string;
+    version: string | null;
+  };
 };
 
 /**
@@ -111,6 +127,7 @@ export function buildClinicSetupReview(
 ): ClinicSetupReview {
   const currentStep = stepIdFromNumber(input.clinic.currentStep);
   const firstValidRoute = input.firstValidRoute ?? null;
+  const termsAccepted = isCurrentClinicTermsAccepted(input.terms);
   const prerequisites = [
     input.clinic.name.trim().length > 0,
     input.team.completedProfiles > 0,
@@ -141,7 +158,7 @@ export function buildClinicSetupReview(
 
   return {
     blockers,
-    canDeclareReady: firstValidRoute !== null,
+    canDeclareReady: firstValidRoute !== null && termsAccepted,
     clinicName: input.clinic.name,
     currentStep,
     firstValidRoute,
@@ -153,7 +170,17 @@ export function buildClinicSetupReview(
       status: readinessStatus,
     },
     steps,
+    terms: {
+      accepted: termsAccepted,
+      acceptedAt: input.terms.acceptedAt,
+      currentVersion: CLINIC_TERMS_VERSION,
+      version: input.terms.version,
+    },
   };
+}
+
+export function isCurrentClinicTermsAccepted(terms: ClinicTermsAcceptance) {
+  return terms.acceptedAt !== null && terms.version === CLINIC_TERMS_VERSION;
 }
 
 function clinicSetupBlockers(
