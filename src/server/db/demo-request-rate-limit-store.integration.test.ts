@@ -56,7 +56,9 @@ describe("persistencia de límites de Solicitud de demo", () => {
         ).resolves.toBe(1);
 
         const unscopedRows = await db.transaction(async (transaction) => {
-          await transaction.execute(sql`set local role panacea_clinical_access`);
+          await transaction.execute(
+            sql`set local role panacea_clinical_access`,
+          );
           return transaction.query.demoRequestRateLimitAttempts.findMany({
             columns: { id: true },
           });
