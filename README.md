@@ -45,3 +45,12 @@ La prueba levanta un servidor aislado, crea y elimina una Clínica sintética, y
 recorre en Chromium la activación del médico propietario, inicio con OTP y la
 acción clínica sintética. El OTP fijo se habilita exclusivamente para ese
 proceso E2E; el desarrollo normal sigue usando códigos aleatorios.
+
+### Verificación E2E de la landing pública
+
+La landing se sirve como sitio estático independiente de Next.js. Para validar
+su mensaje, evidencias, accesibilidad y comportamiento responsive, ejecuta:
+
+```sh
+npm run test:e2e:landing
+```

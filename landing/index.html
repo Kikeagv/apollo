@@ -11,8 +11,9 @@
     <link
       rel="icon"
       type="image/svg+xml"
-      href="/public/logos/Logo.svg?v=20260821"
+      href="/public/logos/Logo.svg?v=20260902"
     />
+    <meta property="og:site_name" content="Praxia" />
     <meta
       property="og:title"
       content="Software para clínicas en El Salvador | Praxia"
@@ -22,15 +23,29 @@
       content="Organiza la agenda de tu clínica y gestiona la atención administrativa de citas por WhatsApp. Solicita una demo de Praxia."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Praxia" />
     <meta property="og:url" content="https://www.usepraxia.com" />
     <meta
       property="og:image"
-      content="https://www.usepraxia.com/public/clinic-campus.png"
+      content="https://www.usepraxia.com/public/og/praxia-clinicas-1200x630.png"
     />
     <meta
       property="og:image:alt"
-      content="Ilustración de Praxia para la operación administrativa de una clínica"
+      content="Praxia, software para clínicas en El Salvador que organiza la agenda y la atención por WhatsApp"
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Software para clínicas en El Salvador | Praxia"
+    />
+    <meta
+      name="twitter:description"
+      content="Organiza la agenda de tu clínica y gestiona la atención administrativa de citas por WhatsApp. Solicita una demo de Praxia."
+    />
+    <meta
+      name="twitter:image"
+      content="https://www.usepraxia.com/public/og/praxia-clinicas-1200x630.png"
     />
     <link rel="canonical" href="https://www.usepraxia.com" />
     <script type="application/ld+json">
@@ -69,8 +84,18 @@
       type="font/woff2"
       crossorigin
     />
-    <link rel="preload" as="image" href="/public/clinic-campus.png" />
-    <link rel="stylesheet" href="/styles.css?v=20260821" />
+    <link
+      rel="preload"
+      as="image"
+      href="/public/clinic-campus-hero.webp"
+      imagesrcset="/public/clinic-campus-hero-mobile.webp 720w, /public/clinic-campus-hero.webp 1400w"
+      imagesizes="100vw"
+      type="image/webp"
+    />
+    <link rel="stylesheet" href="/styles.css?v=20260902" />
+    <script>
+      document.documentElement.classList.add("js");
+    </script>
     <title>Software para clínicas en El Salvador | Praxia</title>
   </head>
   <body>
@@ -91,14 +116,22 @@
           <a href="#como-funciona">Cómo funciona</a>
           <a href="#para-clinicas">Para clínicas</a>
         </nav>
+        <details class="nav__menu">
+          <summary aria-label="Menú">Menú</summary>
+          <div class="nav__menu-panel">
+            <a href="#producto">Producto</a>
+            <a href="#como-funciona">Cómo funciona</a>
+            <a href="#para-clinicas">Para clínicas</a>
+            <a class="nav__menu-login" href="https://app.usepraxia.com"
+              >Iniciar sesión</a
+            >
+          </div>
+        </details>
         <div class="nav__actions">
           <a class="nav__login" href="https://app.usepraxia.com"
             >Iniciar sesión</a
           >
-          <a
-            class="button button--sm"
-            href="/demo"
-          >
+          <a class="button button--sm" href="/demo">
             Solicitar una demo
             <span class="button__icon" aria-hidden="true">↗</span>
           </a>
@@ -107,123 +140,165 @@
     </header>
 
     <main>
-      <section class="hero" id="inicio" aria-labelledby="hero-title">
-        <div
-          class="hero__background"
-          role="img"
-          aria-label="Ilustración de una clínica central conectada por caminos en un entorno tranquilo"
-        ></div>
+      <section
+        class="hero"
+        id="inicio"
+        tabindex="-1"
+        aria-labelledby="hero-title"
+      >
         <div class="hero__content">
+          <p class="hero__eyebrow" data-reveal>
+            Praxia para clínicas en El Salvador
+          </p>
           <h1 id="hero-title" data-reveal>
-            La operación de tu clínica, más clara.
+            Software para clínicas que organiza tu agenda y la atención por
+            WhatsApp
           </h1>
           <p class="hero__summary" data-reveal>
-            El asistente reserva, reprograma y cancela citas por WhatsApp,
-            mientras tu equipo mantiene el control.
+            Praxia ayuda a confirmar, reprogramar y cancelar citas según la
+            capacidad real de tu clínica, mientras tu equipo conserva el
+            control.
           </p>
           <div class="hero__actions" data-reveal>
-            <a
-              class="button"
-              href="/demo"
-            >
+            <a class="button" href="/demo">
               Solicitar una demo
               <span class="button__icon" aria-hidden="true">↗</span>
             </a>
-            <a class="text-link" href="#producto">Ver cómo funciona</a>
+            <a class="text-link" href="#producto"
+              >Ver el producto <span aria-hidden="true">↓</span></a
+            >
           </div>
         </div>
+        <picture class="hero__art">
+          <source
+            media="(max-width: 720px)"
+            srcset="/public/clinic-campus-hero-mobile.webp"
+            type="image/webp"
+          />
+          <img
+            class="hero__illustration"
+            src="/public/clinic-campus-hero.webp"
+            alt=""
+            aria-hidden="true"
+            width="1400"
+            height="700"
+            fetchpriority="high"
+            decoding="async"
+          />
+        </picture>
       </section>
 
-      <section
-        class="proof-strip"
-        aria-label="Capacidades de Praxia"
-        data-reveal
-      >
+      <section class="proof-strip" aria-label="Capacidades de Praxia">
         <div class="proof-strip__inner">
           <div class="proof-item">
-            <strong>Reserva</strong>
-            <span>sin llamadas ni mensajes dispersos</span>
+            <strong>Agenda</strong>
+            <span>capacidad real, horarios y bloqueos</span>
           </div>
           <div class="proof-item">
-            <strong>Reprograma</strong>
-            <span>con disponibilidad real de la clínica</span>
+            <strong>WhatsApp</strong>
+            <span>atención administrativa con reglas claras</span>
           </div>
           <div class="proof-item">
-            <strong>Escala</strong>
-            <span>cuando la decisión necesita a tu equipo</span>
+            <strong>Equipo</strong>
+            <span>intervención humana cuando hace falta</span>
           </div>
         </div>
       </section>
 
       <section class="product" id="producto" aria-labelledby="product-title">
-        <div class="section-intro section-intro--wide" data-reveal>
-          <p class="kicker">Una operación conectada</p>
-          <h2 id="product-title">Cada solicitud llega al lugar correcto.</h2>
+        <div class="section-intro section-intro--wide">
+          <p class="kicker">El producto</p>
+          <h2 id="product-title">
+            Agenda, WhatsApp y equipo en un mismo flujo.
+          </h2>
           <p>
-            Praxia une conversaciones, agenda y seguimiento en un mismo flujo
-            para que el trabajo administrativo no se pierda entre chats.
+            Praxia conecta la capacidad de tu clínica con la atención
+            administrativa por WhatsApp y deja cada excepción en manos de tu
+            equipo.
           </p>
         </div>
 
-        <div class="feature-grid__shell" data-reveal>
-          <div class="feature-grid">
-            <article class="feature feature--primary">
-              <div class="feature__copy">
-                <p class="feature__index">01</p>
-                <h3>Un asistente que atiende por WhatsApp.</h3>
-                <p>
-                  Tus pacientes pueden resolver lo cotidiano sin instalar otra
-                  aplicación. El asistente actúa dentro de las reglas que define
-                  tu clínica.
-                </p>
-              </div>
-              <div
-                class="flow-visual"
-                aria-label="Flujo de una solicitud de cita"
-                role="img"
-              >
-                <div class="flow-visual__row">
-                  <span class="flow-visual__node">Paciente</span>
-                  <span class="flow-visual__line" aria-hidden="true"></span>
-                  <span class="flow-visual__node flow-visual__node--accent"
-                    >Asistente</span
-                  >
-                </div>
-                <div class="flow-visual__row flow-visual__row--offset">
-                  <span class="flow-visual__node flow-visual__node--soft"
-                    >Solicitud recibida</span
-                  >
-                  <span class="flow-visual__line" aria-hidden="true"></span>
-                  <span class="flow-visual__node">Cita confirmada</span>
-                </div>
-                <span class="flow-visual__status">Contexto conservado</span>
-              </div>
-            </article>
+        <div class="evidence" id="evidencia" aria-labelledby="evidence-title">
+          <div class="section-intro section-intro--narrow">
+            <h3 id="evidence-title">Una vista clara de lo que está pasando.</h3>
+            <p>
+              Vistas de muestra con datos sintéticos para explicar la operación,
+              no resultados comerciales.
+            </p>
+          </div>
 
-            <article class="feature feature--agenda">
-              <p class="feature__index">02</p>
-              <h3>Una agenda que refleja la capacidad real.</h3>
-              <p>
-                Servicios, horarios, bloqueos y citas se coordinan en una vista
-                común para toda la clínica.
-              </p>
-              <div class="availability-line" aria-hidden="true">
-                <span></span><span></span><span></span><span></span><span></span
-                ><span></span>
+          <div class="evidence-grid">
+            <figure
+              class="evidence-card evidence-card--wide"
+              data-evidence="agenda"
+            >
+              <div class="evidence-card__media">
+                <img
+                  data-evidence-image
+                  src="/public/evidence/agenda-availability.svg"
+                  alt="Vista de muestra de la agenda semanal de una clínica con horarios, disponibilidad, un bloqueo y citas sintéticas"
+                  width="1200"
+                  height="720"
+                  loading="lazy"
+                  decoding="async"
+                />
               </div>
-            </article>
+              <figcaption>
+                <span class="evidence-card__number">01</span>
+                <div>
+                  <strong>Agenda y disponibilidad</strong>
+                  <p>La capacidad se entiende antes de confirmar una Cita.</p>
+                </div>
+              </figcaption>
+            </figure>
 
-            <article class="feature feature--team">
-              <p class="feature__index">03</p>
-              <h3>Tu equipo siempre sabe qué sigue.</h3>
-              <p>
-                Cuando hace falta criterio humano, el caso llega con contexto y
-                sin duplicar trabajo.
-              </p>
-              <div class="handoff-label" aria-hidden="true">
-                <span>→</span> Entrega al equipo
+            <figure class="evidence-card" data-evidence="whatsapp">
+              <div class="evidence-card__media">
+                <img
+                  data-evidence-image
+                  src="/public/evidence/whatsapp-settings.svg"
+                  alt="Vista de muestra de la configuración de Atención por WhatsApp con reglas administrativas y control del equipo"
+                  width="900"
+                  height="720"
+                  loading="lazy"
+                  decoding="async"
+                />
               </div>
-            </article>
+              <figcaption>
+                <span class="evidence-card__number">02</span>
+                <div>
+                  <strong>Atención por WhatsApp</strong>
+                  <p>
+                    Tu clínica decide qué se automatiza y cuándo se avisa al
+                    equipo.
+                  </p>
+                </div>
+              </figcaption>
+            </figure>
+
+            <figure class="evidence-card" data-evidence="pending">
+              <div class="evidence-card__media">
+                <img
+                  data-evidence-image
+                  src="/public/evidence/pending-intervention.svg"
+                  alt="Vista de muestra de Pendientes con solicitudes que requieren intervención humana y su contexto administrativo"
+                  width="900"
+                  height="720"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <figcaption>
+                <span class="evidence-card__number">03</span>
+                <div>
+                  <strong>Pendientes e intervención humana</strong>
+                  <p>
+                    Las excepciones llegan con contexto para que una persona las
+                    resuelva.
+                  </p>
+                </div>
+              </figcaption>
+            </figure>
           </div>
         </div>
       </section>
@@ -233,19 +308,26 @@
         id="como-funciona"
         aria-labelledby="workflow-title"
       >
-        <div class="section-intro section-intro--narrow" data-reveal>
+        <div class="section-intro section-intro--narrow">
           <p class="kicker">Cómo funciona</p>
           <h2 id="workflow-title">
             Automatiza lo repetitivo. Conserva el criterio.
           </h2>
+          <p>
+            La atención administrativa sigue las reglas de capacidad que define
+            tu clínica.
+          </p>
         </div>
 
-        <ol class="steps" data-reveal>
+        <ol class="steps">
           <li class="step">
             <span class="step__number">01</span>
             <div>
               <h3>Configura</h3>
-              <p>Define médicos, servicios, horarios y reglas de atención.</p>
+              <p>
+                Define médicos, servicios, horarios, bloqueos y reglas de
+                atención.
+              </p>
             </div>
             <span class="step__arrow" aria-hidden="true">↗</span>
           </li>
@@ -254,7 +336,8 @@
             <div>
               <h3>Atiende</h3>
               <p>
-                El asistente coordina las citas con tus pacientes por WhatsApp.
+                El asistente confirma, reprograma o cancela Citas dentro de esa
+                capacidad.
               </p>
             </div>
             <span class="step__arrow" aria-hidden="true">↗</span>
@@ -264,7 +347,7 @@
             <div>
               <h3>Supervisa</h3>
               <p>
-                Tu equipo revisa la agenda y resuelve lo que necesita decisión
+                Tu equipo revisa la agenda y recibe lo que necesita una decisión
                 humana.
               </p>
             </div>
@@ -277,23 +360,80 @@
         class="control"
         id="para-clinicas"
         aria-labelledby="control-title"
-        data-reveal
       >
         <div class="control__copy">
-          <p class="kicker kicker--light">Control clínico</p>
+          <p class="kicker kicker--light">Para clínicas</p>
           <h2 id="control-title">
-            La automatización trabaja. Tu equipo decide.
+            Pensada para el Médico propietario y su equipo.
           </h2>
           <p>
-            Praxia está pensada para quitar carga operativa sin quitar
-            visibilidad. Las reglas son de tu clínica y las decisiones
-            importantes siguen siendo de las personas que la conocen.
+            Praxia ayuda a consultorios y Clínicas generales en El Salvador a
+            ordenar su operación. El equipo conserva la agenda, las reglas, las
+            excepciones y las decisiones que no deben automatizarse.
           </p>
         </div>
         <div class="control__list">
-          <div><span>01</span><strong>Privacidad por diseño</strong></div>
-          <div><span>02</span><strong>Mensajes con contexto</strong></div>
+          <div>
+            <span>01</span><strong>Agenda y capacidad bajo control</strong>
+          </div>
+          <div>
+            <span>02</span><strong>Atención administrativa, no clínica</strong>
+          </div>
           <div><span>03</span><strong>Personas en el bucle</strong></div>
+        </div>
+      </section>
+
+      <section class="faq" id="preguntas" aria-labelledby="faq-title">
+        <div class="section-intro section-intro--narrow">
+          <p class="kicker">Preguntas frecuentes</p>
+          <h2 id="faq-title">Lo importante antes de conversar.</h2>
+        </div>
+        <div class="faq__list">
+          <details>
+            <summary>¿Qué puede automatizar Praxia?</summary>
+            <p>
+              Puede confirmar, reprogramar y cancelar Citas dentro de la
+              capacidad y las reglas administrativas de tu clínica.
+            </p>
+          </details>
+          <details>
+            <summary>¿Qué conserva bajo control el equipo?</summary>
+            <p>
+              El equipo define horarios, disponibilidad, bloqueos y límites;
+              también revisa cualquier caso que requiera una decisión humana.
+            </p>
+          </details>
+          <details>
+            <summary>¿Qué límites tiene la atención por WhatsApp?</summary>
+            <p>
+              Es administrativa. Praxia no diagnostica, no da orientación
+              médica, no atiende urgencias ni toma decisiones clínicas.
+            </p>
+          </details>
+          <details>
+            <summary>¿Para qué tipo de Clínica está pensada?</summary>
+            <p>
+              Para consultorios y Clínicas generales pequeñas o privadas en El
+              Salvador, con un Médico propietario y un equipo operativo.
+            </p>
+          </details>
+          <details>
+            <summary>
+              ¿Qué ocurre cuando una solicitud necesita a una persona?
+            </summary>
+            <p>
+              Se detiene la automatización y el equipo recibe un Pendiente con
+              el contexto administrativo necesario para continuar.
+            </p>
+          </details>
+          <details>
+            <summary>¿Qué sucede después de solicitar una demo?</summary>
+            <p>
+              El equipo comercial revisa la información que compartiste y la
+              utiliza para preparar una conversación sobre la operación de tu
+              clínica.
+            </p>
+          </details>
         </div>
       </section>
 
@@ -304,17 +444,14 @@
             Conoce cómo puede funcionar Praxia en tu clínica.
           </h2>
           <p>
-            Agenda una conversación con nuestro equipo y revisemos tu operación
-            actual.
+            Cuéntanos qué parte de tu operación quieres revisar con el equipo.
           </p>
         </div>
         <div class="contact__action">
-          <a
-            class="button"
-            href="/demo"
-            >Solicitar una demo
-            <span class="button__icon" aria-hidden="true">↗</span></a
-          >
+          <a class="button" href="/demo">
+            Solicitar una demo
+            <span class="button__icon" aria-hidden="true">↗</span>
+          </a>
         </div>
       </section>
     </main>
@@ -328,23 +465,24 @@
         <div>
           <p class="footer__label">Praxia</p>
           <nav class="footer__links" aria-label="Praxia">
-            <a href="#producto">Producto</a
-            ><a href="#como-funciona">Cómo funciona</a
-            ><a href="https://app.usepraxia.com">Iniciar sesión</a>
+            <a href="#producto">Producto</a>
+            <a href="#como-funciona">Cómo funciona</a>
+            <a href="#para-clinicas">Para clínicas</a>
+            <a href="https://app.usepraxia.com">Iniciar sesión</a>
           </nav>
         </div>
         <div>
           <p class="footer__label">Legal</p>
           <nav class="footer__links" aria-label="Legal">
-            <a href="/privacidad">Aviso de privacidad</a
-            ><a href="/terminos">Términos de uso</a>
+            <a href="/privacidad">Aviso de privacidad</a>
+            <a href="/terminos">Términos de uso</a>
           </nav>
         </div>
       </div>
       <div class="footer__bottom">
         <div class="footer__bottom-inner">
-          <span>© <span id="year"></span> K31 SOFTWARE</span
-          ><span>Hecho en El Salvador</span>
+          <span>© <span id="year"></span> K31 SOFTWARE</span>
+          <span>Hecho en El Salvador</span>
         </div>
       </div>
     </footer>

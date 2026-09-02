@@ -407,6 +407,20 @@
       "when": 1788341600000,
       "tag": "0058_apo72_canonical_clinic_terms_message",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1788380691000,
+      "tag": "0059_apo73_remove_legacy_terms_acceptance_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1788380692000,
+      "tag": "0060_apo73_repair_clinic_terms_acceptance_trigger",
+      "breakpoints": true
     }
   ]
 }

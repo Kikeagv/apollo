@@ -15,6 +15,7 @@ const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: ["**/landing.spec.ts"],
   fullyParallel: false,
   reporter: "list",
   use: {
