@@ -339,6 +339,9 @@
           if (!window.turnstile || !token) return;
           window.turnstile.render(widget, {
             sitekey: siteKey,
+            // La app envía el token en su propio campo estricto. Evitamos que
+            // Turnstile agregue también `cf-turnstile-response` al formulario.
+            responseField: false,
             callback: function (value) {
               token.value = value;
             },
