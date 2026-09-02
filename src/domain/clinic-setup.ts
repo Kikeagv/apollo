@@ -47,6 +47,12 @@ export type ClinicTermsAcceptanceInput = {
   version: string;
 };
 
+export type ClinicTermsAcceptanceAuditSnapshot = {
+  acceptedAt: Date | null;
+  acceptedByIdentityId: string | null;
+  version: string | null;
+};
+
 export type ClinicTermsContract = {
   acceptanceErrorMessage: string;
   currentVersion: string;
@@ -200,6 +206,21 @@ export function createCurrentClinicTermsAcceptance(
   currentVersion: string,
 ): ClinicTermsAcceptanceInput {
   return { version: currentVersion };
+}
+
+/**
+ * Serializa una aceptación para auditoría sin confundir una versión vencida
+ * con la ausencia de un registro anterior.
+ */
+export function clinicTermsAcceptanceAuditValues(
+  acceptance: ClinicTermsAcceptanceAuditSnapshot,
+): Record<string, string | null> {
+  return {
+    termsAccepted: String(acceptance.acceptedAt !== null),
+    termsAcceptedAt: acceptance.acceptedAt?.toISOString() ?? null,
+    termsAcceptedByIdentityId: acceptance.acceptedByIdentityId,
+    termsVersion: acceptance.version,
+  };
 }
 
 function clinicSetupBlockers(

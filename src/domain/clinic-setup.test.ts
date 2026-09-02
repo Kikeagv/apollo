@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildClinicSetupReview,
+  clinicTermsAcceptanceAuditValues,
   createCurrentClinicTermsAcceptance,
   type ClinicSetupEvaluationInput,
 } from "./clinic-setup";
@@ -37,6 +38,42 @@ const initialConfiguration: ClinicSetupEvaluationInput = {
 };
 
 describe("guía de Configuración inicial de Clínica", () => {
+  it.each([
+    {
+      acceptance: {
+        acceptedAt: null,
+        acceptedByIdentityId: null,
+        version: null,
+      },
+      label: "ausencia de aceptación previa",
+      values: {
+        termsAccepted: "false",
+        termsAcceptedAt: null,
+        termsAcceptedByIdentityId: null,
+        termsVersion: null,
+      },
+    },
+    {
+      acceptance: {
+        acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
+        acceptedByIdentityId: "owner-1",
+        version: "1.0",
+      },
+      label: "aceptación anterior desactualizada",
+      values: {
+        termsAccepted: "true",
+        termsAcceptedAt: "2026-09-01T12:00:00.000Z",
+        termsAcceptedByIdentityId: "owner-1",
+        termsVersion: "1.0",
+      },
+    },
+  ])(
+    "representa $label en el snapshot de auditoría",
+    ({ acceptance, values }) => {
+      expect(clinicTermsAcceptanceAuditValues(acceptance)).toEqual(values);
+    },
+  );
+
   it("crea la aceptación con la versión entregada por el contrato vigente", () => {
     expect(
       createCurrentClinicTermsAcceptance(termsContract.currentVersion),

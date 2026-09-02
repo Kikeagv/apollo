@@ -2,6 +2,7 @@ import { and, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
+  clinicTermsAcceptanceAuditValues,
   ClinicTermsAcceptanceError,
   type ClinicTermsAcceptance,
   type ClinicTermsAcceptanceInput,
@@ -149,30 +150,36 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
       if (evaluation.firstValidRoute === null) return evaluation;
 
       const readiness = await ensureReadinessRow(transaction, input.clinicId);
+      const previousTermsAcceptance = {
+        acceptedAt: readiness.termsAcceptedAt,
+        acceptedByIdentityId: readiness.termsAcceptedByIdentityId,
+        version: readiness.termsAcceptedVersion,
+      };
       let termsAcceptedAt = readiness.termsAcceptedAt;
       if (!readiness.termsAcceptanceIsCurrent) {
         const now = new Date();
-        termsAcceptedAt = now;
+        const nextTermsAcceptance = {
+          acceptedAt: now,
+          acceptedByIdentityId: input.identityId,
+          version: termsAcceptance.version,
+        };
+        termsAcceptedAt = nextTermsAcceptance.acceptedAt;
         await transaction
           .update(clinicReadiness)
           .set({
-            termsAcceptedAt: now,
-            termsAcceptedByIdentityId: input.identityId,
-            termsAcceptedVersion: termsAcceptance.version,
+            termsAcceptedAt: nextTermsAcceptance.acceptedAt,
+            termsAcceptedByIdentityId: nextTermsAcceptance.acceptedByIdentityId,
+            termsAcceptedVersion: nextTermsAcceptance.version,
             updatedAt: now,
           })
           .where(eq(clinicReadiness.clinicId, input.clinicId));
         await recordReadinessAudit(transaction, {
           action: "clinic-terms-accepted",
           actorIdentityId: input.identityId,
-          afterValues: {
-            termsAccepted: "true",
-            termsVersion: termsAcceptance.version,
-          },
-          beforeValues: {
-            termsAccepted: "false",
-            termsVersion: readiness.termsAcceptedVersion,
-          },
+          afterValues: clinicTermsAcceptanceAuditValues(nextTermsAcceptance),
+          beforeValues: clinicTermsAcceptanceAuditValues(
+            previousTermsAcceptance,
+          ),
           clinicId: input.clinicId,
           entity: "clinic-terms",
         });
@@ -616,6 +623,7 @@ async function readReadinessRow(
       currentStep: clinicReadiness.currentStep,
       readinessStatus: clinicReadiness.readinessStatus,
       termsAcceptedAt: clinicReadiness.termsAcceptedAt,
+      termsAcceptedByIdentityId: clinicReadiness.termsAcceptedByIdentityId,
       termsAcceptedVersion: clinicReadiness.termsAcceptedVersion,
       termsAcceptanceIsCurrent: sql<boolean>`
         "public"."clinic_terms_acceptance_is_current"(

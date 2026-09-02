@@ -189,6 +189,22 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
+          expect(clinicReadinessPolicies.map(({ name }) => name)).not.toContain(
+            "clinic_readiness_terms_acceptance_guard",
+          );
+          const clinicReadinessTriggers = await migrated<
+            Array<{ definition: string; name: string }>
+          >`
+            select tgname as name, pg_get_triggerdef(oid) as definition
+            from pg_trigger
+            where tgrelid = 'pg-drizzle_clinic_readiness'::regclass
+              and not tgisinternal
+              and tgname = 'clinic_readiness_terms_acceptance_guard'
+          `;
+          expect(clinicReadinessTriggers).toHaveLength(1);
+          expect(clinicReadinessTriggers[0]?.definition).toContain(
+            "clinic_readiness_validate_terms_acceptance",
+          );
           const termsAcceptancePolicies = await migrated<
             Array<{
               command: "INSERT" | "UPDATE";
