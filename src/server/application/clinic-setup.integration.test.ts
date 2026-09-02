@@ -26,6 +26,7 @@ import { drizzleSimulatedWhatsAppBookingStore } from "../db/simulated-whatsapp-b
 import {
   apoloSuperadmins,
   clinicReadiness,
+  clinicTermsContract,
   clinicUsers,
   clinics,
   configurationAuditEvents,
@@ -163,14 +164,20 @@ describe("Configuración inicial y preparación de Asclepio", () => {
         expect(readiness.termsAcceptedVersion).toBe(
           calculated.termsAcceptance.currentVersion,
         );
+        if (readiness.termsAcceptedAt === null) {
+          throw new Error("Falta la fecha de aceptación de Términos");
+        }
+        const initialTermsAcceptedAt = readiness.termsAcceptedAt;
 
-        await expect(
-          inClinicTransaction(fixture.primary, (transaction) =>
+        const initialTermsAudit = await inClinicTransaction(
+          fixture.primary,
+          (transaction) =>
             transaction.query.configurationAuditEvents.findFirst({
               columns: {
                 action: true,
                 actorIdentityId: true,
                 afterValues: true,
+                beforeValues: true,
                 entity: true,
               },
               where: and(
@@ -178,16 +185,126 @@ describe("Configuración inicial y preparación de Asclepio", () => {
                 eq(configurationAuditEvents.action, "clinic-terms-accepted"),
               ),
             }),
-          ),
-        ).resolves.toMatchObject({
+        );
+        if (initialTermsAudit === undefined) {
+          throw new Error("Falta la auditoría de aceptación inicial");
+        }
+        expect(initialTermsAudit).toMatchObject({
           action: "clinic-terms-accepted",
           actorIdentityId: fixture.primary.identityId,
+          beforeValues: {
+            termsAccepted: "false",
+            termsAcceptedAt: null,
+            termsAcceptedByIdentityId: null,
+            termsVersion: null,
+          },
           afterValues: {
             termsAccepted: "true",
+            termsAcceptedByIdentityId: fixture.primary.identityId,
             termsVersion: calculated.termsAcceptance.currentVersion,
           },
           entity: "clinic-terms",
         });
+        expect(initialTermsAudit.afterValues.termsAcceptedAt).toBe(
+          initialTermsAcceptedAt.toISOString(),
+        );
+
+        await db
+          .update(clinicTermsContract)
+          .set({ currentVersion: "2.0" })
+          .where(eq(clinicTermsContract.id, true));
+        try {
+          await expect(getClinicSetup(fixture.primary)).resolves.toMatchObject({
+            termsAcceptance: {
+              accepted: false,
+              acceptedAt: initialTermsAcceptedAt,
+              currentVersion: "2.0",
+              version: calculated.termsAcceptance.currentVersion,
+            },
+          });
+
+          const reaccepted = await declareClinicReady({
+            ...fixture.primary,
+            termsAcceptance: { version: "2.0" },
+          });
+          expect(reaccepted.termsAcceptance).toMatchObject({
+            accepted: true,
+            currentVersion: "2.0",
+            version: "2.0",
+          });
+
+          const reacceptedReadiness = await inClinicTransaction(
+            fixture.primary,
+            (transaction) =>
+              transaction.query.clinicReadiness.findFirst({
+                columns: {
+                  termsAcceptedAt: true,
+                  termsAcceptedByIdentityId: true,
+                  termsAcceptedVersion: true,
+                },
+                where: eq(clinicReadiness.clinicId, fixture.primary.clinicId),
+              }),
+          );
+          if (reacceptedReadiness === undefined) {
+            throw new Error("Falta la aceptación vigente de Términos");
+          }
+          if (reacceptedReadiness.termsAcceptedAt === null) {
+            throw new Error("Falta la fecha de reaceptación de Términos");
+          }
+          const reacceptedTermsAcceptedAt = reacceptedReadiness.termsAcceptedAt;
+          expect(reacceptedReadiness.termsAcceptedAt).not.toEqual(
+            initialTermsAcceptedAt,
+          );
+          expect(reacceptedReadiness.termsAcceptedByIdentityId).toBe(
+            fixture.primary.identityId,
+          );
+          expect(reacceptedReadiness.termsAcceptedVersion).toBe("2.0");
+
+          const termAudits = await inClinicTransaction(
+            fixture.primary,
+            (transaction) =>
+              transaction.query.configurationAuditEvents.findMany({
+                columns: {
+                  action: true,
+                  afterValues: true,
+                  beforeValues: true,
+                },
+                where: and(
+                  eq(
+                    configurationAuditEvents.clinicId,
+                    fixture.primary.clinicId,
+                  ),
+                  eq(configurationAuditEvents.action, "clinic-terms-accepted"),
+                ),
+              }),
+          );
+          expect(termAudits).toHaveLength(2);
+          const reacceptanceAudit = termAudits.find(
+            (event) => event.afterValues.termsVersion === "2.0",
+          );
+          if (reacceptanceAudit === undefined) {
+            throw new Error("Falta la auditoría de reaceptación");
+          }
+          expect(reacceptanceAudit).toMatchObject({
+            beforeValues: {
+              termsAccepted: "true",
+              termsAcceptedAt: initialTermsAcceptedAt.toISOString(),
+              termsAcceptedByIdentityId: fixture.primary.identityId,
+              termsVersion: calculated.termsAcceptance.currentVersion,
+            },
+            afterValues: {
+              termsAccepted: "true",
+              termsAcceptedAt: reacceptedTermsAcceptedAt.toISOString(),
+              termsAcceptedByIdentityId: fixture.primary.identityId,
+              termsVersion: "2.0",
+            },
+          });
+        } finally {
+          await db
+            .update(clinicTermsContract)
+            .set({ currentVersion: calculated.termsAcceptance.currentVersion })
+            .where(eq(clinicTermsContract.id, true));
+        }
 
         const otherReadiness = await inClinicTransaction(
           fixture.primary,
