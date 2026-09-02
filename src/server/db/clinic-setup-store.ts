@@ -2,11 +2,12 @@ import { and, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
-  CLINIC_TERMS_VERSION,
+  type ClinicTermsAcceptance,
   type ClinicSetupEvaluationInput,
   type ClinicSetupFirstValidRoute,
   type ClinicSetupStepId,
-  isCurrentClinicTermsAccepted,
+  isCurrentClinicTermsAcceptance,
+  requireCurrentClinicTermsAcceptance,
 } from "~/domain/clinic-setup";
 import { doctorProfileProgress } from "~/domain/panacea-team";
 import { calculateCareOptionsFromInputs } from "~/server/application/care-options";
@@ -124,11 +125,9 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
   async declare(input) {
     return inClinicTransaction(input, async (transaction) => {
       if (!(await isOwner(transaction, input))) return undefined;
-      if (input.termsAccepted !== true) {
-        throw new Error(
-          "Debe aceptar los Términos de uso de Praxia antes de habilitar la atención por WhatsApp.",
-        );
-      }
+      const termsAcceptance = requireCurrentClinicTermsAcceptance(
+        input.termsAcceptance,
+      );
       const evaluation = await recalculateClinicReadiness(transaction, {
         actorIdentityId: input.identityId,
         clinicId: input.clinicId,
@@ -140,10 +139,7 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
       const readiness = await ensureReadinessRow(transaction, input.clinicId);
       let termsAcceptedAt = readiness.termsAcceptedAt;
       if (
-        !isCurrentClinicTermsAccepted({
-          acceptedAt: readiness.termsAcceptedAt,
-          version: readiness.termsAcceptedVersion,
-        })
+        !isCurrentClinicTermsAcceptance(termsAcceptanceFromReadiness(readiness))
       ) {
         const now = new Date();
         termsAcceptedAt = now;
@@ -152,7 +148,7 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
           .set({
             termsAcceptedAt: now,
             termsAcceptedByIdentityId: input.identityId,
-            termsAcceptedVersion: CLINIC_TERMS_VERSION,
+            termsAcceptedVersion: termsAcceptance.version,
             updatedAt: now,
           })
           .where(eq(clinicReadiness.clinicId, input.clinicId));
@@ -161,7 +157,7 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
           actorIdentityId: input.identityId,
           afterValues: {
             termsAccepted: "true",
-            termsVersion: CLINIC_TERMS_VERSION,
+            termsVersion: termsAcceptance.version,
           },
           beforeValues: {
             termsAccepted: "false",
@@ -199,9 +195,9 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
       return {
         ...evaluation,
         clinic: { ...evaluation.clinic, asclepioEnabled: true },
-        terms: {
+        termsAcceptance: {
           acceptedAt: termsAcceptedAt,
-          version: CLINIC_TERMS_VERSION,
+          version: termsAcceptance.version,
         },
       };
     });
@@ -235,12 +231,14 @@ export async function recalculateClinicReadiness(
   const evaluated = await evaluateClinicSetup(
     transaction,
     input.clinicId,
-    current,
+    readinessForEvaluation(current),
     input.now ?? new Date(),
   );
   const evaluation = withoutInternalEvaluation(evaluated);
   const nextStatus =
     evaluation.firstValidRoute === null ? ("pending" as const) : "ready";
+  // La aceptación se valida al declarar; no revocamos habilitaciones históricas
+  // solo porque APO-72 aún no tenga un registro de aceptación.
   const nextEnabled = current.asclepioEnabled && nextStatus === "ready";
   const statusChanged =
     current.readinessStatus !== nextStatus ||
@@ -292,7 +290,7 @@ export async function isAsclepioEnabled(
   // conservamos su operación existente durante la migración progresiva.
   if (readiness === undefined) return true;
   return (
-    readiness?.asclepioEnabled === true && readiness.readinessStatus === "ready"
+    readiness.asclepioEnabled === true && readiness.readinessStatus === "ready"
   );
 }
 
@@ -307,7 +305,7 @@ export async function listAsclepioOfferIds(
   const evaluation = await evaluateClinicSetup(
     transaction,
     clinicId,
-    readiness,
+    readinessForEvaluation(readiness),
     now,
   );
   return evaluation.validOfferIds;
@@ -319,8 +317,7 @@ async function evaluateClinicSetup(
   readiness: {
     asclepioEnabled: boolean;
     currentStep: number;
-    termsAcceptedAt: Date | null;
-    termsAcceptedVersion: string | null;
+    termsAcceptance: ClinicTermsAcceptance;
   },
   now: Date,
 ): Promise<EvaluatedClinicSetup> {
@@ -527,11 +524,31 @@ async function evaluateClinicSetup(
       completedProfiles: completedDoctorIds.size,
       pendingInvitations: pendingInvitations.length,
     },
-    terms: {
-      acceptedAt: readiness.termsAcceptedAt,
-      version: readiness.termsAcceptedVersion,
-    },
+    termsAcceptance: readiness.termsAcceptance,
     validOfferIds,
+  };
+}
+
+function readinessForEvaluation(readiness: {
+  asclepioEnabled: boolean;
+  currentStep: number;
+  termsAcceptedAt: Date | null;
+  termsAcceptedVersion: string | null;
+}) {
+  return {
+    asclepioEnabled: readiness.asclepioEnabled,
+    currentStep: readiness.currentStep,
+    termsAcceptance: termsAcceptanceFromReadiness(readiness),
+  };
+}
+
+function termsAcceptanceFromReadiness(readiness: {
+  termsAcceptedAt: Date | null;
+  termsAcceptedVersion: string | null;
+}): ClinicTermsAcceptance {
+  return {
+    acceptedAt: readiness.termsAcceptedAt,
+    version: readiness.termsAcceptedVersion,
   };
 }
 
@@ -543,7 +560,7 @@ function withoutInternalEvaluation(
     clinic: evaluation.clinic,
     firstValidRoute: evaluation.firstValidRoute,
     services: evaluation.services,
-    terms: evaluation.terms,
+    termsAcceptance: evaluation.termsAcceptance,
     team: evaluation.team,
   };
 }

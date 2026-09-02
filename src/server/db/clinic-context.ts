@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 
+import { CLINIC_TERMS_VERSION } from "~/domain/clinic-setup";
 import { db } from "~/server/db";
 import {
   apoloSuperadmins,
@@ -22,6 +23,9 @@ export async function inClinicTransaction<T>(
     await transaction.execute(sql`set local role panacea_clinical_access`);
     await transaction.execute(
       sql`select set_config('app.identity_id', ${input.identityId}, true)`,
+    );
+    await transaction.execute(
+      sql`select set_config('app.clinic_terms_version', ${CLINIC_TERMS_VERSION}, true)`,
     );
 
     const membership = await transaction.query.clinicUsers.findFirst({

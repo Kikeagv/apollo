@@ -5,6 +5,11 @@ import { promisify } from "node:util";
 import postgres from "postgres";
 import { describe, expect, it } from "vitest";
 
+import {
+  CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
+  CLINIC_TERMS_VERSION,
+} from "~/domain/clinic-setup";
+
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 const run = promisify(execFile);
@@ -186,6 +191,77 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
+          const termsAcceptancePolicies = await migrated<
+            Array<{
+              command: "INSERT" | "UPDATE";
+              name: string;
+              with_check: string;
+            }>
+          >`
+            select cmd as command, policyname as name, with_check
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_clinic_readiness'
+              and policyname in (
+                'clinic_readiness_owner_insert',
+                'clinic_readiness_owner_update'
+              )
+          `;
+          expect(termsAcceptancePolicies).toHaveLength(2);
+          expect(
+            termsAcceptancePolicies.map(({ command, name }) => ({
+              command,
+              name,
+            })),
+          ).toEqual(
+            expect.arrayContaining([
+              {
+                command: "INSERT",
+                name: "clinic_readiness_owner_insert",
+              },
+              {
+                command: "UPDATE",
+                name: "clinic_readiness_owner_update",
+              },
+            ]),
+          );
+          for (const policyName of ["clinic_readiness_owner_insert"]) {
+            expect(
+              termsAcceptancePolicies.find(({ name }) => name === policyName)
+                ?.with_check,
+            ).toContain("clinic_terms_acceptance_is_current");
+          }
+          const termsAcceptanceFunctions = await migrated<
+            Array<{ definition: string; name: string }>
+          >`
+            select p.proname as name, pg_get_functiondef(p.oid) as definition
+            from pg_proc p
+            inner join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public'
+              and p.proname = 'clinic_terms_acceptance_is_current'
+          `;
+          expect(termsAcceptanceFunctions).toHaveLength(1);
+          expect(termsAcceptanceFunctions[0]).toMatchObject({
+            name: "clinic_terms_acceptance_is_current",
+          });
+          expect(termsAcceptanceFunctions[0]?.definition).toContain(
+            "app.clinic_terms_version",
+          );
+          const termsAcceptanceConstraints = await migrated<
+            Array<{ definition: string; name: string }>
+          >`
+            select conname as name, pg_get_constraintdef(oid) as definition
+            from pg_constraint
+            where conrelid = 'pg-drizzle_clinic_readiness'::regclass
+              and conname = 'clinic_readiness_terms_acceptance_complete'
+          `;
+          expect(termsAcceptanceConstraints).toHaveLength(1);
+          expect(termsAcceptanceConstraints[0]).toMatchObject({
+            name: "clinic_readiness_terms_acceptance_complete",
+          });
+          expect(termsAcceptanceConstraints[0]?.definition).toContain(
+            "terms_accepted_at",
+          );
         } finally {
           await migrated.end();
         }
@@ -196,15 +272,18 @@ describe("migraciones de PostgreSQL", () => {
         await admin.unsafe(`grant panacea_clinical_access to "${roleName}"`);
 
         const rlsClinicId = randomUUID();
+        const legacyClinicId = randomUUID();
         const otherClinicId = randomUUID();
         const rlsIdentities = {
           doctor: randomUUID(),
+          legacyOwner: randomUUID(),
           other: randomUUID(),
           owner: randomUUID(),
           secretary: randomUUID(),
         };
         const rlsMemberships = {
           doctor: randomUUID(),
+          legacyOwner: randomUUID(),
           other: randomUUID(),
           owner: randomUUID(),
           secretary: randomUUID(),
@@ -221,6 +300,7 @@ describe("migraciones de PostgreSQL", () => {
           ) values
             (${rlsIdentities.owner}, 'RLS owner', ${`${rlsIdentities.owner}@test`}, true, now(), now()),
             (${rlsIdentities.doctor}, 'RLS doctor', ${`${rlsIdentities.doctor}@test`}, true, now(), now()),
+            (${rlsIdentities.legacyOwner}, 'Legacy RLS owner', ${`${rlsIdentities.legacyOwner}@test`}, true, now(), now()),
             (${rlsIdentities.secretary}, 'RLS secretary', ${`${rlsIdentities.secretary}@test`}, true, now(), now()),
             (${rlsIdentities.other}, 'RLS other', ${`${rlsIdentities.other}@test`}, true, now(), now())
         `;
@@ -228,6 +308,7 @@ describe("migraciones de PostgreSQL", () => {
           insert into "pg-drizzle_clinic" (id, name)
           values
             (${rlsClinicId}, 'RLS clinic'),
+            (${legacyClinicId}, 'Legacy RLS clinic'),
             (${otherClinicId}, 'Other RLS clinic')
         `;
         await rlsAdmin`
@@ -237,6 +318,7 @@ describe("migraciones de PostgreSQL", () => {
             (${rlsMemberships.owner}, ${rlsClinicId}, ${rlsIdentities.owner}, 'owner', true),
             (${rlsMemberships.doctor}, ${rlsClinicId}, ${rlsIdentities.doctor}, 'doctor', true),
             (${rlsMemberships.secretary}, ${rlsClinicId}, ${rlsIdentities.secretary}, 'secretary', true),
+            (${rlsMemberships.legacyOwner}, ${legacyClinicId}, ${rlsIdentities.legacyOwner}, 'owner', true),
             (${rlsMemberships.other}, ${otherClinicId}, ${rlsIdentities.other}, 'doctor', true)
         `;
         await rlsAdmin`
@@ -246,6 +328,19 @@ describe("migraciones de PostgreSQL", () => {
             (${rlsDoctors.owner}, ${rlsClinicId}, ${rlsMemberships.owner}, 'Owner', 'General'),
             (${rlsDoctors.doctor}, ${rlsClinicId}, ${rlsMemberships.doctor}, 'Doctor', 'General'),
             (${rlsDoctors.other}, ${otherClinicId}, ${rlsMemberships.other}, 'Other', 'General')
+        `;
+        await rlsAdmin`
+          alter table "pg-drizzle_clinic_readiness"
+          disable trigger "clinic_readiness_terms_acceptance_guard"
+        `;
+        await rlsAdmin`
+          insert into "pg-drizzle_clinic_readiness" (
+            clinic_id, readiness_status, asclepio_enabled
+          ) values (${legacyClinicId}, 'ready', true)
+        `;
+        await rlsAdmin`
+          alter table "pg-drizzle_clinic_readiness"
+          enable trigger "clinic_readiness_terms_acceptance_guard"
         `;
         await rlsAdmin.end();
 
@@ -373,6 +468,59 @@ describe("migraciones de PostgreSQL", () => {
                 `,
             ),
           ).resolves.toEqual([]);
+
+          await expect(
+            withClinicContext(
+              restricted,
+              {
+                clinicId: rlsClinicId,
+                clinicRole: "owner",
+                clinicUserId: rlsMemberships.owner,
+                identityId: rlsIdentities.owner,
+              },
+              (transaction) =>
+                transaction`
+                  insert into "pg-drizzle_clinic_readiness" (clinic_id)
+                  values (${rlsClinicId})
+                `,
+            ),
+          ).resolves.toEqual([]);
+          await expect(
+            withClinicContext(
+              restricted,
+              {
+                clinicId: rlsClinicId,
+                clinicRole: "owner",
+                clinicUserId: rlsMemberships.owner,
+                identityId: rlsIdentities.owner,
+              },
+              (transaction) =>
+                transaction`
+                  update "pg-drizzle_clinic_readiness"
+                  set asclepio_enabled = true, readiness_status = 'ready'
+                  where clinic_id = ${rlsClinicId}
+                `,
+            ),
+          ).rejects.toThrow(CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE);
+
+          await expect(
+            withClinicContext(
+              restricted,
+              {
+                clinicId: legacyClinicId,
+                clinicRole: "owner",
+                clinicUserId: rlsMemberships.legacyOwner,
+                identityId: rlsIdentities.legacyOwner,
+              },
+              (transaction) =>
+                transaction`
+                  update "pg-drizzle_clinic_readiness"
+                  set current_step = 2
+                  where clinic_id = ${legacyClinicId}
+                  returning current_step, asclepio_enabled
+                `,
+            ),
+          ).resolves.toEqual([{ current_step: 2, asclepio_enabled: true }]);
 
           const ownerDoctors = await withClinicContext(
             restricted,
@@ -573,6 +721,7 @@ async function withClinicContext<T>(
     await transaction`set local role panacea_clinical_access`;
     await transaction`select set_config('app.clinic_id', ${input.clinicId}, true)`;
     await transaction`select set_config('app.identity_id', ${input.identityId}, true)`;
+    await transaction`select set_config('app.clinic_terms_version', ${CLINIC_TERMS_VERSION}, true)`;
     await transaction`select set_config('app.clinic_role', ${input.clinicRole}, true)`;
     await transaction`select set_config('app.clinic_user_id', ${input.clinicUserId}, true)`;
     return operation(transaction);

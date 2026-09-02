@@ -32,7 +32,10 @@ import {
   doctors,
   user as identities,
 } from "../db/schema";
-import { CLINIC_TERMS_VERSION } from "../../domain/clinic-setup";
+import {
+  CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
+  CLINIC_TERMS_VERSION,
+} from "../../domain/clinic-setup";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
@@ -111,9 +114,29 @@ describe("Configuración inicial y preparación de Asclepio", () => {
           service: { name: "Consulta APO-65" },
         });
 
+        await expect(
+          declareClinicReady({
+            ...fixture.primary,
+            termsAcceptance: null,
+          }),
+        ).rejects.toThrow(CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE);
+        await expect(
+          declareClinicReady({
+            ...fixture.primary,
+            termsAcceptance: { version: "0.9" },
+          }),
+        ).rejects.toThrow(CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE);
+        await expect(getClinicSetup(fixture.primary)).resolves.toMatchObject({
+          readiness: { asclepioEnabled: false, status: "ready" },
+          termsAcceptance: {
+            accepted: false,
+            version: null,
+          },
+        });
+
         const declared = await declareClinicReady({
           ...fixture.primary,
-          termsAccepted: true,
+          termsAcceptance: { version: CLINIC_TERMS_VERSION },
         });
         expect(declared.readiness).toEqual({
           asclepioEnabled: true,

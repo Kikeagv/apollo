@@ -43,8 +43,11 @@ import { Progress } from "~/components/ui/progress";
 import {
   CLINIC_SETUP_STEPS,
   CLINIC_TERMS_URL,
+  createCurrentClinicTermsAcceptance,
+  isCurrentClinicTermsVersion,
   type ClinicSetupReview,
   type ClinicSetupStepId,
+  type ClinicTermsAcceptanceInput,
 } from "~/domain/clinic-setup";
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import { formValue } from "~/app/form-values";
@@ -80,7 +83,7 @@ export function ClinicSetupEntryCard() {
           <ReadinessBadge
             status={status}
             enabled={setup.data.readiness.asclepioEnabled}
-            termsAccepted={setup.data.terms.accepted}
+            termsAcceptanceAccepted={setup.data.termsAcceptance.accepted}
           />
         </div>
         <Progress
@@ -109,7 +112,8 @@ export function ClinicSetupWizard() {
   const [activeStep, setActiveStep] = useState<ClinicSetupStepId>();
   const [declarationOpen, setDeclarationOpen] = useState(false);
   const [savedBasics, setSavedBasics] = useState(false);
-  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [termsAcceptance, setTermsAcceptance] =
+    useState<ClinicTermsAcceptanceInput | null>(null);
 
   const saveStep = api.panacea.saveClinicSetupStep.useMutation({
     onSuccess: () => {
@@ -205,7 +209,7 @@ export function ClinicSetupWizard() {
             <ReadinessBadge
               enabled={review.readiness.asclepioEnabled}
               status={review.readiness.status}
-              termsAccepted={review.terms.accepted}
+              termsAcceptanceAccepted={review.termsAcceptance.accepted}
             />
           </div>
           <div className="flex items-center gap-3">
@@ -270,11 +274,11 @@ export function ClinicSetupWizard() {
                         onContinue={continueTo}
                         onOpenConfiguration={openConfiguration}
                         onSubmitBasics={submitBasics}
-                        onTermsAcceptedChange={setTermsAccepted}
+                        onTermsAcceptanceChange={setTermsAcceptance}
                         review={review}
                         savedBasics={savedBasics}
                         step={candidate}
-                        termsAccepted={termsAccepted}
+                        termsAcceptance={termsAcceptance}
                         updateBasicsPending={updateBasics.isPending}
                       />
                     </div>
@@ -328,8 +332,8 @@ export function ClinicSetupWizard() {
               válida que acaba de revisar. Podrá seguir ajustando la
               configuración y las Citas existentes no se modificarán. Al
               confirmar, registraremos la aceptación de los Términos de uso de
-              Praxia, versión {review.terms.currentVersion}, junto con su
-              identidad.
+              Praxia, versión {review.termsAcceptance.currentVersion}, junto con
+              su identidad.
             </AlertDialogDescription>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={declareReady.isPending}>
@@ -337,7 +341,12 @@ export function ClinicSetupWizard() {
               </AlertDialogCancel>
               <AlertDialogAction
                 disabled={declareReady.isPending}
-                onClick={() => declareReady.mutate({ termsAccepted: true })}
+                onClick={() =>
+                  declareReady.mutate({
+                    termsAcceptance:
+                      termsAcceptance ?? createCurrentClinicTermsAcceptance(),
+                  })
+                }
               >
                 {declareReady.isPending ? "Declarando…" : "Declarar lista"}
               </AlertDialogAction>
@@ -354,22 +363,24 @@ function StepContent({
   onContinue,
   onOpenConfiguration,
   onSubmitBasics,
-  onTermsAcceptedChange,
+  onTermsAcceptanceChange,
   review,
   savedBasics,
   step,
-  termsAccepted,
+  termsAcceptance,
   updateBasicsPending,
 }: {
   onDeclare: () => void;
   onContinue: (step: ClinicSetupStepId) => void;
   onOpenConfiguration: (step: ClinicSetupStepId, href: string) => void;
   onSubmitBasics: (event: FormEvent<HTMLFormElement>) => void;
-  onTermsAcceptedChange: (accepted: boolean) => void;
+  onTermsAcceptanceChange: (
+    acceptance: ClinicTermsAcceptanceInput | null,
+  ) => void;
   review: ClinicSetupReview;
   savedBasics: boolean;
   step: ClinicSetupReview["steps"][number];
-  termsAccepted: boolean;
+  termsAcceptance: ClinicTermsAcceptanceInput | null;
   updateBasicsPending: boolean;
 }) {
   switch (step.id) {
@@ -491,9 +502,9 @@ function StepContent({
         <ReviewStep
           onDeclare={onDeclare}
           onContinue={onContinue}
-          onTermsAcceptedChange={onTermsAcceptedChange}
+          onTermsAcceptanceChange={onTermsAcceptanceChange}
           review={review}
-          termsAccepted={termsAccepted}
+          termsAcceptance={termsAcceptance}
         />
       );
   }
@@ -555,18 +566,22 @@ function StepFooter({
 function ReviewStep({
   onDeclare,
   onContinue,
-  onTermsAcceptedChange,
+  onTermsAcceptanceChange,
   review,
-  termsAccepted,
+  termsAcceptance,
 }: {
   onContinue: (step: ClinicSetupStepId) => void;
   onDeclare: () => void;
-  onTermsAcceptedChange: (accepted: boolean) => void;
+  onTermsAcceptanceChange: (
+    acceptance: ClinicTermsAcceptanceInput | null,
+  ) => void;
   review: ClinicSetupReview;
-  termsAccepted: boolean;
+  termsAcceptance: ClinicTermsAcceptanceInput | null;
 }) {
   const route = review.firstValidRoute;
-  const hasAcceptedTerms = review.terms.accepted || termsAccepted;
+  const hasAcceptedTerms =
+    review.termsAcceptance.accepted ||
+    isCurrentClinicTermsVersion(termsAcceptance?.version);
   return (
     <Card className="shadow-none ring-1">
       <CardHeader>
@@ -659,9 +674,15 @@ function ReviewStep({
               aria-describedby="clinic-setup-terms-description"
               checked={hasAcceptedTerms}
               className="accent-primary focus-visible:border-ring focus-visible:ring-ring/30 mt-0.5 size-5 shrink-0 rounded outline-none focus-visible:ring-3"
-              disabled={review.terms.accepted}
+              disabled={review.termsAcceptance.accepted}
               id="clinic-setup-terms"
-              onChange={(event) => onTermsAcceptedChange(event.target.checked)}
+              onChange={(event) =>
+                onTermsAcceptanceChange(
+                  event.target.checked
+                    ? createCurrentClinicTermsAcceptance()
+                    : null,
+                )
+              }
               type="checkbox"
             />
             <span>
@@ -674,8 +695,8 @@ function ReviewStep({
               >
                 Términos de uso de Praxia
               </Link>{" "}
-              (versión {review.terms.currentVersion}) y confirmo que tengo
-              autorización para aceptarlos en nombre de la Clínica.
+              (versión {review.termsAcceptance.currentVersion}) y confirmo que
+              tengo autorización para aceptarlos en nombre de la Clínica.
             </span>
           </label>
           <p
@@ -686,9 +707,10 @@ function ReviewStep({
             consentimiento que correspondan a Pacientes, Contactos, Tutores o
             personal.
           </p>
-          {review.terms.accepted ? (
+          {review.termsAcceptance.accepted ? (
             <p className="text-success-foreground mt-3 text-sm" role="status">
-              Aceptación registrada para la versión {review.terms.version}.
+              Aceptación registrada para la versión{" "}
+              {review.termsAcceptance.version}.
             </p>
           ) : null}
         </div>
@@ -780,14 +802,14 @@ function StepStateMark({
 function ReadinessBadge({
   enabled,
   status,
-  termsAccepted,
+  termsAcceptanceAccepted,
 }: {
   enabled: boolean;
   status: "pending" | "ready";
-  termsAccepted: boolean;
+  termsAcceptanceAccepted: boolean;
 }) {
   if (enabled) return <Badge variant="success">Praxia habilitada</Badge>;
-  if (status === "ready" && !termsAccepted) {
+  if (status === "ready" && !termsAcceptanceAccepted) {
     return <Badge variant="warning">Aceptación pendiente</Badge>;
   }
   if (status === "ready") {

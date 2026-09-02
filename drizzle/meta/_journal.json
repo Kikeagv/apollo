@@ -386,6 +386,13 @@
       "when": 1788296440665,
       "tag": "0055_apo5_clinic_terms_acceptance",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1788340000000,
+      "tag": "0056_apo72_clinic_terms_acceptance_contract",
+      "breakpoints": true
     }
   ]
 }

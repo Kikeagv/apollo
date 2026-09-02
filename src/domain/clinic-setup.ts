@@ -1,5 +1,7 @@
 export const CLINIC_TERMS_URL = "https://www.usepraxia.com/terminos";
 export const CLINIC_TERMS_VERSION = "1.0";
+export const CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE =
+  "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.";
 
 export const CLINIC_SETUP_STEPS = [
   {
@@ -43,6 +45,17 @@ export type ClinicTermsAcceptance = {
   version: string | null;
 };
 
+export type ClinicTermsAcceptanceInput = {
+  version: string;
+};
+
+export class ClinicTermsAcceptanceError extends Error {
+  constructor() {
+    super(CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE);
+    this.name = "ClinicTermsAcceptanceError";
+  }
+}
+
 export type ClinicSetupFirstValidRoute = {
   doctor: {
     id: string;
@@ -73,7 +86,7 @@ export type ClinicSetupEvaluationInput = {
     activeOffers: number;
     activeServices: number;
   };
-  terms: ClinicTermsAcceptance;
+  termsAcceptance: ClinicTermsAcceptance;
   team: {
     activeDoctors: number;
     completedProfiles: number;
@@ -110,7 +123,7 @@ export type ClinicSetupReview = {
     status: ClinicReadinessStatus;
   };
   steps: ClinicSetupStep[];
-  terms: {
+  termsAcceptance: {
     accepted: boolean;
     acceptedAt: Date | null;
     currentVersion: string;
@@ -127,7 +140,7 @@ export function buildClinicSetupReview(
 ): ClinicSetupReview {
   const currentStep = stepIdFromNumber(input.clinic.currentStep);
   const firstValidRoute = input.firstValidRoute ?? null;
-  const termsAccepted = isCurrentClinicTermsAccepted(input.terms);
+  const termsAccepted = isCurrentClinicTermsAcceptance(input.termsAcceptance);
   const prerequisites = [
     input.clinic.name.trim().length > 0,
     input.team.completedProfiles > 0,
@@ -170,17 +183,41 @@ export function buildClinicSetupReview(
       status: readinessStatus,
     },
     steps,
-    terms: {
+    termsAcceptance: {
       accepted: termsAccepted,
-      acceptedAt: input.terms.acceptedAt,
+      acceptedAt: input.termsAcceptance.acceptedAt,
       currentVersion: CLINIC_TERMS_VERSION,
-      version: input.terms.version,
+      version: input.termsAcceptance.version,
     },
   };
 }
 
-export function isCurrentClinicTermsAccepted(terms: ClinicTermsAcceptance) {
-  return terms.acceptedAt !== null && terms.version === CLINIC_TERMS_VERSION;
+export function createCurrentClinicTermsAcceptance(): ClinicTermsAcceptanceInput {
+  return { version: CLINIC_TERMS_VERSION };
+}
+
+export function requireCurrentClinicTermsAcceptance(
+  acceptance: ClinicTermsAcceptanceInput | null | undefined,
+) {
+  if (!isCurrentClinicTermsVersion(acceptance?.version)) {
+    throw new ClinicTermsAcceptanceError();
+  }
+  return createCurrentClinicTermsAcceptance();
+}
+
+export function isCurrentClinicTermsVersion(
+  version: string | null | undefined,
+) {
+  return version === CLINIC_TERMS_VERSION;
+}
+
+export function isCurrentClinicTermsAcceptance(
+  acceptance: ClinicTermsAcceptance,
+) {
+  return (
+    acceptance.acceptedAt !== null &&
+    isCurrentClinicTermsVersion(acceptance.version)
+  );
 }
 
 function clinicSetupBlockers(

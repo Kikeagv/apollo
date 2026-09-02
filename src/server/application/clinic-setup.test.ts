@@ -14,6 +14,7 @@ import {
   type ClinicReadinessDeclarer,
 } from "./clinic-setup";
 import {
+  CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
   CLINIC_TERMS_VERSION,
   type ClinicSetupEvaluationInput,
 } from "~/domain/clinic-setup";
@@ -32,7 +33,7 @@ const readyEvaluation: ClinicSetupEvaluationInput = {
     },
   },
   services: { activeOffers: 1, activeServices: 1 },
-  terms: {
+  termsAcceptance: {
     acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
     version: CLINIC_TERMS_VERSION,
   },
@@ -101,7 +102,7 @@ describe("caso de uso de Configuración inicial", () => {
       {
         clinicId: "clinic-1",
         identityId: "owner-1",
-        termsAccepted: true,
+        termsAcceptance: { version: CLINIC_TERMS_VERSION },
       },
       declarer,
     );
@@ -113,25 +114,57 @@ describe("caso de uso de Configuración inicial", () => {
     expect(declare).toHaveBeenCalledWith({
       clinicId: "clinic-1",
       identityId: "owner-1",
-      termsAccepted: true,
+      termsAcceptance: { version: CLINIC_TERMS_VERSION },
     });
   });
 
-  it("exige la aceptación explícita de los Términos antes de declarar lista la Clínica", async () => {
-    const declare = vi.fn();
-    const declarer: ClinicReadinessDeclarer = { declare };
+  it.each([
+    ["faltante", undefined],
+    ["desactualizada", { version: "0.9" }],
+  ])(
+    "rechaza una aceptación %s antes de declarar lista la Clínica con un único mensaje",
+    async (_label, termsAcceptance) => {
+      const declare = vi.fn();
+      const declarer: ClinicReadinessDeclarer = { declare };
+
+      await expect(
+        declareClinicReady(
+          {
+            clinicId: "clinic-1",
+            identityId: "owner-1",
+            termsAcceptance,
+          },
+          declarer,
+        ),
+      ).rejects.toMatchObject({
+        message: CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
+        name: ClinicTermsNotAcceptedError.name,
+      });
+      expect(declare).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rechaza una aceptación desactualizada aunque un adaptador devuelva una evaluación positiva", async () => {
+    const declarer: ClinicReadinessDeclarer = {
+      declare: vi.fn().mockResolvedValue({
+        ...readyEvaluation,
+        termsAcceptance: {
+          acceptedAt: readyEvaluation.termsAcceptance.acceptedAt,
+          version: "0.9",
+        },
+      }),
+    };
 
     await expect(
       declareClinicReady(
         {
           clinicId: "clinic-1",
           identityId: "owner-1",
-          termsAccepted: false,
+          termsAcceptance: { version: CLINIC_TERMS_VERSION },
         },
         declarer,
       ),
     ).rejects.toBeInstanceOf(ClinicTermsNotAcceptedError);
-    expect(declare).not.toHaveBeenCalled();
   });
 
   it("rechaza la declaración si la última ruta desapareció", async () => {
@@ -148,7 +181,7 @@ describe("caso de uso de Configuración inicial", () => {
         {
           clinicId: "clinic-1",
           identityId: "owner-1",
-          termsAccepted: true,
+          termsAcceptance: { version: CLINIC_TERMS_VERSION },
         },
         declarer,
       ),
