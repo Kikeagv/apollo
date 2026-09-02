@@ -23,7 +23,7 @@
       content="Organiza la agenda de tu clínica y gestiona la atención administrativa de citas por WhatsApp. Solicita una demo de Praxia."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://www.usepraxia.com/" />
+    <meta property="og:url" content="https://www.usepraxia.com" />
     <meta
       property="og:image"
       content="https://www.usepraxia.com/public/og/praxia-clinicas-1200x630.png"
@@ -47,7 +47,36 @@
       name="twitter:image"
       content="https://www.usepraxia.com/public/og/praxia-clinicas-1200x630.png"
     />
-    <link rel="canonical" href="https://www.usepraxia.com/" />
+    <link rel="canonical" href="https://www.usepraxia.com" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://www.usepraxia.com/#organization",
+            "name": "Praxia",
+            "url": "https://www.usepraxia.com/"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://www.usepraxia.com/#website",
+            "name": "Praxia",
+            "url": "https://www.usepraxia.com/",
+            "publisher": { "@id": "https://www.usepraxia.com/#organization" }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://www.usepraxia.com/#webpage",
+            "name": "Software para clínicas en El Salvador | Praxia",
+            "url": "https://www.usepraxia.com",
+            "description": "Organiza la agenda de tu clínica y gestiona la atención administrativa de citas por WhatsApp. Solicita una demo de Praxia.",
+            "isPartOf": { "@id": "https://www.usepraxia.com/#website" },
+            "about": { "@id": "https://www.usepraxia.com/#organization" }
+          }
+        ]
+      }
+    </script>
     <link
       rel="preload"
       href="/fonts/montserrat-latin.woff2"
