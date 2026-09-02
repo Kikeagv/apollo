@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 720" role="img" aria-labelledby="title desc">
+  <title id="title">Pendientes e intervención humana</title>
+  <desc id="desc">Vista sintética de una bandeja de pendientes con contexto administrativo.</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#10233f" flood-opacity=".12" />
+    </filter>
+  </defs>
+  <rect width="900" height="720" fill="#eef5fc" />
+  <rect x="24" y="24" width="852" height="672" rx="24" fill="#fbfdff" filter="url(#shadow)" />
+  <rect x="24" y="24" width="190" height="672" rx="24" fill="#06459f" />
+  <rect x="188" y="24" width="26" height="672" fill="#06459f" />
+  <circle cx="68" cy="70" r="17" fill="#f8fbff" /><text x="96" y="77" fill="#f8fbff" font-family="Arial, sans-serif" font-size="20" font-weight="700">Praxia</text>
+  <text x="50" y="139" fill="#bcd4f4" font-family="Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.4">OPERACIÓN</text>
+  <text x="50" y="184" fill="#c8dbf4" font-family="Arial, sans-serif" font-size="14">Agenda</text>
+  <rect x="40" y="207" width="150" height="42" rx="9" fill="#2b68b1" /><text x="50" y="233" fill="#f8fbff" font-family="Arial, sans-serif" font-size="14" font-weight="700">Pendientes</text>
+  <text x="50" y="291" fill="#c8dbf4" font-family="Arial, sans-serif" font-size="14">Pacientes</text>
+  <text x="50" y="333" fill="#c8dbf4" font-family="Arial, sans-serif" font-size="14">Configuración</text>
+  <line x1="50" y1="382" x2="188" y2="382" stroke="#80a9dc" stroke-opacity=".45" />
+  <text x="50" y="427" fill="#bcd4f4" font-family="Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.4">ATENCIÓN</text>
+  <circle cx="58" cy="466" r="5" fill="#f6c75e" /><text x="74" y="471" fill="#f8fbff" font-family="Arial, sans-serif" font-size="12">Requiere revisión</text>
+  <text x="250" y="82" fill="#10233f" font-family="Arial, sans-serif" font-size="23" font-weight="700">Pendientes</text>
+  <text x="250" y="111" fill="#526681" font-family="Arial, sans-serif" font-size="13">Casos que necesitan la intervención del equipo.</text>
+  <rect x="250" y="143" width="578" height="46" rx="10" fill="#f3f7fd" />
+  <rect x="270" y="154" width="72" height="24" rx="12" fill="#06459f" /><text x="306" y="170" fill="#f8fbff" font-family="Arial, sans-serif" font-size="11" font-weight="700" text-anchor="middle">Todos</text>
+  <text x="382" y="170" fill="#526681" font-family="Arial, sans-serif" font-size="11">Conversaciones</text><text x="510" y="170" fill="#526681" font-family="Arial, sans-serif" font-size="11">Citas</text><text x="570" y="170" fill="#526681" font-family="Arial, sans-serif" font-size="11">Entregas</text>
+  <rect x="250" y="211" width="578" height="108" rx="13" fill="#fffaf0" stroke="#efd18a" />
+  <circle cx="281" cy="246" r="8" fill="#e6ad28" /><text x="306" y="247" fill="#10233f" font-family="Arial, sans-serif" font-size="14" font-weight="700">Solicitud de reprogramación</text>
+  <text x="306" y="274" fill="#526681" font-family="Arial, sans-serif" font-size="12">Revisar disponibilidad y confirmar una alternativa.</text>
+  <text x="306" y="298" fill="#06459f" font-family="Arial, sans-serif" font-size="11" font-weight="700">ABIERTO · CITA</text>
+  <rect x="250" y="339" width="578" height="108" rx="13" fill="#fbfdff" stroke="#c7d9ee" />
+  <circle cx="281" cy="374" r="8" fill="#06459f" /><text x="306" y="375" fill="#10233f" font-family="Arial, sans-serif" font-size="14" font-weight="700">Conversación necesita revisión</text>
+  <text x="306" y="402" fill="#526681" font-family="Arial, sans-serif" font-size="12">La solicitud excede las reglas administrativas configuradas.</text>
+  <text x="306" y="426" fill="#06459f" font-family="Arial, sans-serif" font-size="11" font-weight="700">ABIERTO · CONVERSACIÓN</text>
+  <rect x="250" y="467" width="578" height="108" rx="13" fill="#fbfdff" stroke="#c7d9ee" />
+  <circle cx="281" cy="502" r="8" fill="#8aa0b8" /><text x="306" y="503" fill="#10233f" font-family="Arial, sans-serif" font-size="14" font-weight="700">Recordatorio no entregado</text>
+  <text x="306" y="530" fill="#526681" font-family="Arial, sans-serif" font-size="12">El equipo puede revisar el canal y resolver el envío.</text>
+  <text x="306" y="554" fill="#06459f" font-family="Arial, sans-serif" font-size="11" font-weight="700">ABIERTO · ENTREGA</text>
+  <rect x="250" y="604" width="578" height="30" rx="8" fill="#e7f0fb" /><text x="274" y="624" fill="#06459f" font-family="Arial, sans-serif" font-size="11" font-weight="700">Cada Pendiente conserva su contexto administrativo.</text>
+</svg>
