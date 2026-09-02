@@ -11,6 +11,10 @@ export const metadata: Metadata = {
   title: "Praxia",
   description: "Panel de Praxia",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
+  robots: {
+    index: false,
+    follow: true,
+  },
 };
 
 const geist = Geist({

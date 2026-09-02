@@ -1,0 +1,17 @@
+# Política pública de rastreo de Praxia.
+# Cloudflare debe conservar este archivo de origen y no servir una variante
+# gestionada que bloquee los crawlers o contradiga los Content Signals.
+User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+Sitemap: https://www.usepraxia.com/sitemap.xml

@@ -1,7 +1,7 @@
 FROM nginx:1.27-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY index.html terminos.html privacidad.html demo.html /usr/share/nginx/html/
+COPY index.html terminos.html privacidad.html demo.html robots.txt sitemap.xml /usr/share/nginx/html/
 COPY demo/ /usr/share/nginx/html/demo/
 COPY styles.css /usr/share/nginx/html/styles.css
 COPY fonts/ /usr/share/nginx/html/fonts/
