@@ -1,5 +1,4 @@
 export const CLINIC_TERMS_URL = "https://www.usepraxia.com/terminos";
-export const CLINIC_TERMS_VERSION = "1.0";
 
 export const CLINIC_SETUP_STEPS = [
   {
@@ -40,8 +39,25 @@ export type ClinicReadinessStatus = "pending" | "ready";
 
 export type ClinicTermsAcceptance = {
   acceptedAt: Date | null;
+  isCurrent: boolean;
   version: string | null;
 };
+
+export type ClinicTermsAcceptanceInput = {
+  version: string;
+};
+
+export type ClinicTermsContract = {
+  acceptanceErrorMessage: string;
+  currentVersion: string;
+};
+
+export class ClinicTermsAcceptanceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClinicTermsAcceptanceError";
+  }
+}
 
 export type ClinicSetupFirstValidRoute = {
   doctor: {
@@ -73,7 +89,8 @@ export type ClinicSetupEvaluationInput = {
     activeOffers: number;
     activeServices: number;
   };
-  terms: ClinicTermsAcceptance;
+  termsContract: ClinicTermsContract;
+  termsAcceptance: ClinicTermsAcceptance;
   team: {
     activeDoctors: number;
     completedProfiles: number;
@@ -110,7 +127,7 @@ export type ClinicSetupReview = {
     status: ClinicReadinessStatus;
   };
   steps: ClinicSetupStep[];
-  terms: {
+  termsAcceptance: {
     accepted: boolean;
     acceptedAt: Date | null;
     currentVersion: string;
@@ -127,7 +144,7 @@ export function buildClinicSetupReview(
 ): ClinicSetupReview {
   const currentStep = stepIdFromNumber(input.clinic.currentStep);
   const firstValidRoute = input.firstValidRoute ?? null;
-  const termsAccepted = isCurrentClinicTermsAccepted(input.terms);
+  const termsAccepted = input.termsAcceptance.isCurrent;
   const prerequisites = [
     input.clinic.name.trim().length > 0,
     input.team.completedProfiles > 0,
@@ -170,17 +187,19 @@ export function buildClinicSetupReview(
       status: readinessStatus,
     },
     steps,
-    terms: {
+    termsAcceptance: {
       accepted: termsAccepted,
-      acceptedAt: input.terms.acceptedAt,
-      currentVersion: CLINIC_TERMS_VERSION,
-      version: input.terms.version,
+      acceptedAt: input.termsAcceptance.acceptedAt,
+      currentVersion: input.termsContract.currentVersion,
+      version: input.termsAcceptance.version,
     },
   };
 }
 
-export function isCurrentClinicTermsAccepted(terms: ClinicTermsAcceptance) {
-  return terms.acceptedAt !== null && terms.version === CLINIC_TERMS_VERSION;
+export function createCurrentClinicTermsAcceptance(
+  currentVersion: string,
+): ClinicTermsAcceptanceInput {
+  return { version: currentVersion };
 }
 
 function clinicSetupBlockers(

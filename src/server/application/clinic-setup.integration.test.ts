@@ -32,10 +32,10 @@ import {
   doctors,
   user as identities,
 } from "../db/schema";
-import { CLINIC_TERMS_VERSION } from "../../domain/clinic-setup";
-
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
+const canonicalTermsAcceptanceErrorMessage =
+  "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.";
 
 describe("Configuración inicial y preparación de Asclepio", () => {
   databaseTest(
@@ -111,9 +111,31 @@ describe("Configuración inicial y preparación de Asclepio", () => {
           service: { name: "Consulta APO-65" },
         });
 
+        await expect(
+          declareClinicReady({
+            ...fixture.primary,
+            termsAcceptance: null,
+          }),
+        ).rejects.toThrow(canonicalTermsAcceptanceErrorMessage);
+        await expect(
+          declareClinicReady({
+            ...fixture.primary,
+            termsAcceptance: { version: "0.9" },
+          }),
+        ).rejects.toThrow(canonicalTermsAcceptanceErrorMessage);
+        await expect(getClinicSetup(fixture.primary)).resolves.toMatchObject({
+          readiness: { asclepioEnabled: false, status: "ready" },
+          termsAcceptance: {
+            accepted: false,
+            version: null,
+          },
+        });
+
         const declared = await declareClinicReady({
           ...fixture.primary,
-          termsAccepted: true,
+          termsAcceptance: {
+            version: calculated.termsAcceptance.currentVersion,
+          },
         });
         expect(declared.readiness).toEqual({
           asclepioEnabled: true,
@@ -138,7 +160,9 @@ describe("Configuración inicial y preparación de Asclepio", () => {
         expect(readiness.termsAcceptedByIdentityId).toBe(
           fixture.primary.identityId,
         );
-        expect(readiness.termsAcceptedVersion).toBe(CLINIC_TERMS_VERSION);
+        expect(readiness.termsAcceptedVersion).toBe(
+          calculated.termsAcceptance.currentVersion,
+        );
 
         await expect(
           inClinicTransaction(fixture.primary, (transaction) =>
@@ -160,7 +184,7 @@ describe("Configuración inicial y preparación de Asclepio", () => {
           actorIdentityId: fixture.primary.identityId,
           afterValues: {
             termsAccepted: "true",
-            termsVersion: CLINIC_TERMS_VERSION,
+            termsVersion: calculated.termsAcceptance.currentVersion,
           },
           entity: "clinic-terms",
         });

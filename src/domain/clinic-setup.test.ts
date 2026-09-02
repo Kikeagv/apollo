@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildClinicSetupReview,
+  createCurrentClinicTermsAcceptance,
   type ClinicSetupEvaluationInput,
 } from "./clinic-setup";
+
+const termsContract = {
+  acceptanceErrorMessage:
+    "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.",
+  currentVersion: "1.0",
+};
 
 const initialConfiguration: ClinicSetupEvaluationInput = {
   availability: {
@@ -20,7 +27,8 @@ const initialConfiguration: ClinicSetupEvaluationInput = {
     activeOffers: 0,
     activeServices: 1,
   },
-  terms: { acceptedAt: null, version: null },
+  termsContract,
+  termsAcceptance: { acceptedAt: null, isCurrent: false, version: null },
   team: {
     activeDoctors: 2,
     completedProfiles: 1,
@@ -29,6 +37,45 @@ const initialConfiguration: ClinicSetupEvaluationInput = {
 };
 
 describe("guía de Configuración inicial de Clínica", () => {
+  it("crea la aceptación con la versión entregada por el contrato vigente", () => {
+    expect(
+      createCurrentClinicTermsAcceptance(termsContract.currentVersion),
+    ).toEqual({
+      version: termsContract.currentVersion,
+    });
+  });
+
+  it("conserva la habilitación histórica mientras la aceptación se regulariza", () => {
+    const review = buildClinicSetupReview({
+      ...initialConfiguration,
+      availability: { activeSchedules: 1, futureCareOptions: 2 },
+      clinic: { ...initialConfiguration.clinic, asclepioEnabled: true },
+      firstValidRoute: {
+        doctor: {
+          id: "doctor-1",
+          name: "Dra. Aurora",
+          specialty: "Medicina general",
+        },
+        firstOptionStartsAt: new Date("2026-09-01T14:00:00.000Z"),
+        scheduleEffectiveFrom: "2026-08-01",
+        service: {
+          durationMinutes: 30,
+          id: "service-1",
+          name: "Consulta general",
+        },
+      },
+      services: { activeOffers: 1, activeServices: 1 },
+      team: { activeDoctors: 1, completedProfiles: 1, pendingInvitations: 0 },
+    });
+
+    expect(review.readiness).toEqual({
+      asclepioEnabled: true,
+      status: "ready",
+    });
+    expect(review.termsAcceptance.accepted).toBe(false);
+    expect(review.canDeclareReady).toBe(false);
+  });
+
   it("expone el paso actual, los pasos pendientes y los bloqueadores sin ocultar configuración parcial", () => {
     const review = buildClinicSetupReview(initialConfiguration);
 
@@ -99,9 +146,11 @@ describe("guía de Configuración inicial de Clínica", () => {
         },
       },
       services: { activeOffers: 1, activeServices: 1 },
-      terms: {
+      termsContract,
+      termsAcceptance: {
         acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
-        version: "1.0",
+        isCurrent: true,
+        version: termsContract.currentVersion,
       },
       team: { activeDoctors: 3, completedProfiles: 1, pendingInvitations: 1 },
     });
@@ -111,11 +160,11 @@ describe("guía de Configuración inicial de Clínica", () => {
       status: "ready",
     });
     expect(review.canDeclareReady).toBe(true);
-    expect(review.terms).toEqual({
+    expect(review.termsAcceptance).toEqual({
       accepted: true,
       acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
-      currentVersion: "1.0",
-      version: "1.0",
+      currentVersion: termsContract.currentVersion,
+      version: termsContract.currentVersion,
     });
     expect(review.progress).toEqual({ completed: 5, total: 5 });
     expect(review.firstValidRoute?.doctor.name).toBe("Dra. Aurora");
@@ -178,7 +227,7 @@ describe("guía de Configuración inicial de Clínica", () => {
     });
 
     expect(review.readiness.status).toBe("ready");
-    expect(review.terms.accepted).toBe(false);
+    expect(review.termsAcceptance.accepted).toBe(false);
     expect(review.canDeclareReady).toBe(false);
   });
 });

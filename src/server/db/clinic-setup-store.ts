@@ -2,11 +2,13 @@ import { and, eq, gt, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import { CLINIC_TIMEZONE, CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
-  CLINIC_TERMS_VERSION,
+  ClinicTermsAcceptanceError,
+  type ClinicTermsAcceptance,
+  type ClinicTermsAcceptanceInput,
+  type ClinicTermsContract,
   type ClinicSetupEvaluationInput,
   type ClinicSetupFirstValidRoute,
   type ClinicSetupStepId,
-  isCurrentClinicTermsAccepted,
 } from "~/domain/clinic-setup";
 import { doctorProfileProgress } from "~/domain/panacea-team";
 import { calculateCareOptionsFromInputs } from "~/server/application/care-options";
@@ -25,6 +27,7 @@ import {
   clinics,
   clinicUsers,
   configurationAuditEvents,
+  clinicTermsContract,
   doctors,
   effectiveSchedules,
   serviceOffers,
@@ -121,30 +124,33 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
     });
   },
 
+  async validateTermsAcceptance(input) {
+    return inClinicTransaction(input, async (transaction) => {
+      if (!(await isOwner(transaction, input))) return undefined;
+      return validateClinicTermsAcceptance(transaction, input.termsAcceptance);
+    });
+  },
+
   async declare(input) {
     return inClinicTransaction(input, async (transaction) => {
       if (!(await isOwner(transaction, input))) return undefined;
-      if (input.termsAccepted !== true) {
-        throw new Error(
-          "Debe aceptar los Términos de uso de Praxia antes de habilitar la atención por WhatsApp.",
-        );
-      }
+      const termsAcceptance = await validateClinicTermsAcceptance(
+        transaction,
+        input.termsAcceptance,
+      );
+      const termsContract = await readClinicTermsContract(transaction);
       const evaluation = await recalculateClinicReadiness(transaction, {
         actorIdentityId: input.identityId,
         clinicId: input.clinicId,
         initializeIfMissing: true,
+        termsContract,
       });
       if (evaluation === undefined) return undefined;
       if (evaluation.firstValidRoute === null) return evaluation;
 
       const readiness = await ensureReadinessRow(transaction, input.clinicId);
       let termsAcceptedAt = readiness.termsAcceptedAt;
-      if (
-        !isCurrentClinicTermsAccepted({
-          acceptedAt: readiness.termsAcceptedAt,
-          version: readiness.termsAcceptedVersion,
-        })
-      ) {
+      if (!readiness.termsAcceptanceIsCurrent) {
         const now = new Date();
         termsAcceptedAt = now;
         await transaction
@@ -152,7 +158,7 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
           .set({
             termsAcceptedAt: now,
             termsAcceptedByIdentityId: input.identityId,
-            termsAcceptedVersion: CLINIC_TERMS_VERSION,
+            termsAcceptedVersion: termsAcceptance.version,
             updatedAt: now,
           })
           .where(eq(clinicReadiness.clinicId, input.clinicId));
@@ -161,7 +167,7 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
           actorIdentityId: input.identityId,
           afterValues: {
             termsAccepted: "true",
-            termsVersion: CLINIC_TERMS_VERSION,
+            termsVersion: termsAcceptance.version,
           },
           beforeValues: {
             termsAccepted: "false",
@@ -199,9 +205,10 @@ export const drizzleClinicSetupStore: ClinicSetupReader &
       return {
         ...evaluation,
         clinic: { ...evaluation.clinic, asclepioEnabled: true },
-        terms: {
+        termsAcceptance: {
           acceptedAt: termsAcceptedAt,
-          version: CLINIC_TERMS_VERSION,
+          isCurrent: true,
+          version: termsAcceptance.version,
         },
       };
     });
@@ -216,6 +223,7 @@ export async function recalculateClinicReadiness(
     clinicId: string;
     initializeIfMissing?: boolean;
     now?: Date;
+    termsContract?: ClinicTermsContract;
   },
 ) {
   await transaction.execute(
@@ -226,6 +234,8 @@ export async function recalculateClinicReadiness(
   await transaction.execute(
     sql`select set_config('app.readiness_recalculation', 'true', true)`,
   );
+  const termsContract =
+    input.termsContract ?? (await readClinicTermsContract(transaction));
   const existing = await readReadinessRow(transaction, input.clinicId);
   if (existing === undefined && input.initializeIfMissing !== true) {
     return undefined;
@@ -235,12 +245,15 @@ export async function recalculateClinicReadiness(
   const evaluated = await evaluateClinicSetup(
     transaction,
     input.clinicId,
-    current,
+    readinessForEvaluation(current),
     input.now ?? new Date(),
+    termsContract,
   );
   const evaluation = withoutInternalEvaluation(evaluated);
   const nextStatus =
     evaluation.firstValidRoute === null ? ("pending" as const) : "ready";
+  // La aceptación se valida al declarar; no revocamos habilitaciones históricas
+  // solo porque APO-72 aún no tenga un registro de aceptación.
   const nextEnabled = current.asclepioEnabled && nextStatus === "ready";
   const statusChanged =
     current.readinessStatus !== nextStatus ||
@@ -292,7 +305,7 @@ export async function isAsclepioEnabled(
   // conservamos su operación existente durante la migración progresiva.
   if (readiness === undefined) return true;
   return (
-    readiness?.asclepioEnabled === true && readiness.readinessStatus === "ready"
+    readiness.asclepioEnabled === true && readiness.readinessStatus === "ready"
   );
 }
 
@@ -304,11 +317,13 @@ export async function listAsclepioOfferIds(
 ) {
   const readiness = await readReadinessRow(transaction, clinicId);
   if (readiness === undefined) return undefined;
+  const termsContract = await readClinicTermsContract(transaction);
   const evaluation = await evaluateClinicSetup(
     transaction,
     clinicId,
-    readiness,
+    readinessForEvaluation(readiness),
     now,
+    termsContract,
   );
   return evaluation.validOfferIds;
 }
@@ -319,10 +334,10 @@ async function evaluateClinicSetup(
   readiness: {
     asclepioEnabled: boolean;
     currentStep: number;
-    termsAcceptedAt: Date | null;
-    termsAcceptedVersion: string | null;
+    termsAcceptance: ClinicTermsAcceptance;
   },
   now: Date,
+  termsContract: ClinicTermsContract,
 ): Promise<EvaluatedClinicSetup> {
   const today = localDate(now);
   const from = today;
@@ -522,16 +537,40 @@ async function evaluateClinicSetup(
       activeOffers: offers.length,
       activeServices: activeServiceIds.size,
     },
+    termsContract,
     team: {
       activeDoctors: activeDoctors.length,
       completedProfiles: completedDoctorIds.size,
       pendingInvitations: pendingInvitations.length,
     },
-    terms: {
-      acceptedAt: readiness.termsAcceptedAt,
-      version: readiness.termsAcceptedVersion,
-    },
+    termsAcceptance: readiness.termsAcceptance,
     validOfferIds,
+  };
+}
+
+function readinessForEvaluation(readiness: {
+  asclepioEnabled: boolean;
+  currentStep: number;
+  termsAcceptanceIsCurrent: boolean;
+  termsAcceptedAt: Date | null;
+  termsAcceptedVersion: string | null;
+}) {
+  return {
+    asclepioEnabled: readiness.asclepioEnabled,
+    currentStep: readiness.currentStep,
+    termsAcceptance: termsAcceptanceFromReadiness(readiness),
+  };
+}
+
+function termsAcceptanceFromReadiness(readiness: {
+  termsAcceptanceIsCurrent: boolean;
+  termsAcceptedAt: Date | null;
+  termsAcceptedVersion: string | null;
+}): ClinicTermsAcceptance {
+  return {
+    acceptedAt: readiness.termsAcceptedAt,
+    isCurrent: readiness.termsAcceptanceIsCurrent,
+    version: readiness.termsAcceptedVersion,
   };
 }
 
@@ -543,7 +582,8 @@ function withoutInternalEvaluation(
     clinic: evaluation.clinic,
     firstValidRoute: evaluation.firstValidRoute,
     services: evaluation.services,
-    terms: evaluation.terms,
+    termsContract: evaluation.termsContract,
+    termsAcceptance: evaluation.termsAcceptance,
     team: evaluation.team,
   };
 }
@@ -569,17 +609,68 @@ async function readReadinessRow(
   transaction: ClinicTransaction,
   clinicId: string,
 ) {
-  return transaction.query.clinicReadiness.findFirst({
-    columns: {
-      asclepioEnabled: true,
-      asclepioEnabledAt: true,
-      currentStep: true,
-      readinessStatus: true,
-      termsAcceptedAt: true,
-      termsAcceptedVersion: true,
-    },
-    where: eq(clinicReadiness.clinicId, clinicId),
+  const [readiness] = await transaction
+    .select({
+      asclepioEnabled: clinicReadiness.asclepioEnabled,
+      asclepioEnabledAt: clinicReadiness.asclepioEnabledAt,
+      currentStep: clinicReadiness.currentStep,
+      readinessStatus: clinicReadiness.readinessStatus,
+      termsAcceptedAt: clinicReadiness.termsAcceptedAt,
+      termsAcceptedVersion: clinicReadiness.termsAcceptedVersion,
+      termsAcceptanceIsCurrent: sql<boolean>`
+        "public"."clinic_terms_acceptance_is_current"(
+          ${clinicReadiness.termsAcceptedAt},
+          ${clinicReadiness.termsAcceptedVersion}
+        )
+      `.as("terms_acceptance_is_current"),
+    })
+    .from(clinicReadiness)
+    .where(eq(clinicReadiness.clinicId, clinicId))
+    .limit(1);
+  if (readiness === undefined) return undefined;
+  return {
+    ...readiness,
+    termsAcceptance: termsAcceptanceFromReadiness(readiness),
+  };
+}
+
+async function validateClinicTermsAcceptance(
+  transaction: ClinicTransaction,
+  acceptance: ClinicTermsAcceptanceInput | null | undefined,
+): Promise<ClinicTermsAcceptanceInput> {
+  const [contract] = await transaction
+    .select({
+      acceptanceErrorMessage: clinicTermsContract.acceptanceErrorMessage,
+      currentVersion: clinicTermsContract.currentVersion,
+      isCurrent: sql<boolean>`
+        "public"."clinic_terms_version_is_current"(
+          ${acceptance?.version ?? null}
+        )
+      `.as("is_current"),
+    })
+    .from(clinicTermsContract)
+    .where(eq(clinicTermsContract.id, true))
+    .limit(1);
+  if (contract === undefined) {
+    throw new Error("No se pudo cargar el contrato vigente de Términos");
+  }
+  if (!contract.isCurrent) {
+    throw new ClinicTermsAcceptanceError(contract.acceptanceErrorMessage);
+  }
+  return { version: contract.currentVersion };
+}
+
+async function readClinicTermsContract(
+  transaction: ClinicTransaction,
+): Promise<ClinicTermsContract> {
+  const contract = await transaction.query.clinicTermsContract.findFirst({
+    columns: { acceptanceErrorMessage: true, currentVersion: true },
+    where: eq(clinicTermsContract.id, true),
   });
+  if (contract === undefined) {
+    throw new Error("No se pudo cargar el contrato vigente de Términos");
+  }
+  return contract;
 }
 
 async function isOwner(

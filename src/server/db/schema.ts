@@ -121,6 +121,13 @@ export const clinics = createTable("clinic", {
     .notNull(),
 });
 
+/** Contrato vigente de aceptación de términos compartido por toda la Clínica. */
+export const clinicTermsContract = createTable("clinic_terms_contract", {
+  acceptanceErrorMessage: text("acceptance_error_message").notNull(),
+  id: boolean("id").primaryKey(),
+  currentVersion: text("current_version").notNull(),
+});
+
 /** Estado resumible de la configuración y habilitación explícita de Asclepio. */
 export const clinicReadiness = createTable("clinic_readiness", {
   clinicId: uuid("clinic_id")

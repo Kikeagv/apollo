@@ -1,11 +1,15 @@
 import {
   buildClinicSetupReview,
   CLINIC_SETUP_STEPS,
+  ClinicTermsAcceptanceError,
   type ClinicSetupEvaluationInput,
   type ClinicSetupReview,
   type ClinicSetupStepId,
+  type ClinicTermsAcceptanceInput,
 } from "~/domain/clinic-setup";
 import { drizzleClinicSetupStore } from "~/server/db/clinic-setup-store";
+
+export { ClinicTermsAcceptanceError as ClinicTermsNotAcceptedError } from "~/domain/clinic-setup";
 
 export type ClinicSetupReader = {
   read(input: {
@@ -31,10 +35,15 @@ export type ClinicSetupBasicsUpdater = {
 };
 
 export type ClinicReadinessDeclarer = {
+  validateTermsAcceptance(input: {
+    clinicId: string;
+    identityId: string;
+    termsAcceptance?: ClinicTermsAcceptanceInput | null;
+  }): Promise<ClinicTermsAcceptanceInput | undefined>;
   declare(input: {
     clinicId: string;
     identityId: string;
-    termsAccepted: true;
+    termsAcceptance: ClinicTermsAcceptanceInput;
   }): Promise<ClinicSetupEvaluationInput | undefined>;
 };
 
@@ -51,15 +60,6 @@ export class ClinicReadinessNotReadyError extends Error {
       "La Clínica necesita una ruta válida de Médico, Oferta y Horario antes de habilitar la atención por WhatsApp de Praxia",
     );
     this.name = "ClinicReadinessNotReadyError";
-  }
-}
-
-export class ClinicTermsNotAcceptedError extends Error {
-  constructor() {
-    super(
-      "Debe aceptar los Términos de uso de Praxia antes de habilitar la atención por WhatsApp.",
-    );
-    this.name = "ClinicTermsNotAcceptedError";
   }
 }
 
@@ -108,19 +108,22 @@ export async function declareClinicReady(
   input: {
     clinicId: string;
     identityId: string;
-    termsAccepted: boolean;
+    termsAcceptance?: ClinicTermsAcceptanceInput | null;
   },
   declarer: ClinicReadinessDeclarer = drizzleClinicSetupStore,
 ) {
-  if (!input.termsAccepted) throw new ClinicTermsNotAcceptedError();
-  const evaluation = await declarer.declare({ ...input, termsAccepted: true });
+  const termsAcceptance = await declarer.validateTermsAcceptance(input);
+  if (termsAcceptance === undefined) throw new ClinicSetupAccessError();
+  const evaluation = await declarer.declare({ ...input, termsAcceptance });
   if (evaluation === undefined) throw new ClinicSetupAccessError();
   const review = buildClinicSetupReview(evaluation);
   if (review.firstValidRoute === null) {
     throw new ClinicReadinessNotReadyError();
   }
-  if (!review.terms.accepted) {
-    throw new ClinicTermsNotAcceptedError();
+  if (!evaluation.termsAcceptance.isCurrent) {
+    throw new ClinicTermsAcceptanceError(
+      evaluation.termsContract.acceptanceErrorMessage,
+    );
   }
   return {
     ...review,

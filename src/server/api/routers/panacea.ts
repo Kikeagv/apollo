@@ -239,7 +239,17 @@ export const panaceaRouter = {
     ),
 
   declareClinicReady: clinicProcedure
-    .input(z.object({ termsAccepted: z.literal(true) }))
+    .input(
+      z
+        .object({
+          termsAcceptance: z
+            .object({ version: z.string().trim().min(1).max(32) })
+            .strict()
+            .nullable()
+            .optional(),
+        })
+        .strict(),
+    )
     .mutation(({ ctx, input }) =>
       declareClinicReady({
         ...input,

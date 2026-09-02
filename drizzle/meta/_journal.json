@@ -386,6 +386,27 @@
       "when": 1788296440665,
       "tag": "0055_apo5_clinic_terms_acceptance",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1788340000000,
+      "tag": "0056_apo72_clinic_terms_acceptance_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1788340800000,
+      "tag": "0057_apo72_canonical_clinic_terms_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1788341600000,
+      "tag": "0058_apo72_canonical_clinic_terms_message",
+      "breakpoints": true
     }
   ]
 }
