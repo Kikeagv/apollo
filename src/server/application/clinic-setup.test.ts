@@ -13,11 +13,13 @@ import {
   type ClinicSetupReader,
   type ClinicReadinessDeclarer,
 } from "./clinic-setup";
-import {
-  CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
-  CLINIC_TERMS_VERSION,
-  type ClinicSetupEvaluationInput,
-} from "~/domain/clinic-setup";
+import { type ClinicSetupEvaluationInput } from "~/domain/clinic-setup";
+
+const termsContract = {
+  acceptanceErrorMessage:
+    "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.",
+  currentVersion: "1.0",
+};
 
 const readyEvaluation: ClinicSetupEvaluationInput = {
   availability: { activeSchedules: 1, futureCareOptions: 2 },
@@ -33,9 +35,11 @@ const readyEvaluation: ClinicSetupEvaluationInput = {
     },
   },
   services: { activeOffers: 1, activeServices: 1 },
+  termsContract,
   termsAcceptance: {
     acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
-    version: CLINIC_TERMS_VERSION,
+    isCurrent: true,
+    version: termsContract.currentVersion,
   },
   team: { activeDoctors: 1, completedProfiles: 1, pendingInvitations: 0 },
 };
@@ -96,13 +100,16 @@ describe("caso de uso de Configuración inicial", () => {
     const declare = vi.fn().mockResolvedValue(readyEvaluation);
     const declarer: ClinicReadinessDeclarer = {
       declare,
+      validateTermsAcceptance: vi.fn().mockResolvedValue({
+        version: termsContract.currentVersion,
+      }),
     };
 
     const review = await declareClinicReady(
       {
         clinicId: "clinic-1",
         identityId: "owner-1",
-        termsAcceptance: { version: CLINIC_TERMS_VERSION },
+        termsAcceptance: { version: termsContract.currentVersion },
       },
       declarer,
     );
@@ -114,7 +121,7 @@ describe("caso de uso de Configuración inicial", () => {
     expect(declare).toHaveBeenCalledWith({
       clinicId: "clinic-1",
       identityId: "owner-1",
-      termsAcceptance: { version: CLINIC_TERMS_VERSION },
+      termsAcceptance: { version: termsContract.currentVersion },
     });
   });
 
@@ -125,7 +132,16 @@ describe("caso de uso de Configuración inicial", () => {
     "rechaza una aceptación %s antes de declarar lista la Clínica con un único mensaje",
     async (_label, termsAcceptance) => {
       const declare = vi.fn();
-      const declarer: ClinicReadinessDeclarer = { declare };
+      const declarer: ClinicReadinessDeclarer = {
+        declare,
+        validateTermsAcceptance: vi
+          .fn()
+          .mockRejectedValue(
+            new ClinicTermsNotAcceptedError(
+              termsContract.acceptanceErrorMessage,
+            ),
+          ),
+      };
 
       await expect(
         declareClinicReady(
@@ -137,7 +153,7 @@ describe("caso de uso de Configuración inicial", () => {
           declarer,
         ),
       ).rejects.toMatchObject({
-        message: CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
+        message: termsContract.acceptanceErrorMessage,
         name: ClinicTermsNotAcceptedError.name,
       });
       expect(declare).not.toHaveBeenCalled();
@@ -150,8 +166,12 @@ describe("caso de uso de Configuración inicial", () => {
         ...readyEvaluation,
         termsAcceptance: {
           acceptedAt: readyEvaluation.termsAcceptance.acceptedAt,
+          isCurrent: false,
           version: "0.9",
         },
+      }),
+      validateTermsAcceptance: vi.fn().mockResolvedValue({
+        version: termsContract.currentVersion,
       }),
     };
 
@@ -160,7 +180,7 @@ describe("caso de uso de Configuración inicial", () => {
         {
           clinicId: "clinic-1",
           identityId: "owner-1",
-          termsAcceptance: { version: CLINIC_TERMS_VERSION },
+          termsAcceptance: { version: termsContract.currentVersion },
         },
         declarer,
       ),
@@ -174,6 +194,9 @@ describe("caso de uso de Configuración inicial", () => {
         clinic: { ...readyEvaluation.clinic, asclepioEnabled: false },
         firstValidRoute: undefined,
       }),
+      validateTermsAcceptance: vi.fn().mockResolvedValue({
+        version: termsContract.currentVersion,
+      }),
     };
 
     await expect(
@@ -181,7 +204,7 @@ describe("caso de uso de Configuración inicial", () => {
         {
           clinicId: "clinic-1",
           identityId: "owner-1",
-          termsAcceptance: { version: CLINIC_TERMS_VERSION },
+          termsAcceptance: { version: termsContract.currentVersion },
         },
         declarer,
       ),

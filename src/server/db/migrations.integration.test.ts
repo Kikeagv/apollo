@@ -5,10 +5,8 @@ import { promisify } from "node:util";
 import postgres from "postgres";
 import { describe, expect, it } from "vitest";
 
-import {
-  CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
-  CLINIC_TERMS_VERSION,
-} from "~/domain/clinic-setup";
+const canonicalTermsAcceptanceErrorMessage =
+  "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
@@ -225,11 +223,10 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
-          for (const policyName of ["clinic_readiness_owner_insert"]) {
-            expect(
-              termsAcceptancePolicies.find(({ name }) => name === policyName)
-                ?.with_check,
-            ).toContain("clinic_terms_acceptance_is_current");
+          for (const policy of termsAcceptancePolicies) {
+            expect(policy.with_check).not.toContain(
+              "clinic_terms_acceptance_is_current",
+            );
           }
           const termsAcceptanceFunctions = await migrated<
             Array<{ definition: string; name: string }>
@@ -238,15 +235,78 @@ describe("migraciones de PostgreSQL", () => {
             from pg_proc p
             inner join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public'
-              and p.proname = 'clinic_terms_acceptance_is_current'
+              and p.proname in (
+                'clinic_terms_acceptance_is_current',
+                'clinic_terms_version_is_current'
+              )
           `;
-          expect(termsAcceptanceFunctions).toHaveLength(1);
-          expect(termsAcceptanceFunctions[0]).toMatchObject({
+          expect(termsAcceptanceFunctions).toHaveLength(2);
+          const acceptanceFunction = termsAcceptanceFunctions.find(
+            ({ name }) => name === "clinic_terms_acceptance_is_current",
+          );
+          const versionFunction = termsAcceptanceFunctions.find(
+            ({ name }) => name === "clinic_terms_version_is_current",
+          );
+          expect(acceptanceFunction).toMatchObject({
             name: "clinic_terms_acceptance_is_current",
           });
-          expect(termsAcceptanceFunctions[0]?.definition).toContain(
-            "app.clinic_terms_version",
+          expect(acceptanceFunction?.definition).toContain(
+            "clinic_terms_version_is_current",
           );
+          expect(versionFunction).toMatchObject({
+            name: "clinic_terms_version_is_current",
+          });
+          expect(versionFunction?.definition).toContain(
+            "clinic_terms_contract",
+          );
+          for (const functionDefinition of termsAcceptanceFunctions) {
+            expect(functionDefinition.definition).not.toContain(
+              "app.clinic_terms_version",
+            );
+          }
+          const termsContracts = await migrated<
+            Array<{
+              acceptance_error_message: string;
+              current_version: string;
+            }>
+          >`
+            select acceptance_error_message, current_version
+            from "pg-drizzle_clinic_terms_contract"
+          `;
+          expect(termsContracts).toEqual([
+            {
+              acceptance_error_message: canonicalTermsAcceptanceErrorMessage,
+              current_version: "1.0",
+            },
+          ]);
+          const termsAcceptanceChecks = await migrated<
+            Array<{
+              current_acceptance: boolean;
+              current_version: boolean;
+              missing_acceptance: boolean;
+              missing_version: boolean;
+              stale_acceptance: boolean;
+              stale_version: boolean;
+            }>
+          >`
+            select
+              "public"."clinic_terms_version_is_current"('1.0') as current_version,
+              "public"."clinic_terms_version_is_current"('0.9') as stale_version,
+              "public"."clinic_terms_version_is_current"(null) as missing_version,
+              "public"."clinic_terms_acceptance_is_current"(now(), '1.0') as current_acceptance,
+              "public"."clinic_terms_acceptance_is_current"(null, '1.0') as missing_acceptance,
+              "public"."clinic_terms_acceptance_is_current"(now(), '0.9') as stale_acceptance
+          `;
+          expect(termsAcceptanceChecks).toEqual([
+            {
+              current_acceptance: true,
+              current_version: true,
+              missing_acceptance: false,
+              missing_version: false,
+              stale_acceptance: false,
+              stale_version: false,
+            },
+          ]);
           const termsAcceptanceConstraints = await migrated<
             Array<{ definition: string; name: string }>
           >`
@@ -501,7 +561,37 @@ describe("migraciones de PostgreSQL", () => {
                   where clinic_id = ${rlsClinicId}
                 `,
             ),
-          ).rejects.toThrow(CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE);
+          ).rejects.toMatchObject({
+            code: "PT001",
+            message: canonicalTermsAcceptanceErrorMessage,
+          });
+
+          await expect(
+            withClinicContext(
+              restricted,
+              {
+                clinicId: rlsClinicId,
+                clinicRole: "owner",
+                clinicUserId: rlsMemberships.owner,
+                identityId: rlsIdentities.owner,
+              },
+              async (transaction) => {
+                await transaction`select set_config('app.clinic_terms_version', '0.9', true)`;
+                return transaction`
+                  update "pg-drizzle_clinic_readiness"
+                  set
+                    asclepio_enabled = true,
+                    readiness_status = 'ready',
+                    terms_accepted_at = now(),
+                    terms_accepted_version = '0.9'
+                  where clinic_id = ${rlsClinicId}
+                `;
+              },
+            ),
+          ).rejects.toMatchObject({
+            code: "PT001",
+            message: canonicalTermsAcceptanceErrorMessage,
+          });
 
           await expect(
             withClinicContext(
@@ -721,7 +811,6 @@ async function withClinicContext<T>(
     await transaction`set local role panacea_clinical_access`;
     await transaction`select set_config('app.clinic_id', ${input.clinicId}, true)`;
     await transaction`select set_config('app.identity_id', ${input.identityId}, true)`;
-    await transaction`select set_config('app.clinic_terms_version', ${CLINIC_TERMS_VERSION}, true)`;
     await transaction`select set_config('app.clinic_role', ${input.clinicRole}, true)`;
     await transaction`select set_config('app.clinic_user_id', ${input.clinicUserId}, true)`;
     return operation(transaction);

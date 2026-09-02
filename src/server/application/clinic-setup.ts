@@ -2,8 +2,6 @@ import {
   buildClinicSetupReview,
   CLINIC_SETUP_STEPS,
   ClinicTermsAcceptanceError,
-  isCurrentClinicTermsAcceptance,
-  requireCurrentClinicTermsAcceptance,
   type ClinicSetupEvaluationInput,
   type ClinicSetupReview,
   type ClinicSetupStepId,
@@ -37,6 +35,11 @@ export type ClinicSetupBasicsUpdater = {
 };
 
 export type ClinicReadinessDeclarer = {
+  validateTermsAcceptance(input: {
+    clinicId: string;
+    identityId: string;
+    termsAcceptance?: ClinicTermsAcceptanceInput | null;
+  }): Promise<ClinicTermsAcceptanceInput | undefined>;
   declare(input: {
     clinicId: string;
     identityId: string;
@@ -109,17 +112,18 @@ export async function declareClinicReady(
   },
   declarer: ClinicReadinessDeclarer = drizzleClinicSetupStore,
 ) {
-  const termsAcceptance = requireCurrentClinicTermsAcceptance(
-    input.termsAcceptance,
-  );
+  const termsAcceptance = await declarer.validateTermsAcceptance(input);
+  if (termsAcceptance === undefined) throw new ClinicSetupAccessError();
   const evaluation = await declarer.declare({ ...input, termsAcceptance });
   if (evaluation === undefined) throw new ClinicSetupAccessError();
   const review = buildClinicSetupReview(evaluation);
   if (review.firstValidRoute === null) {
     throw new ClinicReadinessNotReadyError();
   }
-  if (!isCurrentClinicTermsAcceptance(evaluation.termsAcceptance)) {
-    throw new ClinicTermsAcceptanceError();
+  if (!evaluation.termsAcceptance.isCurrent) {
+    throw new ClinicTermsAcceptanceError(
+      evaluation.termsContract.acceptanceErrorMessage,
+    );
   }
   return {
     ...review,

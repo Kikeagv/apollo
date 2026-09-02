@@ -44,7 +44,6 @@ import {
   CLINIC_SETUP_STEPS,
   CLINIC_TERMS_URL,
   createCurrentClinicTermsAcceptance,
-  isCurrentClinicTermsVersion,
   type ClinicSetupReview,
   type ClinicSetupStepId,
   type ClinicTermsAcceptanceInput,
@@ -344,7 +343,10 @@ export function ClinicSetupWizard() {
                 onClick={() =>
                   declareReady.mutate({
                     termsAcceptance:
-                      termsAcceptance ?? createCurrentClinicTermsAcceptance(),
+                      termsAcceptance ??
+                      createCurrentClinicTermsAcceptance(
+                        review.termsAcceptance.currentVersion,
+                      ),
                   })
                 }
               >
@@ -580,8 +582,7 @@ function ReviewStep({
 }) {
   const route = review.firstValidRoute;
   const hasAcceptedTerms =
-    review.termsAcceptance.accepted ||
-    isCurrentClinicTermsVersion(termsAcceptance?.version);
+    review.termsAcceptance.accepted || termsAcceptance !== null;
   return (
     <Card className="shadow-none ring-1">
       <CardHeader>
@@ -679,7 +680,9 @@ function ReviewStep({
               onChange={(event) =>
                 onTermsAcceptanceChange(
                   event.target.checked
-                    ? createCurrentClinicTermsAcceptance()
+                    ? createCurrentClinicTermsAcceptance(
+                        review.termsAcceptance.currentVersion,
+                      )
                     : null,
                 )
               }

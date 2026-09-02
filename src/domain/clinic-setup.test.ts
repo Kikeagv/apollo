@@ -2,13 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildClinicSetupReview,
-  CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
-  CLINIC_TERMS_VERSION,
   createCurrentClinicTermsAcceptance,
-  isCurrentClinicTermsAcceptance,
-  requireCurrentClinicTermsAcceptance,
   type ClinicSetupEvaluationInput,
 } from "./clinic-setup";
+
+const termsContract = {
+  acceptanceErrorMessage:
+    "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.",
+  currentVersion: "1.0",
+};
 
 const initialConfiguration: ClinicSetupEvaluationInput = {
   availability: {
@@ -25,7 +27,8 @@ const initialConfiguration: ClinicSetupEvaluationInput = {
     activeOffers: 0,
     activeServices: 1,
   },
-  termsAcceptance: { acceptedAt: null, version: null },
+  termsContract,
+  termsAcceptance: { acceptedAt: null, isCurrent: false, version: null },
   team: {
     activeDoctors: 2,
     completedProfiles: 1,
@@ -34,37 +37,12 @@ const initialConfiguration: ClinicSetupEvaluationInput = {
 };
 
 describe("guía de Configuración inicial de Clínica", () => {
-  it("usa una aceptación versionada como contrato canónico de declaración", () => {
-    expect(createCurrentClinicTermsAcceptance()).toEqual({
-      version: CLINIC_TERMS_VERSION,
+  it("crea la aceptación con la versión entregada por el contrato vigente", () => {
+    expect(
+      createCurrentClinicTermsAcceptance(termsContract.currentVersion),
+    ).toEqual({
+      version: termsContract.currentVersion,
     });
-    expect(
-      requireCurrentClinicTermsAcceptance({ version: CLINIC_TERMS_VERSION }),
-    ).toEqual({ version: CLINIC_TERMS_VERSION });
-  });
-
-  it.each([
-    ["faltante", undefined],
-    ["desactualizada", { version: "0.9" }],
-  ])("rechaza una aceptación %s con el mismo mensaje", (_label, acceptance) => {
-    expect(() => requireCurrentClinicTermsAcceptance(acceptance)).toThrow(
-      CLINIC_TERMS_ACCEPTANCE_ERROR_MESSAGE,
-    );
-  });
-
-  it("considera vigente solo una aceptación persistida con fecha y versión actuales", () => {
-    expect(
-      isCurrentClinicTermsAcceptance({
-        acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
-        version: CLINIC_TERMS_VERSION,
-      }),
-    ).toBe(true);
-    expect(
-      isCurrentClinicTermsAcceptance({
-        acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
-        version: "0.9",
-      }),
-    ).toBe(false);
   });
 
   it("conserva la habilitación histórica mientras la aceptación se regulariza", () => {
@@ -168,9 +146,11 @@ describe("guía de Configuración inicial de Clínica", () => {
         },
       },
       services: { activeOffers: 1, activeServices: 1 },
+      termsContract,
       termsAcceptance: {
         acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
-        version: "1.0",
+        isCurrent: true,
+        version: termsContract.currentVersion,
       },
       team: { activeDoctors: 3, completedProfiles: 1, pendingInvitations: 1 },
     });
@@ -183,8 +163,8 @@ describe("guía de Configuración inicial de Clínica", () => {
     expect(review.termsAcceptance).toEqual({
       accepted: true,
       acceptedAt: new Date("2026-09-01T12:00:00.000Z"),
-      currentVersion: "1.0",
-      version: "1.0",
+      currentVersion: termsContract.currentVersion,
+      version: termsContract.currentVersion,
     });
     expect(review.progress).toEqual({ completed: 5, total: 5 });
     expect(review.firstValidRoute?.doctor.name).toBe("Dra. Aurora");
