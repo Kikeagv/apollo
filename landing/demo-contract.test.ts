@@ -20,7 +20,7 @@ describe("contrato público de Solicitud de demo", () => {
     expect(demo).toContain('value="secretary"');
     expect(demo).toContain('value="other"');
     expect(demo).toContain('name="turnstileToken"');
-    expect(demo).toContain("responseField: false");
+    expect(demo).toContain('"response-field": false');
     expect(demo).toContain('name="website"');
     expect(demo).toContain('name="context"');
     expect(demo).toContain('value="agenda"');

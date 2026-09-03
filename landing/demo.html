@@ -341,7 +341,7 @@
             sitekey: siteKey,
             // La app envía el token en su propio campo estricto. Evitamos que
             // Turnstile agregue también `cf-turnstile-response` al formulario.
-            responseField: false,
+            "response-field": false,
             callback: function (value) {
               token.value = value;
             },
