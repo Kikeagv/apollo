@@ -17,10 +17,9 @@ export const env = createEnv({
       .enum(["development", "test", "production"])
       .default("development"),
     APPOINTMENT_SCHEDULER_DELIVERY: z.enum(["simulated"]).default("simulated"),
-    WHATSAPP_DELIVERY: z.enum(["simulated", "twilio"]).default("simulated"),
-    TWILIO_ACCOUNT_SID: z.string().optional(),
-    TWILIO_AUTH_TOKEN: z.string().optional(),
-    TWILIO_WHATSAPP_FROM: z.string().optional(),
+    WHATSAPP_DELIVERY: z.enum(["simulated", "kapso"]).default("simulated"),
+    KAPSO_API_KEY: z.string().optional(),
+    KAPSO_WEBHOOK_SECRET: z.string().optional(),
     IDENTITY_EMAIL_DELIVERY: z
       .enum(["simulated", "resend"])
       .default("simulated"),
@@ -53,9 +52,8 @@ export const env = createEnv({
     NODE_ENV: process.env.NODE_ENV,
     APPOINTMENT_SCHEDULER_DELIVERY: process.env.APPOINTMENT_SCHEDULER_DELIVERY,
     WHATSAPP_DELIVERY: process.env.WHATSAPP_DELIVERY,
-    TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
-    TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
-    TWILIO_WHATSAPP_FROM: process.env.TWILIO_WHATSAPP_FROM,
+    KAPSO_API_KEY: process.env.KAPSO_API_KEY,
+    KAPSO_WEBHOOK_SECRET: process.env.KAPSO_WEBHOOK_SECRET,
     IDENTITY_EMAIL_DELIVERY: process.env.IDENTITY_EMAIL_DELIVERY,
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     TURNSTILE_VERIFICATION: process.env.TURNSTILE_VERIFICATION,

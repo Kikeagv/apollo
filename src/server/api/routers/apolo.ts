@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import { createSubscriptionSupport } from "~/server/application/subscription-support";
+import {
+  drizzleWhatsAppRuntimeDiagnosticReader,
+  getWhatsAppRuntimeDiagnostic,
+} from "~/server/application/whatsapp-runtime";
 import { protectedProcedure } from "~/server/api/trpc";
 import {
   drizzleSubscriptionSupportStore,
@@ -14,6 +18,13 @@ const subscriptionSupport = createSubscriptionSupport(
 
 /** Operación comercial de Apolo, separada de los procedimientos de Panacea. */
 export const apoloRouter = {
+  getWhatsAppRuntimeDiagnostic: protectedProcedure.query(({ ctx }) =>
+    getWhatsAppRuntimeDiagnostic(
+      { identityId: ctx.session.user.id },
+      drizzleWhatsAppRuntimeDiagnosticReader,
+    ),
+  ),
+
   listCommercialClinics: protectedProcedure.query(({ ctx }) =>
     listCommercialClinics(ctx.session.user.id),
   ),

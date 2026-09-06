@@ -1,4 +1,13 @@
-/** Liveness de producción: 200 sin dependencias de base de datos o sesión. */
+import { diagnoseWhatsAppRuntime } from "~/domain/whatsapp-runtime";
+import { env } from "~/env";
+import { createHealthResponse } from "./health-response";
+
 export async function GET() {
-  return Response.json({ status: "ok" });
+  return createHealthResponse(
+    diagnoseWhatsAppRuntime({
+      kapsoApiKey: env.KAPSO_API_KEY,
+      provider: env.WHATSAPP_DELIVERY,
+      webhookSecret: env.KAPSO_WEBHOOK_SECRET,
+    }),
+  );
 }

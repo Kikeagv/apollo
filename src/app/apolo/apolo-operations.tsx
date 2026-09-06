@@ -7,6 +7,7 @@ import { api } from "~/trpc/react";
 /** Panel mínimo, aislado de Panacea, para pagos, estado y soporte comercial. */
 export function ApoloOperations() {
   const clinics = api.apolo.listCommercialClinics.useQuery();
+  const runtimeDiagnostic = api.apolo.getWhatsAppRuntimeDiagnostic.useQuery();
   const [clinicId, setClinicId] = useState("");
   const [amountUsd, setAmountUsd] = useState("");
   const [reference, setReference] = useState("");
@@ -34,6 +35,58 @@ export function ApoloOperations() {
           mismo.
         </p>
       </div>
+      <section
+        aria-labelledby="whatsapp-runtime-title"
+        className="space-y-3 rounded-xl border border-slate-700 p-5"
+        data-whatsapp-runtime-diagnostic="true"
+      >
+        <div>
+          <h2 className="text-xl font-semibold" id="whatsapp-runtime-title">
+            Runtime de WhatsApp
+          </h2>
+          <p className="mt-1 text-sm text-slate-300">
+            Diagnóstico de credenciales del proveedor central. No prueba la
+            Conexión de WhatsApp de una Clínica; las credenciales nunca se
+            muestran ni se guardan por Clínica.
+          </p>
+        </div>
+        {runtimeDiagnostic.isLoading ? (
+          <p className="text-sm text-slate-300" role="status">
+            Consultando configuración…
+          </p>
+        ) : runtimeDiagnostic.data ? (
+          <dl className="grid gap-3 text-sm sm:grid-cols-3">
+            <DiagnosticValue
+              label="Proveedor activo"
+              value={
+                runtimeDiagnostic.data.provider === "kapso"
+                  ? "Kapso"
+                  : "Simulado"
+              }
+            />
+            <DiagnosticValue
+              label="Estado del runtime"
+              value={
+                runtimeDiagnostic.data.configured
+                  ? "Configurado"
+                  : "Requiere configuración"
+              }
+            />
+            <DiagnosticValue
+              label="Secretos"
+              value={
+                runtimeDiagnostic.data.provider === "kapso"
+                  ? `${secretStatusLabel(runtimeDiagnostic.data.apiKey)} · ${secretStatusLabel(runtimeDiagnostic.data.webhookSecret)}`
+                  : "No requeridos"
+              }
+            />
+          </dl>
+        ) : (
+          <p className="text-sm text-amber-200" role="status">
+            El diagnóstico no está disponible para esta identidad.
+          </p>
+        )}
+      </section>
       <label className="block text-sm">
         Clínica
         <select
@@ -149,4 +202,23 @@ export function ApoloOperations() {
       </section>
     </main>
   );
+}
+
+function DiagnosticValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+      <dt className="text-xs tracking-wide text-slate-400 uppercase">
+        {label}
+      </dt>
+      <dd className="mt-1 font-medium text-slate-100">{value}</dd>
+    </div>
+  );
+}
+
+function secretStatusLabel(
+  status: "configured" | "not-configured" | "not-required",
+) {
+  if (status === "configured") return "Configurado";
+  if (status === "not-configured") return "Ausente";
+  return "No requerida";
 }

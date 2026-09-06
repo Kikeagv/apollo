@@ -1,5 +1,9 @@
 import "server-only";
 
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
+
+import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
+import { assertWhatsAppRuntimeReady } from "~/domain/whatsapp-runtime";
 import type { AppointmentReminderSender } from "~/server/application/appointment-reminders";
 import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
 import type { ManualAppointmentMessageSender } from "~/server/application/manual-appointments";
@@ -9,11 +13,12 @@ import {
   simulatedAppointmentMessageSender,
   simulatedAppointmentReminderSender,
 } from "./simulated-appointment-messages";
-import { createTwilioWhatsAppSenders } from "./twilio-whatsapp";
+import { createKapsoWhatsAppSenders } from "./kapso-whatsapp";
 
 export type WhatsAppSenderBundle = {
   appointmentMessageSender: ManualAppointmentMessageSender;
   appointmentReminderSender: AppointmentReminderSender;
+  provider: WhatsAppProviderId;
   sendConversationEscalationNotification(input: {
     clinicId: string;
     escalationId: string;
@@ -22,46 +27,50 @@ export type WhatsAppSenderBundle = {
   }): Promise<void>;
 };
 
-/** WhatsApp real exige secretos de Twilio; el modo simulado es para dev/test. */
+/** Kapso exige sus dos secretos de proyecto; el modo simulado no exige ninguno. */
 export function assertWhatsAppDeliveryAllowed() {
-  if (
-    env.WHATSAPP_DELIVERY === "twilio" &&
-    (env.TWILIO_ACCOUNT_SID === undefined ||
-      env.TWILIO_AUTH_TOKEN === undefined ||
-      env.TWILIO_WHATSAPP_FROM === undefined)
-  ) {
-    throw new Error(
-      "WHATSAPP_DELIVERY=twilio requiere TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN y TWILIO_WHATSAPP_FROM",
-    );
-  }
+  assertWhatsAppRuntimeReady({
+    kapsoApiKey: env.KAPSO_API_KEY,
+    provider: env.WHATSAPP_DELIVERY,
+    webhookSecret: env.KAPSO_WEBHOOK_SECRET,
+  });
 }
 
-assertWhatsAppDeliveryAllowed();
+if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) {
+  assertWhatsAppDeliveryAllowed();
+}
 
 const simulatedBundle: WhatsAppSenderBundle = {
   appointmentMessageSender: simulatedAppointmentMessageSender,
   appointmentReminderSender: simulatedAppointmentReminderSender,
+  provider: "simulated",
   sendConversationEscalationNotification:
     sendSimulatedConversationEscalationNotification,
 };
 
-let twilioCache: WhatsAppSenderBundle | undefined;
+let kapsoCache: WhatsAppSenderBundle | undefined;
 
 /**
- * Selección por configuración de los adaptadores de WhatsApp. El piloto
- * mantiene los simulados; activar Twilio sustituye esta selección, no el caso
- * de uso de Agenda ni el diálogo de Asclepio.
+ * Selección por configuración de los adaptadores de WhatsApp. Kapso nunca
+ * cae silenciosamente al adaptador simulado si todavía falta la Conexión de
+ * WhatsApp propia de una Clínica.
  */
 export function whatsAppSender(): WhatsAppSenderBundle {
-  if (env.WHATSAPP_DELIVERY !== "twilio") return simulatedBundle;
-  if (twilioCache === undefined) {
-    const senders = createTwilioWhatsAppSenders();
-    twilioCache = {
+  if (env.WHATSAPP_DELIVERY === "simulated") return simulatedBundle;
+  if (kapsoCache === undefined) {
+    const senders = createKapsoWhatsAppSenders();
+    kapsoCache = {
       appointmentMessageSender: senders.appointmentMessageSender,
       appointmentReminderSender: senders.appointmentReminderSender,
+      provider: "kapso",
       sendConversationEscalationNotification: (input) =>
         senders.sendConversationEscalationNotification(input),
     };
   }
-  return twilioCache;
+  return kapsoCache;
+}
+
+/** Proveedor activo sin exponer la configuración sensible del entorno. */
+export function whatsAppProvider(): WhatsAppProviderId {
+  return env.WHATSAPP_DELIVERY;
 }

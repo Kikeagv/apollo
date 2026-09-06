@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const DEFAULT_ENV = {
   BETTER_AUTH_URL: "http://localhost:3000",
   DATABASE_URL: "postgresql://localhost:5432/panacea",
+  KAPSO_API_KEY: "",
+  KAPSO_WEBHOOK_SECRET: "",
   WHATSAPP_DELIVERY: "simulated",
 };
 
@@ -32,23 +34,44 @@ describe("whatsAppSender", () => {
     expect(delivery.whatsAppSender().appointmentMessageSender).toBe(
       simulated.simulatedAppointmentMessageSender,
     );
+    expect(delivery.whatsAppSender().provider).toBe("simulated");
   });
 
-  it("rechaza el modo twilio sin secretos configurados", async () => {
-    await expect(importFresh({ WHATSAPP_DELIVERY: "twilio" })).rejects.toThrow(
-      /TWILIO_ACCOUNT_SID/,
+  it("rechaza el modo Kapso sin secretos configurados", async () => {
+    await expect(importFresh({ WHATSAPP_DELIVERY: "kapso" })).rejects.toThrow(
+      /KAPSO_API_KEY.*KAPSO_WEBHOOK_SECRET/,
     );
   });
 
-  it("selecciona el adaptador de Twilio cuando hay secretos", async () => {
+  it("selecciona Kapso cuando las credenciales del entorno están presentes", async () => {
     const { delivery, simulated } = await importFresh({
-      WHATSAPP_DELIVERY: "twilio",
-      TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000000",
-      TWILIO_AUTH_TOKEN: "clave-de-prueba",
-      TWILIO_WHATSAPP_FROM: "+50370000001",
+      KAPSO_API_KEY: "kapso-api-key-test",
+      KAPSO_WEBHOOK_SECRET: "kapso-webhook-secret-test",
+      WHATSAPP_DELIVERY: "kapso",
     });
-    expect(delivery.whatsAppSender().appointmentMessageSender).not.toBe(
+    const sender = delivery.whatsAppSender();
+
+    expect(sender.provider).toBe("kapso");
+    expect(sender.appointmentMessageSender).not.toBe(
       simulated.simulatedAppointmentMessageSender,
     );
+    expect(delivery.whatsAppProvider()).toBe("kapso");
+    expect(JSON.stringify(sender)).not.toContain("kapso-api-key-test");
+    expect(JSON.stringify(sender)).not.toContain("kapso-webhook-secret-test");
+  });
+
+  it("no mezcla secretos entre dos cargas de entorno", async () => {
+    const configured = await importFresh({
+      KAPSO_API_KEY: "kapso-api-key-test",
+      KAPSO_WEBHOOK_SECRET: "kapso-webhook-secret-test",
+      WHATSAPP_DELIVERY: "kapso",
+    });
+    expect(configured.delivery.whatsAppProvider()).toBe("kapso");
+
+    const simulated = await importFresh({
+      WHATSAPP_DELIVERY: "simulated",
+    });
+    expect(simulated.delivery.whatsAppProvider()).toBe("simulated");
+    expect(simulated.delivery.whatsAppSender().provider).toBe("simulated");
   });
 });

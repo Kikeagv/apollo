@@ -20,10 +20,9 @@ export default async function WhatsAppSettingsPage() {
           Configuración inicial separada de Activación de clínica
         </AlertTitle>
         <AlertDescription>
-          Estas preferencias no activan WhatsApp real ni configuran Twilio,
-          WABA, sender, plantillas, base legal o aprobaciones externas. La
-          Activación de clínica se realizará en un proceso externo cuando
-          corresponda.
+          Estas preferencias no activan WhatsApp real ni configuran Kapso, WABA,
+          número, plantillas, base legal o aprobaciones externas. La Activación
+          de clínica se realizará en un proceso separado cuando corresponda.
         </AlertDescription>
       </Alert>
       <NoShowPolicySection />
