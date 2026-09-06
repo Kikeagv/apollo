@@ -1,10 +1,10 @@
 # Investigación profunda: Kapso como alternativa a Twilio para WhatsApp
 
-**Corte de investigación:** 29 de agosto de 2026
+**Corte de investigación:** 5 de septiembre de 2026
 
 **Audiencia:** producto, ingeniería, operaciones y asesoría legal de Praxia
 
-**Alcance:** Kapso como proveedor de WhatsApp para el SaaS de clínicas de Praxia, comparado con el uso actual previsto de Twilio.
+**Alcance:** Kapso como proveedor de WhatsApp para el SaaS de clínicas de Praxia, comparado con Twilio como alternativa futura; no existe una migración de clientes o números productivos desde Twilio.
 **Naturaleza:** investigación técnica y de producto; no es asesoría jurídica, ni una certificación de seguridad, ni una cotización comercial.
 
 ## Respuesta ejecutiva
@@ -13,13 +13,38 @@ Kapso sí puede ser una alternativa convincente a Twilio **para la capa de Whats
 
 Kapso **no es un reemplazo funcional de Twilio como CPaaS general**. Twilio cubre WhatsApp además de SMS/MMS/RCS, voz/PSTN, SIP, email, video, Verify, Conversations y otras superficies. La propia comparación de Kapso recomienda Twilio cuando el requisito es multi-canal; Kapso es más estrecho y profundo en WhatsApp.[^twilio-cpaas][^twilio-channels][^kapso-twilio]
 
-Para Praxia, la decisión recomendada es un **piloto controlado con un adaptador de proveedor y una ruta híbrida de reversión**, no un corte directo. La lógica de agenda, reservas, recordatorios, escalamiento e idempotencia puede conservarse; cambia el transporte, la activación de números, la forma de los webhooks, el modelo de credenciales y parte del manejo de plantillas. La conexión debe probarse primero con datos sintéticos y, antes de usar pacientes reales, pasar por el gate legal existente.
+Para Praxia, la decisión adoptada es un **piloto controlado de Kapso sobre un puerto de proveedor**, sin migración ni fallback automático a Twilio. La lógica de agenda, reservas, recordatorios, escalamiento, consentimiento e idempotencia permanece en Praxia; Kapso aporta onboarding, transporte, webhooks y billing. Cada Clínica aporta su número/WABA, usa `coexistence` y autoriza mediante setup link. La conexión se prueba primero con datos sintéticos y, antes de usar pacientes reales, pasa por el gate legal existente.
+
+## Decisión adoptada por Praxia
+
+Esta investigación ya no deja abiertas las decisiones de producto que se
+discutieron durante el grill:
+
+- no hay clientes, números ni historial vivo en Twilio; no existe una
+  migración técnica que ejecutar;
+- cada Clínica tiene un número y WABA propios, conserva su propiedad Meta y
+  aporta una línea activa en WhatsApp Business App;
+- el camino es `coexistence`, con el setup link de Kapso y la aplicación Meta
+  predeterminada de Kapso;
+- el billing es `partner_managed`, con créditos centrales, atribución por
+  Clínica y separación visible entre cargos Meta y Kapso;
+- el superadmin puede generar, revocar y regenerar el link desde el alta
+  manual, pero el propietario completa Meta, el QR y la autorización;
+- el agente, la agenda, el consentimiento, la outbox, el handoff y la fuente
+  canónica siguen en Praxia; Kapso no es el inbox ni el workflow de negocio;
+- se usarán webhooks v2 estructurados, un endpoint compartido y sin buffering
+  inicial; la identidad de WhatsApp soportará BSUID sin exigir teléfono;
+- la primera versión procesa solo texto entrante nuevo. Mensajes de la
+  Business App activan takeover humano; `history_sync` y multimedia no
+  disparan al agente;
+- el rollout es simulado → sandbox Kapso → una Clínica real con contactos
+  sintéticos → aceptación → demás Clínicas.
 
 Los cuatro riesgos que dominan la decisión son:
 
 - Los términos de Kapso visibles al corte dicen que el servicio no está diseñado para PHI ni datos de salud sujetos a HIPAA o leyes equivalentes salvo acuerdo escrito adicional. También describen procesamiento internacional y múltiples subprocesadores. Esto es crítico para una clínica, aunque Praxia se limite a datos administrativos.[^kapso-terms][^kapso-dpa][^kapso-subprocessors]
 - Kapso no ofrece un SLA estándar público en sus términos: salvo acuerdo escrito, no garantiza disponibilidad, tiempos de respuesta ni entrega ininterrumpida. Twilio sí publica un SLA de API, aunque con exclusiones y niveles según contrato.[^kapso-terms][^twilio-sla]
-- La provisión de un número salvadoreño no debe darse por resuelta. Kapso ofrece conexión de número propio, coexistencia con WhatsApp Business App y una opción de “Bring your own Twilio” para provisioning; su provisioning predeterminado documentado es estadounidense. Para El Salvador habrá que confirmar un número de la clínica, una ruta de telephony compatible y su costo.[^kapso-connect][^kapso-setup][^kapso-changelog]
+- La disponibilidad concreta de cada número salvadoreño debe validarse durante el preflight de la Clínica, pero Praxia no necesita provisionar líneas: el propietario aporta una línea local ya activa en WhatsApp Business App y la conecta mediante `coexistence`. La ruta “Bring your own Twilio” queda fuera del diseño adoptado.[^kapso-connect][^kapso-setup][^kapso-changelog]
 - La tarifa de plataforma de Kapso puede ser mucho menor, pero no elimina las tarifas variables de Meta. Además, la documentación de Kapso anuncia que desde el 1 de octubre de 2026 cambiará el cobro de mensajes de servicio, mientras la página oficial de precios de WhatsApp de Meta consultada al corte todavía describe esos mensajes como gratuitos. No conviene cerrar un TCO con ese supuesto sin revalidarlo justo antes de contratar y de activar producción.[^kapso-meta-billing][^kapso-october][^meta-pricing]
 
 ## 1. Qué es Kapso
@@ -70,7 +95,11 @@ La conclusión de la tabla es simple: **Kapso es un posible sustituto de Twilio 
 
 La documentación de Praxia ya separa el núcleo de dominio de la entrega real: agenda como autoridad, reservas, cancelaciones, recordatorios, escalamientos, reintentos, concesión de trabajos e idempotencia. Esa separación es exactamente la costura que permite evaluar otro proveedor sin reescribir el producto.[^praxia-producto]
 
-En el repositorio, el adaptador productivo actual está en [`src/server/whatsapp/twilio-whatsapp.ts`](/Users/mark28pro/development/apollo/src/server/whatsapp/twilio-whatsapp.ts), la selección de entrega en [`src/server/whatsapp/whatsapp-delivery.ts`](/Users/mark28pro/development/apollo/src/server/whatsapp/whatsapp-delivery.ts) y la recepción en [`src/server/whatsapp/twilio-webhook.ts`](/Users/mark28pro/development/apollo/src/server/whatsapp/twilio-webhook.ts). El caso de uso no necesita saber si la entrega salió por Twilio o Kapso.
+El repositorio contiene piezas y documentación del camino previsto de Twilio,
+pero no existe un adaptador Twilio productivo con clientes que preservar. Esas
+piezas no deben definir el dominio: el trabajo productivo será un puerto
+`WhatsAppProvider`, un adaptador Kapso y un adaptador simulado. El caso de uso
+no necesita saber si la entrega salió por Kapso o por un proveedor futuro.
 
 Debe conservarse en el dominio:
 
@@ -133,9 +162,18 @@ Para el piloto recomiendo la primera opción. Reduce acoplamiento y evita que la
 
 Kapso documenta un flujo en el que Praxia crea un customer, genera un setup link y permite que la clínica conecte su cuenta/número mediante Meta Embedded Signup sin compartir credenciales con Praxia. Puede configurarse billing administrado por el cliente o por el partner.[^kapso-platform][^kapso-setup][^kapso-customer]
 
-Eso se alinea mejor con la evolución de Praxia que un único WABA compartido del proveedor: cada clínica puede ser propietaria de su relación de WhatsApp, número, opt-ins y continuidad. El diseño actual del producto todavía describe un número/WABA compartido durante el piloto; Kapso no elimina la necesidad de definir el modelo de propiedad y el consentimiento, solo ofrece una ruta técnica para implementarlo.
+Eso se alinea con el diseño adoptado de Praxia: cada Clínica es propietaria de
+su relación de WhatsApp, número, WABA, opt-ins y continuidad. Kapso ofrece la
+ruta técnica, pero no elimina la necesidad de definir propiedad, consentimiento
+y gates legales en el dominio de Praxia.
 
-Para la primera prueba preferiría `customer_managed` billing: la clínica mantiene la responsabilidad del gasto Meta y Praxia factura su suscripción. `partner_managed` puede centralizar la experiencia de pago, pero implica créditos, conciliación, FX, riesgo de cobranza y dependencia de las credenciales Meta administradas por Kapso. La documentación indica que el modo partner-managed usa credenciales Meta administradas por Kapso y que completar el setup no prueba por sí solo que el billing haya quedado conectado.[^kapso-setup][^kapso-managed-billing]
+Para la primera prueba se adopta `partner_managed`: Praxia/Kapso centralizan
+los créditos y Praxia atribuye el consumo por Clínica, mientras la interfaz
+separa explícitamente cargos de Meta y de plataforma. Esto implica créditos,
+conciliación, FX, riesgo de cobranza y dependencia operativa de Kapso; por eso
+el onboarding verifica billing antes de `ready`, muestra umbrales y abre un
+circuit breaker si el crédito o la conexión fallan. Completar el setup no prueba
+por sí solo que billing haya quedado conectado.[^kapso-setup][^kapso-managed-billing]
 
 ### 4.2 Coexistencia, número propio y número provisto
 
@@ -145,24 +183,32 @@ Kapso documenta tres rutas relevantes:
 - **Número propio/SIM dedicado:** se retira el número de la app o proveedor anterior y se completa la verificación para Cloud API; ofrece una ruta de mayor escala, con más fricción de migración.
 - **Número administrado/provisionado:** el proveedor aporta el número según disponibilidad y país; los términos de Kapso aclaran que esos números se licencian, no se venden, y que la portabilidad no está garantizada.
 
-La documentación de setup menciona un número pre-verificado estadounidense como camino rápido. El changelog también documenta “Bring your own Twilio” para provisioning de números locales fuera del pool predeterminado. Por eso, para El Salvador hay que resolver una pregunta muy concreta: ¿la clínica aporta y verifica su propio número, o Praxia compra/provisiona un número local por una ruta de telephony adicional? La segunda ruta puede dejar a Twilio como componente complementario, no eliminado.[^kapso-connect][^kapso-setup][^kapso-changelog][^kapso-terms]
+La documentación de setup menciona rutas de provisioning administrado, pero el
+diseño de Praxia no las usa. La Clínica aporta y conserva su número local, lo
+mantiene en WhatsApp Business App y completa `coexistence` mediante QR. Para El
+Salvador aún se debe validar cada línea y los bloqueos de Meta durante el
+preflight; no se compra una línea, no se usa “Bring your own Twilio” y no se
+elige “display name only”.[^kapso-connect][^kapso-setup][^kapso-changelog][^kapso-terms]
 
-### 4.3 Migración desde el Twilio existente
+### 4.3 Transición desde el diseño previsto de Twilio
 
-No encontré una guía oficial de Kapso que garantice una migración “drop-in” desde Twilio con conservación de historial, plantillas, opt-ins, estados, webhooks y dashboard. Sí encontré evidencia de que Kapso puede trabajar con cuentas/números propios, que permite conectar credenciales Meta y que su SDK puede apuntar al proxy Kapso o directamente a Meta. Eso hace técnicamente plausible una migración por número/WABA, pero no prueba una migración operacional sin interrupción.[^kapso-connect-number][^kapso-sdk][^kapso-terms]
+No existe una migración de tráfico, números, WABA, historial, opt-ins ni
+plantillas desde Twilio: no hay clientes ni números Twilio productivos. La
+transición consiste en sustituir el diseño previsto antes de activarlo:
 
-El plan de migración debe asumir:
+1. retirar del runtime las variables, rutas, paquetes y supuestos Twilio;
+2. conservar el dominio detrás de `WhatsAppProvider` y un adaptador simulado;
+3. crear el customer Kapso y setup link por Clínica;
+4. conectar el número/WABA propio del propietario con `coexistence`;
+5. provisionar webhooks, templates, billing y E2E de forma idempotente;
+6. ejecutar la Clínica canario con contactos sintéticos;
+7. habilitar tráfico real únicamente después de los gates legales y de
+   consentimiento.
 
-1. confirmar quién es dueño del WABA y del número actual;
-2. confirmar si el sender está ligado a una cuenta/subcuenta Twilio que debe ser liberada o reconfigurada;
-3. exportar desde Praxia el historial administrativo, opt-ins, configuraciones, plantillas y correlaciones, aunque no se pueda migrar el historial de conversación al nuevo inbox;
-4. sincronizar o recrear las plantillas y esperar aprobación;
-5. desconectar el número de la app/proveedor anterior cuando el procedimiento lo requiera;
-6. configurar y probar el nuevo webhook antes del corte;
-7. ejecutar una clínica canario con un número controlado;
-8. conservar el adaptador Twilio hasta comprobar entrega, recepción, escalamiento, recordatorios y rollback.
-
-La alternativa híbrida es especialmente atractiva: Kapso puede encargarse de API, webhooks, workflows e inbox de WhatsApp, mientras una cuenta Twilio propia se mantiene únicamente para provisioning de números locales o para otros canales. No es la opción de menor número de proveedores, pero reduce el riesgo de que una limitación local de numeración bloquee el proyecto.
+La futura salida de Kapso debe ser otro adaptador y un procedimiento de
+offboarding. No debe confundirse con un fallback automático: cambiar de
+proveedor durante una incidencia podría duplicar mensajes o perder el vínculo
+de identidad.
 
 ## 5. Costos y TCO
 
@@ -176,6 +222,14 @@ La página comercial de Kapso publica los siguientes planes. Los importes son de
 | Pro | $25/mes | 100.000 | 3 | 100 GB de media; números adicionales publicados a $10; integración/funciones con métricas que deben reconciliarse. |
 | Platform | $299/mes | 1.000.000 | 50 | 1 TB de media; números adicionales publicados a $5; onboarding y APIs de plataforma. |
 | Enterprise | Cotización | Personalizado | Personalizado | Soporte, contrato y requisitos empresariales por acordar. |
+
+Para la beta objetivo de cinco Clínicas, el plan Free no alcanza porque limita
+el proyecto a un solo número. Si el volumen permanece por debajo de 100.000
+mensajes mensuales, la hipótesis operativa es **Pro + dos números adicionales**
+(cinco números en total); debe validarse el precio vigente de números extra y
+los cargos de Meta antes de comprar créditos. Si el volumen o los límites de
+Platform crecen, reevaluar Platform. No se debe comprar el plan basándose solo
+en la tabla publicada.
 
 La FAQ define como mensajes contables los entrantes y salientes de texto, media, plantillas, interactivos y reacciones; los read receipts quedan excluidos. Por tanto, “100.000 mensajes” no significa necesariamente 100.000 conversaciones ni 100.000 mensajes salientes: una conversación de ida y vuelta consume varias unidades.[^kapso-pricing-faq]
 
@@ -257,19 +311,25 @@ Los términos de Kapso excluyen por defecto garantías de disponibilidad o entre
 
 ### 7.1 Decisión recomendada
 
-Adoptar Kapso como **candidato de transporte WhatsApp y operación conversacional**, mediante un piloto de una clínica y con el adaptador Twilio conservado como fallback. No adoptar Kapso como sustituto global de Twilio ni mover datos clínicos reales hasta cerrar el gate legal y contractual.
+Adoptar Kapso como **capa de onboarding y transporte WhatsApp** mediante un
+piloto de una Clínica. No hay migración desde Twilio, no se conserva un
+fallback automático y no se mueven datos clínicos reales hasta cerrar el gate
+legal y contractual.
 
 La elección de producto sería:
 
 - Kapso Platform si se van a conectar varias clínicas con números propios y se necesita onboarding de customers;
-- `customer_managed` Meta billing al inicio para reducir conciliación y riesgo financiero;
-- número propio de la clínica o coexistencia si el negocio necesita conservar su WhatsApp Business App;
-- una cuenta Twilio complementaria solo si hace falta provisioning local, números u otros canales;
-- inbox propio de Praxia durante el primer piloto, con Kapso como fuente técnica de eventos y envío.
+- `partner_managed` Meta billing, con créditos centralizados, atribución por Clínica y circuito de protección;
+- número propio de la Clínica en `coexistence`, conservando su WhatsApp Business App;
+- aplicación Meta predeterminada de Kapso, sin Tech Provider/MPS propio en v1;
+- inbox, agente y fuente canónica de Praxia durante el piloto, con Kapso como transporte y onboarding.
 
 ### 7.2 Cambios de código esperados
 
-No haría que el dominio importe el SDK de Kapso. Crearía un puerto interno, por ejemplo `WhatsAppProvider`, con implementaciones separadas para `simulated`, `twilio` y `kapso`. Ese puerto debería representar conceptos de negocio y de Meta, no SIDs de Twilio:
+No haría que el dominio importe el SDK de Kapso. Crearía un puerto interno,
+por ejemplo `WhatsAppProvider`, con implementaciones `simulated` y `kapso` en
+esta fase. El puerto debe representar conceptos de negocio y de WhatsApp, no
+IDs de Kapso o Twilio:
 
 - enviar respuesta de sesión;
 - enviar plantilla transaccional con variables;
@@ -281,9 +341,9 @@ No haría que el dominio importe el SDK de Kapso. Crearía un puerto interno, po
 
 Cambios concretos:
 
-1. **Configuración por clínica:** reemplazar el único `TWILIO_WHATSAPP_FROM` global por una configuración segura de provider/customer/phone number/WABA y referencias a secretos.
+1. **Configuración por clínica:** reemplazar cualquier sender global por una configuración segura de provider/customer/phone number/WABA y referencias a secretos.
 2. **Adaptador saliente:** implementar el POST Kapso/Meta, mapear el `message.id`, registrar el costo/estado cuando llegue el webhook y seleccionar templates aprobados fuera de la ventana.
-3. **Webhook Kapso:** crear ruta JSON separada, verificar raw body con HMAC-SHA256 y procesar `X-Idempotency-Key`; no reutilizar el parser Twilio.
+3. **Webhook Kapso:** crear la ruta JSON compartida, verificar raw body con HMAC-SHA256 y procesar `X-Idempotency-Key`; no reutilizar el parser Twilio previsto.
 4. **Multi-tenant:** resolver clínica desde `phone_number_id` y customer autorizado; rechazar cualquier número no registrado o credencial cruzada.
 5. **Batching y orden:** desactivar buffering al principio o fijarlo a una política conocida mientras se valida el ordenamiento por conversación; aceptar duplicados y reintentos idempotentemente.
 6. **Estados:** guardar entregado/leído/fallido y códigos de error como eventos append-only; no marcar un recordatorio como exitoso solo porque la API aceptó el request.
@@ -303,8 +363,10 @@ El piloto no está listo para datos reales hasta demostrar, con cuentas y númer
 - remapeo seguro de `phone_number_id` a clínica;
 - exportación de configuración, templates, opt-ins y correlaciones;
 - cálculo de costo a partir de estados entregados, no solo de sends;
-- rollback al adaptador Twilio sin duplicar mensajes al paciente;
-- revisión de número salvadoreño, OTP, coexistencia y capacidad real antes del primer tráfico.
+- uso manual de la WhatsApp Business App y apertura del circuit breaker ante
+  una caída de Kapso/Meta, sin fallback automático;
+- revisión del número salvadoreño, QR, coexistencia y capacidad real antes del
+  primer tráfico.
 
 ## 8. Cuándo elegir cada opción
 
@@ -323,7 +385,8 @@ Kapso es una buena elección si se cumplen la mayoría de estas condiciones:
 
 ### Mantener Twilio
 
-Twilio sigue siendo preferible si:
+No es la decisión actual de Praxia, pero Twilio seguiría siendo preferible en
+un futuro si:
 
 - el roadmap requiere una sola plataforma para WhatsApp, SMS, voz/PSTN, email, Verify, video o SIP;
 - ya existe una integración fuerte con Twilio y el volumen de WhatsApp no compensa el costo de migración;
@@ -334,32 +397,37 @@ Twilio sigue siendo preferible si:
 
 ### Usar una arquitectura híbrida
 
-La arquitectura híbrida tiene sentido cuando WhatsApp operativo es el foco de Praxia, pero Twilio sigue siendo útil para provisioning, números locales, voz, SMS o fallback. También es una buena forma de probar Kapso sin convertir la migración en una decisión irreversible.
+La arquitectura híbrida queda como una alternativa futura para otros canales o
+telephony. No forma parte del piloto actual: Praxia no compra líneas Twilio,
+no enruta números de Clínicas por Twilio y no usa fallback automático.
 
 ## 9. Preguntas que deben quedar respondidas antes de contratar
 
-1. ¿Puede Kapso conectar o migrar el WABA/número específico de la clínica que hoy está en Twilio, y cuál es el procedimiento exacto de corte?
-2. ¿El WABA y el número permanecen en propiedad/control de la clínica? ¿Qué exportación se entrega al terminar?
-3. ¿Qué opción y precio existen para un número de El Salvador, incluyendo OTP, portabilidad, provisioning y soporte?
-4. ¿Cuál es la tarifa efectiva de overage, almacenamiento, integración, número adicional, FX, soporte y `Bring your own Twilio` en la orden de servicio?
+1. ¿La línea propia de cada Clínica salvadoreña es elegible para `coexistence`, y qué bloqueos de Meta, display name o calidad deben resolverse antes del piloto?
+2. ¿El WABA y el número permanecen en propiedad/control de la Clínica? ¿Qué exportación se entrega al terminar?
+3. ¿Cuál es la tarifa efectiva de overage, almacenamiento, integración, número adicional, FX, soporte y créditos en la orden de servicio `partner_managed`?
+4. ¿Qué SLA, RTO, RPO, soporte, compensación y retención de eventos se pueden contratar?
 5. ¿Qué significa exactamente “integration calls” frente a “function calls” y qué límite aplica a cada plan?
-6. ¿Qué SLA, RTO, RPO, soporte, compensación y retención de eventos se pueden contratar?
-7. ¿Puede firmarse un acuerdo que permita el tratamiento de datos administrativos de clínicas y delimite expresamente salud, menores, audio y transcripciones?
-8. ¿Qué subprocesadores y regiones aplican al proyecto, al inbox, a las funciones, a la IA y al billing?
-9. ¿Cómo se desactiva el model improvement y qué evidencia se entrega de que la configuración quedó aplicada?
-10. ¿Cuál es la tarifa Meta vigente para los destinatarios salvadoreños y cómo cambiará después del 1 de octubre de 2026?
-11. ¿Los webhooks batched/buffered tienen límites, retención o recuperación adicionales no visibles en la documentación?
-12. ¿Qué soporte existe para BSUID y otras identidades de WhatsApp en el modelo de contacto de Praxia?
+6. ¿Puede firmarse un acuerdo que permita el tratamiento de datos administrativos de clínicas y delimite expresamente salud, menores, audio y transcripciones?
+7. ¿Qué subprocesadores y regiones aplican al proyecto, al inbox, a las funciones, a la IA y al billing?
+8. ¿Cómo se desactiva el model improvement y qué evidencia se entrega de que la configuración quedó aplicada?
+9. ¿Cuál es la tarifa Meta vigente para los destinatarios salvadoreños y cómo cambiará después del 1 de octubre de 2026?
+10. ¿Los webhooks batched/buffered tienen límites, retención o recuperación adicionales no visibles en la documentación?
+11. ¿Qué exportación y borrado coordinado existen para Praxia, Kapso y backups al salir una Clínica?
+
+Las preguntas sobre migración desde Twilio y soporte BSUID ya están resueltas para
+el diseño interno: no hay migración aplicable, y Praxia modelará BSUID como
+identidad primaria cuando esté disponible, con teléfono opcional.
 
 ## Conclusión
 
 Kapso tiene una tesis clara y técnicamente atractiva: convertir WhatsApp en una plataforma de desarrollo y operación más completa que una API de transporte. Para una SaaS vertical como Praxia, sus ventajas más fuertes son el onboarding de clientes, la propiedad de números, los workflows y el inbox; sus ventajas económicas son plausibles a partir de los precios publicados, pero requieren normalizar unidades y separar las tarifas Meta.
 
-La conclusión responsable es **“sí, como alternativa enfocada a WhatsApp y con piloto híbrido; no, como reemplazo total de Twilio”**. El trabajo de ingeniería es manejable porque el dominio de Praxia ya tiene una frontera de entrega, pero la decisión no debe cerrarse por precio: el resultado depende de número salvadoreño, migración del WABA, SLA, datos de salud, subprocesadores, plantillas, costos Meta y capacidad de reversión.
+La conclusión adoptada es **“sí, Kapso como capa de WhatsApp para Praxia; no, como reemplazo general de Twilio ni como dueño del agente”**. No hay migración de clientes que ejecutar. El trabajo de ingeniería se concentra en el adaptador Kapso, setup links, webhooks v2, BSUID, consentimiento, plantillas, outbox, circuit breaker y gates legales. La decisión comercial final aún depende de validar número salvadoreño, SLA, datos, subprocesadores, plantillas y costos Meta antes de activar producción.
 
 ## Registro de fuentes y notas de método
 
-Se priorizaron páginas oficiales de Kapso, su documentación, términos/DPA/subprocesadores; documentación oficial de Twilio; páginas oficiales de Meta/WhatsApp; y documentos existentes del repositorio. Las páginas de pricing, terms y status son dinámicas: el corte de esta investigación es el 29 de agosto de 2026. Las afirmaciones comerciales de Kapso —usuarios, ahorros, condición de BSP/partner y disponibilidad— se presentan como afirmaciones del proveedor salvo que se indique otra cosa.
+Se priorizaron páginas oficiales de Kapso, su documentación, términos/DPA/subprocesadores; documentación oficial de Twilio; páginas oficiales de Meta/WhatsApp; y documentos existentes del repositorio. Las páginas de pricing, terms y status son dinámicas: el corte de esta investigación es el 5 de septiembre de 2026. Las afirmaciones comerciales de Kapso —usuarios, ahorros, condición de BSP/partner y disponibilidad— se presentan como afirmaciones del proveedor salvo que se indique otra cosa.
 
 | Fuente | Publicador | Uso en el informe | Fecha/nota |
 | --- | --- | --- | --- |
@@ -378,8 +446,14 @@ Se priorizaron páginas oficiales de Kapso, su documentación, términos/DPA/sub
 | [Webhook security](https://docs.kapso.ai/docs/platform/webhooks/security) | Kapso Docs | HMAC-SHA256, raw body, idempotency y timing-safe compare. | Sin fecha visible; consultada 29-08-2026. |
 | [Advanced webhook features](https://docs.kapso.ai/docs/platform/webhooks/advanced) | Kapso Docs | Buffering, batching, orden, reintentos y auto-pause. | Sin fecha visible; consultada 29-08-2026. |
 | [Create and configure setup links](https://docs.kapso.ai/docs/platform/setup-links/create-and-configure) | Kapso Docs | Embedded Signup, billing modes y coexistence/dedicated. | Sin fecha visible; consultada 29-08-2026. |
+| [Manage setup links](https://docs.kapso.ai/docs/platform/setup-links/manage) | Kapso Docs | Revocación, regeneración, expiración y estado operativo de enlaces. | Sin fecha visible; consultada 05-09-2026. |
 | [Connect WhatsApp](https://docs.kapso.ai/docs/how-to/whatsapp/connect-whatsapp) | Kapso Docs | Instant setup, Business App coexistence y SIM propio. | Sin fecha visible; consultada 29-08-2026. |
+| [Detect connection](https://docs.kapso.ai/docs/platform/setup-links/detect-connection) | Kapso Docs | Detección de conexión y rutas de coexistencia. | Sin fecha visible; consultada 05-09-2026. |
 | [Connect phone number API](https://docs.kapso.ai/api/platform/v1/phone-numbers/connect-phone-number) | Kapso Docs | Conexión mediante credenciales Meta y número/WABA. | Sin fecha visible; consultada 29-08-2026. |
+| [Business-scoped user IDs](https://docs.kapso.ai/docs/whatsapp/business-scoped-user-ids) | Kapso Docs | BSUID, identidad sin teléfono, `recipient`, `to` y cambios de identidad. | Sin fecha visible; consultada 05-09-2026. |
+| [Create project webhook](https://docs.kapso.ai/api/platform/v1/webhooks/create-project-webhook) | Kapso Docs | Eventos de ciclo de vida del proyecto y número creado/eliminado. | Sin fecha visible; consultada 05-09-2026. |
+| [Create number webhook](https://docs.kapso.ai/api/platform/v1/webhooks/create-webhook) | Kapso Docs | Eventos de mensajes y conversaciones por número. | Sin fecha visible; consultada 05-09-2026. |
+| [Template lifecycle](https://docs.kapso.ai/docs/whatsapp/templates/lifecycle) | Kapso Docs | Estados de revisión y aprobación de plantillas. | Sin fecha visible; consultada 05-09-2026. |
 | [Changelog](https://docs.kapso.ai/changelog) | Kapso Docs | Bring your own Twilio, reconnect y cambios de identidad BSUID. | Consultada 29-08-2026. |
 | [Workflows introduction](https://docs.kapso.ai/docs/workflows/introduction) | Kapso Docs | Graphs, waits, decisions, agents y handoff. | Sin fecha visible; consultada 29-08-2026. |
 | [Inbox overview](https://docs.kapso.ai/docs/platform/inbox/overview) | Kapso Docs | Inbox standalone, filtros, asignación y WebSocket. | Sin fecha visible; consultada 29-08-2026. |

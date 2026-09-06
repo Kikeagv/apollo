@@ -1,5 +1,11 @@
 # Perímetro Cloudflare para el piloto
 
+> Para WhatsApp, la ruta de proveedor de esta ADR quedó actualizada por
+> [ADR-0040](0040-puerto-de-whatsapp-y-fuente-de-verdad-de-praxia.md): el
+> webhook vigente es Kapso, no Twilio. Se conserva la regla de no poner el
+> endpoint detrás de autenticación interactiva y de validar la firma en el
+> origen.
+
 El piloto expone Panacea, la API de navegador y el callback de WhatsApp detrás
 de Cloudflare Pro. Cloudflare aporta mitigación DDoS administrada, WAF
 administrado, controles de bots y límites de tasa; no reemplaza Better Auth,
@@ -10,13 +16,12 @@ Authenticated Origin Pulls y firewall si Tunnel no es viable. Los hostnames
 públicos usan TLS Full (strict); bases de datos, workers y administración no se
 exponen públicamente.
 
-El callback exacto de Twilio queda libre de Access, Turnstile y desafíos. Una
-regla de alcance mínimo puede omitir solo Super Bot Fight Mode y los límites
-de tasa para esa ruta; no se usa allowlist de IPs de origen porque Twilio no
-publica rangos fijos para webhooks (pool de IPs; su propia guía recomienda no
-filtrar por IP). El origen siempre valida la firma `X-Twilio-Signature` y la
-idempotencia. Panacea y sus flujos de autenticación sí usan las reglas de WAF,
-límites y controles de bots aplicables.
+El endpoint compartido de webhooks Kapso queda libre de Access, Turnstile y
+desafíos. Una regla de alcance mínimo puede omitir solo Super Bot Fight Mode y
+los límites de tasa para esa ruta; no se usa allowlist de IPs de origen. El
+origen siempre valida HMAC-SHA256 sobre el cuerpo crudo, comparación
+timing-safe, firma e idempotencia. Panacea y sus flujos de autenticación sí
+usan las reglas de WAF, límites y controles de bots aplicables.
 
 Los límites iniciales son 10 intentos de inicio de sesión por minuto por IP y
 5 solicitudes de recuperación por IP cada 15 minutos. Se revisan con los

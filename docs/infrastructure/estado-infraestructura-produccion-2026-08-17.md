@@ -3,7 +3,7 @@
 **Proyecto:** Praxia  
 **Fecha de corte:** 17 de agosto de 2026  
 **Entorno:** Producción  
-**Estado general:** Fundación operativa; backups externos, despliegue de la aplicación y la habilitación manual de WhatsApp aún están pendientes. El onboarding autoservicio de Meta/Twilio pertenece a la fase 2.
+**Estado general:** Fundación operativa; este documento conserva el corte histórico del 17 de agosto. La decisión vigente de WhatsApp está en [ADR-0039](../adr/0039-onboarding-y-propiedad-de-whatsapp-por-clinica.md) y [ADR-0040](../adr/0040-puerto-de-whatsapp-y-fuente-de-verdad-de-praxia.md): Kapso, setup links, `coexistence`, `partner_managed` y un número/WABA propio por Clínica.
 
 > Este documento registra arquitectura, decisiones y estado operativo. No contiene secretos, tokens, contraseñas, claves API ni direcciones IP.
 
@@ -12,7 +12,7 @@
 La base de infraestructura de Praxia ya está configurada sobre una VPS de OVH con Coolify. El acceso administrativo no depende de puertos Docker abiertos a Internet: Cloudflare Tunnel enruta el tráfico hacia el servidor y Cloudflare Access limita la consola de Coolify al propietario autorizado.
 
 El dominio `usepraxia.com` ya está gestionado por Cloudflare. Resend está verificado y habilitado en Coolify para correo transaccional desde `Praxia <noreply@usepraxia.com>`.
-El riesgo principal previo a datos reales es la continuidad: la infraestructura opera sobre una sola VPS y aún no hay backups externos en Cloudflare R2. En paralelo se prepara la verificación de negocio de Meta, que puede tardar semanas, pero la integración de onboarding autoservicio de Meta/Twilio queda explícitamente fuera de la fase 1.
+El riesgo principal previo a datos reales es la continuidad: la infraestructura opera sobre una sola VPS y debe conservar backups externos comprobados. También hay que completar la verificación de negocio de Meta y el gate legal antes de habilitar pacientes reales. El onboarding de cada Clínica se realiza mediante Kapso; el superadmin puede iniciar el flujo, pero el propietario completa la autorización Meta y el QR.
 
 ## Actualización 2026-08-18
 
@@ -23,7 +23,7 @@ El riesgo principal previo a datos reales es la continuidad: la infraestructura 
 - **Cloudflare:** la zona opera en plan **Free** (el ADR 0003 asume Pro). Decisión: permanecer en Free durante el piloto y subir a **Pro** en el go-live para rate limit de login, SBfM y Managed Ruleset completo. Ver `docs/adr/0007-despliegue-produccion-y-recuperacion.md`.
 - **Coolify:** v4.3.9. Sin notificaciones habilitadas. Email transaccional por Resend configurado (`Praxia <noreply@usepraxia.com>`). S3 Storage de R2 registrado (Connected).
 - **Backups (nuevo):** doble capa activa hacia R2 — pg_dump diario de Coolify (05:00 El Salvador) y pgBackRest con WAL continuo (imagen propia `localhost:5000/praxia-postgres:16` servida por un registro Docker local de la VPS). Primer full y drill de restauración (full y PITR) ejecutados y documentados en `docs/runbooks/restauracion-backup.md`.
-- **Aplicación (nuevo):** desplegada en producción el 2026-08-18. Recurso `praxia-app` en Coolify (repo público `Kikeagv/apollo`, main, build pack Dockerfile; fix `7106212f` para `npm ci` con peers de better-auth). 5 env vars en Coolify (incluida `DATABASE_URL` interna, inyectada sin pasar por chat). Migraciones drizzle aplicadas al cluster `praxia` desde la VPS. Dominio `app.usepraxia.com` publicado por el tunnel `praxia-ovh-prod` → `http://localhost:80` (Traefik). HTTPS punta a punta verificado (`/api/health` 200). **Always Use HTTPS** activado en el zone (301 en el borde). Cron loopback cada minuto (`appointment-scheduler-loopback`) llamando a `/api/jobs/appointment-scheduler` con `SCHEDULER_SECRET`; 401/200 verificados y primera ejecución success. Quedan: TLS Full (strict) + WAF (requiere OK del fundador), skip-rule Twilio, notificaciones y monitoreo externo.
+- **Aplicación (nuevo):** desplegada en producción el 2026-08-18. Recurso `praxia-app` en Coolify (repo público `Kikeagv/apollo`, main, build pack Dockerfile; fix `7106212f` para `npm ci` con peers de better-auth). 5 env vars en Coolify (incluida `DATABASE_URL` interna, inyectada sin pasar por chat). Migraciones drizzle aplicadas al cluster `praxia` desde la VPS. Dominio `app.usepraxia.com` publicado por el tunnel `praxia-ovh-prod` → `http://localhost:80` (Traefik). HTTPS punta a punta verificado (`/api/health` 200). **Always Use HTTPS** activado en el zone (301 en el borde). Cron loopback cada minuto (`appointment-scheduler-loopback`) llamando a `/api/jobs/appointment-scheduler` con `SCHEDULER_SECRET`; 401/200 verificados y primera ejecución success. Quedan: TLS Full (strict) + WAF (requiere OK del fundador), reglas de webhook Kapso, notificaciones y monitoreo externo.
 
 ## Estado por componente
 
@@ -35,8 +35,8 @@ El riesgo principal previo a datos reales es la continuidad: la infraestructura 
 | Resend | Verificado | Dominio y envío desde Coolify habilitados. | Enviar prueba y revisar entregabilidad. |
 | Backups externos | Activo | pg_dump diario + pgBackRest/WAL hacia R2; restauración full y PITR probadas 2026-08-18. | Repetir el drill mensualmente y vigilar el cron. |
 | Meta / WhatsApp | En curso | Existe un Meta Business Portfolio y está abierta la verificación. | Completar verificación con datos legales correctos y 2FA. |
-| Twilio / WhatsApp, fase 1 | Pendiente | Sin sender ni operación manual de la primera clínica. | Definir y ejecutar el runbook manual del piloto. |
-| Meta Tech Provider, fase 2 | Pendiente | No se ha implementado onboarding autoservicio. | App Meta, Partner Solution y Embedded Signup. |
+| Kapso / WhatsApp, piloto | Pendiente | No hay conexión real de una Clínica; no hay clientes Twilio que migrar. | Ejecutar el runbook Kapso de una Clínica con número propio y contactos sintéticos. |
+| Setup link desde superadmin | Pendiente | Decisión de producto aceptada; falta implementar UI/provisioning. | Generar, revocar, regenerar y auditar el enlace por Clínica. |
 | Aplicación Praxia | Desplegada | `praxia-app` en Coolify (main, Dockerfile); `app.usepraxia.com` por tunnel; migraciones aplicadas; cron loopback activo; HTTPS y health 200. | TLS Full (strict) + WAF, APO-56, correo real (APO-25). |
 
 ## Arquitectura configurada
@@ -52,10 +52,9 @@ flowchart LR
     U[Usuarios de Praxia] -. después del despliegue .-> APP[Aplicación Praxia]
     APP -. alojada por .-> C
     C -. pg_dump diario + WAL pgBackRest .-> R2[Cloudflare R2: backups]
-    APP -. webhooks HTTPS, fase 1 .-> TW[Twilio]
-    TW -. WhatsApp Business Platform .-> META[Meta / WABA]
-    APP -. onboarding autoservicio, fase 2 .-> ES[Embedded Signup]
-    ES -. usa .-> META
+    APP -. webhooks HTTPS, fase 1 .-> KS[Kapso]
+    KS -. setup link / WhatsApp Platform .-> META[Meta / WABA propio por Clínica]
+    APP -. provisioning y estado .-> KS
 ```
 
 | Flujo | Ruta | Protección y propósito |
@@ -124,18 +123,31 @@ La pantalla actual de Meta solicita un número de contacto y un sitio web para b
 1. Definir la identidad que operará Praxia ante Meta: nombre legal/comercial, titular, teléfono de contacto, correo de empresa, país/dirección y documentos de respaldo disponibles.
 2. Publicar primero un sitio mínimo y real en `usepraxia.com`: qué es Praxia, contacto, aviso de privacidad y términos. Debe corresponder al negocio que se verificará; no es necesario lanzar aún toda la aplicación.
 3. Completar la verificación del Meta Business Portfolio con esa información y activar 2FA obligatorio para todos los administradores.
-4. Crear un sender propio de Praxia mediante Self Sign-up solo para validar la marca y el canal de Praxia. No confundir este paso con el onboarding de una clínica.
+4. No crear un sender propio de Praxia para el piloto: el onboarding vigente usa
+   la aplicación Meta predeterminada de Kapso y el número/WABA de cada Clínica.
+   Mantener separadas la identidad legal de Praxia y los activos Meta de sus
+   Clínicas.
 
-### P1 — WhatsApp con onboarding manual (fase 1)
+### P1 — WhatsApp con onboarding Kapso (fase 1)
 
-La fase 1 no incluye **Embedded Signup** en la aplicación. La clínica no se registra sola: una persona de Praxia coordina el alta y conserva evidencia operativa de cada paso.
+La Clínica aporta el número y completa la autorización Meta. Praxia/Kapso no
+provisionan la línea ni reciben las credenciales del propietario.
 
-1. Crear o elegir la cuenta/proyecto de Twilio para el piloto, con facturación y responsable definidos.
-2. Preparar la ficha manual por clínica: titular, número E.164, acceso al Business Portfolio/WABA, responsable para OTP, estado del sender, plantilla, opt-in y contrato/privacidad.
-3. Acordar con Twilio el camino de alta del primer sender de la clínica. La documentación de Twilio establece que los ISV que incorporan clientes deben usar Tech Provider para sus clientes; el hecho de que el equipo de Praxia acompañe el proceso manualmente no debe asumirse como una exención. Confirmarlo por ticket antes de prometer la fecha del piloto. [Guía de Tech Provider](https://www.twilio.com/docs/whatsapp/isv/tech-provider-program/integration-guide)
-4. Configurar el webhook entrante y el callback de estado. El callback queda fuera de Cloudflare Access, Turnstile y desafíos, pero la aplicación valida `X-Twilio-Signature` e idempotencia.
-5. Crear y someter las plantillas de confirmación, recordatorio y cancelación; registrar el opt-in antes de iniciar conversaciones salientes y no incluir datos clínicos en las plantillas.
-6. Habilitar la primera clínica solo cuando el sender esté `ONLINE`, plantillas y callbacks estén validados y el checklist humano esté cerrado.
+1. Preparar la ficha por Clínica: propietario autorizado, número activo en
+   WhatsApp Business App, Business Portfolio/WABA, dispositivo para QR, display
+   name, templates, opt-in, contrato y privacidad.
+2. Crear el customer Kapso y un setup link con `coexistence` y
+   `partner_managed`; mantener un solo enlace activo y vencimiento de 30 días.
+3. El propietario completa el flujo, selecciona su WABA/número y escanea el QR.
+   No usar la ruta SMS/llamada ni “display name only”.
+4. Procesar `whatsapp.phone_number.created` como señal autoritativa, asociar
+   `phone_number_id` y crear el webhook de número. Validar HMAC, idempotencia y
+   respuesta rápida.
+5. Sincronizar las plantillas Utility de confirmación, recordatorio,
+   cancelación y reprogramación; validar el locale aprobado del WABA.
+6. Habilitar la Clínica solo cuando billing, templates, webhook, E2E, calidad
+   Meta y gates legales estén cerrados. Ver el
+   [runbook del piloto](../runbooks/activacion-whatsapp-piloto.md).
 
 ### P0 — Backups externos con Cloudflare R2
 
@@ -151,23 +163,25 @@ La fase 1 no incluye **Embedded Signup** en la aplicación. La clínica no se re
 ### P1 — Primer despliegue de la aplicación
 - Conectar el repositorio de Praxia a Coolify. **Hecho 2026-08-18** (recurso `praxia-app`, repo público `Kikeagv/apollo`, main, build pack Dockerfile).
 - Definir el método de build, el comando de arranque y health checks de cada servicio. **Hecho** (Dockerfile del repo con HEALTHCHECK a `/api/health`; deploy Success con rolling update y healthcheck en verde).
-- Crear variables de entorno de producción en Coolify. Los secretos de base de datos, autenticación, Resend y Twilio deben quedar fuera del repositorio. **Hecho** (5 vars en Coolify; `DATABASE_URL` interna inyectada vía tinker sin pasar por chat).
+- Crear variables de entorno de producción en Coolify. Los secretos de base de datos, autenticación, Resend y Kapso deben quedar fuera del repositorio. **Hecho** (5 vars en Coolify; `DATABASE_URL` interna inyectada vía tinker sin pasar por chat).
 - Provisionar la base de datos y aplicar migraciones de forma controlada. **Hecho** (migraciones drizzle aplicadas al cluster `praxia` desde un contenedor temporal en la VPS).
 - Activar los backups de la base antes de cargar datos reales. **Hecho** (pg_dump diario + pgBackRest con WAL, drill probado).
 - Asignar el dominio público y subdominios de la aplicación, manteniendo la consola de Coolify separada del producto público. **Hecho** (`app.usepraxia.com` → tunnel → Traefik → app; la consola sigue en `coolify.usepraxia.com` con Access).
 - Validar de extremo a extremo: autenticación, correo, flujo principal, logs, health check y rollback básico. **Parcial**: health check, HTTPS, login renderizado y worker verificados; correo real (Resend) y flujo completo quedan para APO-25/APO-56.
 
-### P2 — Onboarding autoservicio de clínicas (fase 2)
+### P2 — Automatización del onboarding desde Praxia
 
-Este bloque no es requisito para desplegar la fase 1. Sí debe iniciarse cuando el piloto confirme el flujo operativo y el modelo de datos por clínica.
+Este bloque automatiza el flujo ya decidido, sin crear un Tech Provider propio.
 
-1. Crear una app nueva de Meta de tipo Business, añadir WhatsApp y solicitar acceso avanzado a `whatsapp_business_messaging` y `whatsapp_business_management`.
-2. Enviar la app a revisión y completar la Access Verification de Meta. Preparar URLs HTTPS estáticas para OAuth, términos y privacidad.
-3. Abrir el ticket de Twilio para conectar la app aprobada como **Partner Solution** y aceptar la solicitud en Meta.
-4. Implementar **Embedded Signup** en Praxia. Cada clínica crea/elige su Business Portfolio y WABA desde la aplicación y Praxia crea la subcuenta Twilio y registra el sender.
-5. Mantener el aislamiento: una clínica ↔ una subcuenta Twilio ↔ una WABA. Guardar credenciales únicamente como secretos cifrados del servidor.
-
-> La aprobación de la app Meta y la vinculación con Twilio suelen tardar entre tres y cuatro semanas según Twilio. Aunque sea fase 2, conviene iniciar la verificación de negocio y 2FA desde fase 1 para no comenzar esa espera al terminar el piloto. [Resumen del programa](https://www.twilio.com/docs/whatsapp/isv/tech-provider-program)
+1. Implementar en la UI del superadmin crear customer, generar/revocar/regenerar
+   setup link y mostrar estados por Clínica.
+2. Implementar el flujo del Médico propietario para generar y completar el link
+   desde Configuración de WhatsApp.
+3. Procesar eventos de proyecto y número, provisioning, templates, billing,
+   E2E y circuit breaker con reintentos visibles.
+4. Mantener aislamiento: una Clínica ↔ un customer Kapso ↔ un número/WABA.
+5. Activar el rollout gradual descrito en los runbooks; los datos reales siguen
+   bloqueados hasta el gate legal.
 
 ### P1 — Prueba de Resend y alertas
 
@@ -179,7 +193,7 @@ Este bloque no es requisito para desplegar la fase 1. Sí debe iniciarse cuando 
 
 - Añadir monitoreo externo de los endpoints públicos y alertas ante una caída del Tunnel, Coolify o la aplicación.
 - Definir una rutina mensual de actualización de Ubuntu, Docker, Coolify y cloudflared. Tomar una copia verificable antes de cambios mayores.
-- Revisar trimestralmente Cloudflare Access, llaves SSH, API keys de Resend/Twilio y miembros con acceso.
+- Revisar trimestralmente Cloudflare Access, llaves SSH, API keys de Resend/Kapso y miembros con acceso.
 - Crear un runbook de incidente: recuperación de acceso, restauración de base, redeploy y rotación de secretos.
 
 ## Secuencia recomendada
@@ -191,9 +205,9 @@ Este bloque no es requisito para desplegar la fase 1. Sí debe iniciarse cuando 
 | 3 | Publicar web mínima y completar verificación/2FA de Meta | Titular del negocio + equipo | Datos verificables, web pública y 2FA activa. |
 | 4 | Enviar prueba desde Coolify | Equipo técnico | Correo recibido desde `noreply@usepraxia.com`. |
 | 5 | Desplegar aplicación y base de datos | Equipo técnico | Aplicación saludable en dominio público. |
-| 6 | Ejecutar onboarding manual de la clínica piloto y validar sender | Equipo técnico + clínica piloto | Sender `ONLINE`, plantillas aprobadas y callbacks validados. |
+| 6 | Ejecutar onboarding Kapso de la clínica piloto y validar conexión | Equipo técnico + clínica piloto | `phone_number.created`, plantillas aprobadas, webhook y E2E validados. |
 | 7 | Activar alertas y runbook | Equipo técnico | Un fallo simulado genera una alerta y existe una guía de respuesta. |
-| 8 | Fase 2: Tech Provider, Partner Solution y Embedded Signup | Equipo técnico + titular Meta | Onboarding autoservicio disponible por clínica. |
+| 8 | Automatizar setup links y provisioning desde superadmin | Equipo técnico + titular Meta | Onboarding auditable disponible por Clínica. |
 
 ## Decisiones y advertencias operativas
 
@@ -205,4 +219,4 @@ Los secretos generados durante la configuración deben tratarse como informació
 
 ## Próximo paso inmediato
 
-Completar Cloudflare R2 con backups automáticos y una restauración de prueba. En paralelo, publicar el sitio mínimo de Praxia y dejar iniciada la verificación/2FA de Meta; esto prepara la fase 2, pero no obliga a construir Embedded Signup antes de ejecutar el piloto manual.
+Completar Cloudflare R2 con backups automáticos y una restauración de prueba. En paralelo, publicar el sitio mínimo de Praxia y dejar iniciada la verificación/2FA de Meta; después ejecutar el piloto Kapso con una Clínica, un número propio y contactos sintéticos antes de habilitar datos reales.

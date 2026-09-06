@@ -49,8 +49,12 @@ La unidad cliente y de aislamiento de datos de Praxia; puede incluir uno o más 
 _Avoid_: tenant, cuenta
 
 **Contacto**:
-La persona identificada por un número de WhatsApp normalizado a E.164 y único dentro de una clínica. En Panacea su ficha administrativa mínima conserva nombre y teléfono, y puede estar vinculada a uno o más pacientes; el número es un atributo, no su clave primaria.
+La persona administrativa identificada dentro de una Clínica y vinculada a uno o más Pacientes. En Panacea su ficha mínima conserva nombre y una o más Identidades de WhatsApp; un teléfono E.164 es un atributo opcional, no su clave primaria. Un Contacto puede existir antes de tener un teléfono visible porque WhatsApp también puede identificarlo mediante un BSUID.
 _Avoid_: paciente cuando se habla del titular de un teléfono
+
+**Identidad de WhatsApp**:
+La representación de un Contacto en el canal de una Clínica. Conserva el `phone_number_id` receptor, el BSUID cuando WhatsApp lo entrega, el teléfono E.164 cuando está disponible y los datos de identidad que el proveedor permita usar para resolver al remitente. Se busca primero por BSUID y después por teléfono; una identidad que cambia se conserva como historial y un conflicto no se fusiona automáticamente. Una Identidad de WhatsApp pertenece a una sola Clínica y no se comparte entre clínicas.
+_Avoid_: usar el teléfono como clave primaria, fusionar identidades por similitud o asumir que todo mensaje trae número
 
 **Paciente**:
 La persona para quien se gestiona una cita dentro de una clínica. En Panacea su ficha administrativa mínima conserva nombre y fecha de nacimiento. No tiene identidad compartida entre clínicas.
@@ -73,8 +77,20 @@ La solicitud de un paciente para ocupar una fecha liberada. Es alcance de fase 1
 _Avoid_: cola de citas de fase 1
 
 **Activación de clínica**:
-El proceso que deja a una clínica habilitada para intercambiar mensajes reales por WhatsApp. Requiere una subcuenta Twilio, su WABA y sender, plantillas aprobadas, base legal y revisión operativa.
+El proceso que deja a una Clínica habilitada para intercambiar mensajes reales por WhatsApp. Incluye la autorización de su propio Business Portfolio/WABA y número mediante un Enlace de configuración de WhatsApp de Kapso, la conexión en modo `coexistence` con la aplicación WhatsApp Business, la asociación `partner_managed`, la provisión y aprobación de plantillas, los webhooks, la prueba extremo a extremo y los gates legales/operativos. El número y los activos Meta siguen siendo propiedad de la Clínica; Praxia no recibe sus credenciales Meta.
 _Avoid_: alta cuando se habla únicamente de crear un registro de clínica
+
+**Conexión de WhatsApp**:
+El registro técnico y operativo de la relación entre una Clínica, su número/WABA de Meta, Kapso y Praxia. Conserva los identificadores no secretos, el tipo de conexión, el estado (`pending`, `provisioning`, `ready`, `degraded`, `blocked` o `disconnected`), el estado del Enlace de configuración, plantillas, facturación y última prueba. Praxia solo envía mensajes desde una conexión `ready`; un circuito abierto la bloquea hasta una reactivación manual.
+_Avoid_: una credencial global, un número compartido entre clínicas o asumir que una redirección exitosa equivale a conexión lista
+
+**Enlace de configuración de WhatsApp**:
+El enlace de Kapso que autoriza a la persona responsable de una Clínica a conectar su Business Portfolio, WABA y número. Puede generarlo el Médico propietario desde la configuración de WhatsApp o el superadmin desde el alta manual; generar uno nuevo revoca el anterior. Es de un solo flujo, vence en 30 días, no contiene secretos de Praxia y nunca permite al superadmin ver OTP o credenciales Meta.
+_Avoid_: enlace permanente, enlace compartido públicamente o generación de un enlace sin preflight de la Clínica
+
+**Clínica lista para WhatsApp**:
+El estado técnico en que la Conexión de WhatsApp recibió el evento de número creado, las plantillas críticas están aprobadas, el envío y recepción extremo a extremo funcionan y no existe un bloqueo productivo de Meta. No autoriza por sí mismo datos reales: el consentimiento, el gate legal y la minimización de datos siguen siendo obligatorios.
+_Avoid_: confundirla con Clínica lista para Asclepio o con consentimiento global de todos sus Contactos
 
 **Configuración inicial de Clínica**:
 El recorrido guiado que completa la información y capacidad mínima de una Clínica para que la Agenda pueda operar y Asclepio pueda habilitarse. No incluye la Activación de clínica ni sustituye las aprobaciones externas de WhatsApp.
@@ -137,7 +153,7 @@ La excepción puntual o acotada que resta disponibilidad a la agenda de un Médi
 _Avoid_: editar el Horario vigente para registrar una ausencia
 
 **Cita manual**:
-La Cita que un Médico o Secretaria crea desde Panacea. Requiere seleccionar un Paciente con al menos un Contacto vinculado; Panacea permite registrar manualmente el Contacto, el Paciente y su Vínculo tanto desde el flujo de nueva Cita como desde su ficha administrativa. La Agenda vuelve a validar la capacidad al confirmarla: ante un conflicto concurrente no la crea ni cambia su horario automáticamente. Inicia en una cuadrícula de cinco minutos y no inicia en el pasado. Al crearla, el operador puede enviar una confirmación inicial a un único Contacto vinculado que selecciona explícitamente, mediante un control desactivado por defecto; ese control no modifica los recordatorios futuros. No se edita ni reprograma: se cancela y se crea una Cita nueva. Su evento de creación identifica al Usuario de clínica que la registró, pero no tiene Autor de la cita y Asclepio no permite su autogestión hasta que un flujo posterior le asigne explícitamente un autor.
+La Cita que un Médico o Secretaria crea desde Panacea. Requiere seleccionar un Paciente con al menos un Contacto vinculado; Panacea permite registrar manualmente el Contacto, el Paciente y su Vínculo tanto desde el flujo de nueva Cita como desde su ficha administrativa. La Agenda vuelve a validar la capacidad al confirmarla: ante un conflicto concurrente no la crea ni cambia su horario automáticamente. Inicia en una cuadrícula de cinco minutos y no inicia en el pasado. Al crearla, el operador puede enviar una confirmación inicial a un único Contacto vinculado que selecciona explícitamente, mediante un control desactivado por defecto y solo si existe Consentimiento de WhatsApp válido; ese control no concede consentimiento para recordatorios futuros. No se edita ni reprograma: se cancela y se crea una Cita nueva. Su evento de creación identifica al Usuario de clínica que la registró, pero no tiene Autor de la cita y Asclepio no permite su autogestión hasta que un flujo posterior le asigne explícitamente un autor.
 _Avoid_: atribuir su creación al Contacto vinculado al Paciente
 
 **Cita manual fuera de horario**:
@@ -165,11 +181,19 @@ La creación de un Bloqueo, el cierre o acortamiento de un Horario vigente, o la
 _Avoid_: aceptar cambios de configuración que invaliden una opción o Cita existente
 
 **Mensaje transaccional de cita**:
-El mensaje proactivo por WhatsApp que Asclepio envía al Contacto sobre una Cita concreta: confirmación, recordatorio o aviso de cancelación. No incluye campañas ni seguimiento comercial.
+El mensaje administrativo por WhatsApp que Asclepio envía al Contacto sobre una Cita concreta: confirmación, recordatorio, cancelación o reprogramación. Solo incluye fecha, hora, Clínica y Médico cuando sea necesario para la operación; nunca diagnóstico, resultados, medicamentos, DUI, notas clínicas ni documentos. Requiere Consentimiento de WhatsApp para el envío proactivo; fuera de la ventana de servicio usa una plantilla Utility aprobada por el WABA.
 _Avoid_: mensaje proactivo cuando se habla de comunicación promocional
 
+**Consentimiento de WhatsApp**:
+La autorización explícita, registrable y revocable de un Contacto para recibir una categoría de comunicación de una Clínica por WhatsApp. Puede probarse mediante un checkbox/formulario del paciente, un mensaje explícito iniciado por el paciente o evidencia externa documentada por un Usuario de clínica autorizado. Un número importado o una conversación entrante aislada no concede consentimiento permanente para recordatorios. Un opt-out explícito como “no me escriban más” suspende los envíos proactivos y solo un nuevo consentimiento explícito lo reactiva.
+_Avoid_: asumir consentimiento por tener el número, por haber recibido una cita o por interpretar `NO`/`CANCELAR` sin contexto
+
+**Ventana de servicio de WhatsApp**:
+El período de 24 horas que comienza con un mensaje del Contacto y durante el cual Asclepio puede responder con contenido administrativo permitido sin una plantilla. No crea Consentimiento de WhatsApp para recordatorios futuros ni permite contenido clínico.
+_Avoid_: usarla como autorización permanente o enviar plantillas promocionales por ser una conversación abierta
+
 **Entrega transaccional**:
-El intento persistente de entregar un Mensaje transaccional de cita o el PDF nocturno de agenda. Garantiza entrega al menos una vez mediante una clave idempotente estable; el adaptador debe reconocer reintentos de la misma entrega sin duplicar el efecto para el destinatario.
+El intento persistente de entregar un Mensaje transaccional de cita o el PDF nocturno de agenda. Se crea primero en la outbox de Praxia, luego un worker lo envía mediante `WhatsAppProvider` y conserva el identificador del proveedor y los estados aceptado, enviado, entregado, leído o fallido. Ofrece semántica de al menos una vez mediante una clave idempotente estable; no promete exactamente una vez a través de una API externa.
 _Avoid_: exactamente una vez cuando se habla de una llamada que cruza la base de datos y un proveedor externo
 
 **Entrega transaccional fallida**:
@@ -229,7 +253,7 @@ La respuesta fija ante lenguaje que indique una urgencia médica: Asclepio indic
 _Avoid_: escalamiento conversacional ordinario
 
 **Escalamiento humano**:
-La transferencia de una conversación a Panacea ante petición directa de una persona, frustración explícita o dos fallos consecutivos de comprensión. Asclepio guarda silencio hasta que un Usuario de clínica cierre el caso.
+La transferencia de una conversación a Panacea ante petición directa de una persona, frustración explícita, dos fallos consecutivos de comprensión, una entrada no soportada o un mensaje escrito desde la WhatsApp Business App de la Clínica. Asclepio guarda silencio hasta que un Usuario de clínica cierre el caso o lo reanude explícitamente; los mensajes de la aplicación no se procesan como instrucciones del agente.
 _Avoid_: protocolo de urgencia
 
 **Registro asistido de paciente**:
@@ -249,8 +273,8 @@ La tarea que Panacea crea siempre al escalar una conversación a una persona. Ca
 _Avoid_: escalamiento sin registro en Panacea
 
 **Transcripción de nota de voz**:
-La conversión privada y temporal de un audio de WhatsApp en texto para que Asclepio aplique el mismo flujo que a un mensaje escrito. Fase 1 usa `gpt-transcribe` mediante un adaptador activable por Clínica; si falla, se crea un Escalamiento humano.
-_Avoid_: almacenar o registrar el audio o la transcripción fuera de la conversación autorizada
+La conversión privada y temporal de un audio de WhatsApp en texto para que Asclepio aplique el mismo flujo que a un mensaje escrito. No forma parte de la Activación de WhatsApp v1: Praxia no descarga ni interpreta audios, imágenes, documentos, ubicaciones ni interactivos; conserva el evento y crea un Escalamiento humano. Una futura transcripción requiere una decisión legal, de consentimiento, retención y proveedor separada.
+_Avoid_: almacenar audio o transcripciones indefinidamente, o procesar multimedia no habilitada como si fuera texto
 
 **Verificación de inicio por correo**:
 La comprobación adicional posterior a la contraseña mediante un OTP enviado al correo de la Identidad al detectar un dispositivo o navegador nuevo. El dispositivo permanece confiable 30 días y puede revocarse. Es la política de acceso del piloto; no equivale a MFA fuerte basado en un segundo factor independiente.

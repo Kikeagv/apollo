@@ -1,5 +1,10 @@
 # Despliegue de producción y recuperación verificable
 
+> **Actualización WhatsApp:** el proveedor previsto originalmente era Twilio;
+> la conexión vigente será Kapso. Ver
+> [ADR-0040](0040-puerto-de-whatsapp-y-fuente-de-verdad-de-praxia.md) para la
+> firma, idempotencia y ruta del webhook actual.
+
 **Estado:** Aceptada
 **Fecha:** 18 de agosto de 2026
 **Tickets:** [APO-26](https://linear.app/k31-software/issue/APO-26), [APO-56](https://linear.app/k31-software/issue/APO-56)
@@ -47,10 +52,10 @@ en el plan Free.
    Managed Ruleset completo + OWASP. La recuperación (5/IP/15 min) y la
    validación de Turnstile se implementan en la aplicación (APO-56); no son
    expresables como regla de Cloudflare en ningún plan razonable.
-6. **Callback de Twilio.** Cuando APO-25 active el adaptador productivo, la
-   ruta exacta del webhook tendrá una skip-rule que la exime de Access,
-   Turnstile y challenges; la firma `X-Twilio-Signature` y la idempotencia se
-   validan siempre en el origen.
+6. **Webhook de Kapso.** Cuando se active el adaptador productivo, la ruta
+   compartida tendrá una skip-rule que la exime de Access, Turnstile y
+   challenges; HMAC-SHA256 sobre el raw body, comparación timing-safe e
+   idempotencia se validan siempre en el origen.
 
 ## Consecuencias
 
@@ -62,7 +67,7 @@ en el plan Free.
 - **Identidad productiva:** los OTP y el restablecimiento de contraseña
   requieren el adaptador de correo Resend y los límites de APO-56; hasta
   entonces el correo de Identidad es simulado y los OTP quedan en logs.
-- Los secretos (R2, Resend, Turnstile, Twilio, `BETTER_AUTH_SECRET`,
+- Los secretos (R2, Resend, Turnstile, Kapso, `BETTER_AUTH_SECRET`,
   `SCHEDULER_SECRET`) viven solo en Coolify; nunca en el repositorio.
 - El detalle operativo y la lista viva de pendientes están en
   `docs/infrastructure/pendientes-produccion.md`.

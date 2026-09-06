@@ -1,142 +1,171 @@
-# Activación de WhatsApp real en Praxia (paso a paso, fundador + agente)
+# Activación de WhatsApp en producción para Praxia
 
-Runbook colaborativo: lo que hace el **fundador** (consolas Meta/Twilio) y lo que hace el **agente** (código). Basado en la documentación oficial verificada el 2026-08-19 ([Self Sign-up](https://www.twilio.com/docs/whatsapp/self-sign-up), [Tech Provider integration guide](https://www.twilio.com/docs/whatsapp/isv/tech-provider-program/integration-guide), [Tech Provider FAQ](https://www.twilio.com/docs/whatsapp/isv/tech-provider-program/faq), [Meta phone numbers](https://developers.facebook.com/docs/whatsapp/cloud-api/phone-numbers/), [Meta messaging limits](https://developers.facebook.com/docs/whatsapp/messaging-limits/)).
+Runbook de operación para habilitar hasta cinco Clínicas beta con Kapso. Cada
+Clínica conecta su propio número/WABA mediante setup link y `coexistence`.
+Kapso es transporte, onboarding, webhooks y billing; el agente, la agenda, el
+consentimiento, las conversaciones y la auditoría viven en Praxia.
 
-No anotar tokens, OTPs, claves ni documentos personales en este archivo, Linear o commits; los secretos viven solo en Coolify.
+Fuentes del proveedor: [customer guide](https://docs.kapso.ai/docs/platform/customer-guide),
+[manage setup links](https://docs.kapso.ai/docs/platform/setup-links/manage),
+[connect WhatsApp](https://docs.kapso.ai/docs/how-to/whatsapp/connect-whatsapp),
+[webhook security](https://docs.kapso.ai/docs/platform/webhooks/security),
+[pricing FAQ](https://docs.kapso.ai/docs/whatsapp/pricing-faq) y
+[Meta message billing](https://docs.kapso.ai/docs/whatsapp/meta-message-billing).
 
-## Estado al inicio (2026-08-19)
+## Estado inicial
 
-| Ítem                                                  | Estado                                       |
-| ----------------------------------------------------- | -------------------------------------------- |
-| Código app (adaptador Twilio + webhook + switch)      | ✓ Hecho (`58c41bd8`, deploy #14)             |
-| Verificación de negocio de Meta (APO-4, K31 SOFTWARE) | En review (varios días/semanas según región) |
-| Business Portfolio de Praxia                          | ✓ Existe                                     |
-| 2FA en Meta/Twilio                                    | ✓                                            |
-| Sender propio de Praxia                               | Pendiente (Fase 1)                           |
-| Meta app Tech Provider                                | Pendiente (Fase 3)                           |
-| Partner Solution de Twilio                            | Pendiente (Fase 4)                           |
-| Embedded Signup en la app                             | Pendiente (Fase 5, código)                   |
-| Plantillas aprobadas                                  | Pendiente (Fase 6)                           |
-| Legal APO-5 / opt-in                                  | Pendiente (gate de producción)               |
+| Ítem | Criterio |
+| --- | --- |
+| Proveedor WhatsApp | Kapso; adaptador simulado disponible para pruebas |
+| Modelo por Clínica | Un número propio y un WABA propio |
+| Conexión | `coexistence` con WhatsApp Business App |
+| Aplicación Meta | Aplicación predeterminada de Kapso |
+| Billing | `partner_managed`, créditos centrales, atribución por Clínica |
+| Inbox/agente | Praxia conserva agente, agenda, handoff y fuente de verdad |
+| Webhooks | JSON estructurado v2, endpoint compartido, sin buffering inicial |
+| Clientes Twilio | Ninguno; no hay migración ni fallback automático |
+| Datos reales | Bloqueados hasta gate legal y de privacidad |
 
-## Fase 1 — Sender propio de Praxia por Self Sign-up (fundador, ~30 min)
+## Roles y límites
 
-Objetivo: registrar el primer número de WhatsApp de Praxia en la API. Desbloquea prueba real del piloto, creación de plantillas y es prerequisito del programa Tech Provider.
+### Superadmin de Praxia
 
-1. Elegir el número:
-   - **SIM de Praxia** (no debe estar vinculado a ninguna app de WhatsApp): el OTP llega por SMS/llamada a ese SIM — hay que tenerlo a mano ese minuto. Costo: la línea (~$1-5/mes).
-   - **Número de Twilio** (~$1-2/mes): el OTP se muestra en la consola de Twilio (con voz, llega por email vía Twimlet).
-2. Verificar que el número **no está registrado en WhatsApp** (`https://wa.me/<número sin +>?text=hi` — si contesta, está registrado).
-3. Twilio Console → **Messaging → Senders → WhatsApp Senders → Create new sender** ([consola](https://1console.twilio.com/us1/develop/sms/senders/whatsapp-senders)).
-4. Elegir el número y **Continue with Facebook** (login con el Facebook de Praxia; tener admin del Business Portfolio). Mantener abiertos consola y popup en el mismo navegador; no compartir la URL del popup.
-5. En el popup: crear/seleccionar **Business Portfolio** (el de Praxia) → crear/seleccionar **WABA** → perfil comercial:
-   - WhatsApp Business display name: **Praxia** (o el nombre que verán los pacientes; ajustarse a las [guías de display name](https://www.facebook.com/business/help/757569725593362)).
-   - Categoría: Salud / Médica (la que corresponda).
-6. **Añadir el número** → método SMS o llamada → ingresar el OTP.
-7. Confirmar el acceso de Twilio → el registro toma unos minutos → el sender queda visible en la consola (estado puede tardar en pasar a `ONLINE`).
-8. Avisar al agente el **estado del sender** (ONLINE o en revisión).
+- Crea la Clínica y su customer en Kapso.
+- Ejecuta el preflight, genera/revoca/regenera el setup link y ve los estados.
+- Puede reintentar provisioning, plantillas, webhooks y E2E.
+- No ve OTP, QR, contraseñas ni credenciales Meta.
+- Puede abrir el circuito de protección solo después de corregir la causa y
+  dejar auditoría.
 
-> Nota: la aprobación del display name es posterior; si Meta la rechaza, el número queda limitado a 250 mensajes iniciados/24 h y puede desconectarse.
+### Médico propietario de la Clínica
 
-## Fase 2 — Secretos y activación del adaptador (agente, con OK del fundador)
+- Es la persona autorizada para Meta y puede generar/completar el setup link.
+- Aporta el número propio, Business Portfolio/WABA, WhatsApp Business App y
+  dispositivo para QR.
+- Revisa display name, perfil, aviso y términos de su negocio.
+- Confirma opt-ins y operación de la Clínica.
 
-Cuando el sender esté `ONLINE` y el fundador autorice:
+### Personal de clínica
 
-1. Fundador agrega en Coolify (`praxia-app` → Environment Variables, solo producción):
-   - `TWILIO_ACCOUNT_SID`
-   - `TWILIO_AUTH_TOKEN`
-   - `TWILIO_WHATSAPP_FROM` (E.164 del sender, ej. `+503...`)
-   - (`WHATSAPP_DELIVERY` queda en `simulated` hasta la prueba del Fase 8)
-   - Nunca por chat/repo.
-2. Agente verifica: guard de arranque (twilio sin secretos → falla), webhook responde 200 con firma válida, pruebas unitarias del adaptador.
-3. Smoke técnico con el sender de Praxia: mensaje entrante/ saliente con contactos de prueba (sin datos clínicos ni pacientes reales).
+- Puede operar Panacea y recibir handoffs según su rol.
+- No puede cambiar billing, plantillas, conexión, webhooks ni propiedad Meta.
 
-## Fase 3 — Tech Provider, Parte 1: app de Meta y revisión (fundador, 1-2 semanas con esperas)
+## Fase 0 — Preflight global
 
-Requisito: sender de la Fase 1 registrado (elegibilidad del portfolio).
+- [ ] Existe sitio HTTPS público de Praxia con contacto, privacidad y términos.
+- [ ] El contrato Praxia–Clínica, DPA, retención y transferencias están
+      aprobados para datos administrativos de citas.
+- [ ] Está definido el contacto de soporte y la escalación ante incidentes.
+- [ ] El endpoint de webhooks tiene HTTPS, validación de HMAC sobre raw body,
+      comparación timing-safe, idempotencia durable y respuesta rápida 200.
+- [ ] El worker/outbox, métricas, alertas, circuit breaker y backoff están
+      desplegados.
+- [ ] Los secretos de proyecto viven solo en el gestor autorizado y están
+      separados por entorno.
+- [ ] El catálogo de plantillas y locales exactos está versionado por Praxia.
+- [ ] Se validó el pricing vigente de Kapso y Meta antes de comprar créditos;
+      el plan recomendado para beta es Pro + números adicionales si el volumen
+      permanece por debajo de 100.000 mensajes/mes, sujeto a precio vigente.
 
-1. **Registrarse como Meta Developer** ([developers.facebook.com](https://developers.facebook.com/apps/)).
-2. **Crear app nueva** (no reutilizar existente): nombre sin marcas de Meta, tipo **Business**, caso de uso **Other**, portfolio **Praxia**.
-3. App settings → Basic: ícono (logo de Praxia, sin logos de Meta), **URL de política de privacidad** (necesita URL HTTPS pública — definir con legal/APO-5), categoría.
-4. Añadir el producto **WhatsApp** (si no aparece el card, revisar región de la cuenta).
-5. **Become a Tech Provider** (WhatsApp → Quickstart → Scale your Business): aceptar los Tech Provider Terms y asociados → **Independent Tech Provider**.
-6. Revisar app settings (datos completos).
-7. **Grabar 2 videos de pantalla** (sin audio):
-   - `whatsapp_business_messaging`: enviar un mensaje de WhatsApp desde la app (o Twilio Console con el sender de la Fase 1) y mostrar el número destino recibiéndolo.
-   - `whatsapp_business_management`: crear una plantilla de WhatsApp para el caso de uso.
-8. **App Review → Permissions and Features**: solicitar acceso avanzado a `whatsapp_business_messaging` y `whatsapp_business_management`.
-9. Responder **data handling questions** (Meta recomienda input legal/APO-5) + reviewer instructions (usar el texto sugerido por Twilio) + subir los videos → **Submit for Review**.
-10. Tras aprobación: **Access Verification** (App Settings → Basic → Start verification; Meta tarda ~5 días hábiles).
-11. Guardar: Meta App ID, App secret (secreto), estado de cada permiso.
+## Fase 1 — Alta de una Clínica
 
-## Fase 4 — Tech Provider, Parte 2: Partner Solution de Twilio (fundador)
+Repetir para cada Clínica, sin reutilizar enlaces, números o WABA.
 
-Requisito: app aprobada por Meta (Fase 3.10).
+1. Crear/confirmar la Clínica, owner, zona horaria y customer ID de Kapso.
+2. Ejecutar el preflight de número propio, WhatsApp Business App, autoridad
+   Meta, sitio, display name y capacidad QR.
+3. Mostrar el aviso de `partner_managed` y la separación de cargos Meta/Kapso.
+4. Generar un único setup link para `coexistence`; registrar actor, vencimiento
+   de 30 días y estado `pending`.
+5. Enviar el enlace al propietario por canal autenticado. El superadmin puede
+   abrir el flujo manual y volver a generar el enlace si vence o falla.
+6. El propietario completa Embedded Signup, selecciona su WABA/número y
+   escanea el QR desde la WhatsApp Business App.
+7. Esperar `whatsapp.phone_number.created`; no inferir conexión desde el
+   redirect del navegador.
+8. Ejecutar provisioning automático y marcar `ready` solo con todos los gates.
 
-1. Twilio Help Center → ticket con asunto **"Part 2: Connect your Meta app to the Twilio Partner Solution"** + **Meta App ID**.
-2. Poner la app en **App Mode: Live** hasta que Twilio envíe la solicitud (1-2 días hábiles), luego volver a Development.
-3. App Dashboard → **WhatsApp → Partner Solutions** → **Accept** la Partner Solution de Twilio.
-4. Avisar en el mismo ticket; guardar el **Partner Solution ID** (no secreto; sí guardarlo bien).
+## Fase 2 — Provisioning y configuración
 
-> No usar Self Sign-up para números de clínicas cliente: Twilio no permite conectarlos después a la Partner Solution (habría que crear WABA nuevo y migrar).
+Para cada `phone_number_id` nuevo:
 
-## Fase 5 — Tech Provider, Parte 3: Embedded Signup en la app (agente, código)
+- [ ] Asociar de forma única customer, Clínica, WABA, display phone y estado.
+- [ ] Crear webhooks de número para `received`, `sent`, `delivered`, `read`,
+      `failed`, `conversation.created`, `conversation.ended` y
+      `conversation.inactive`.
+- [ ] Suscribirse a `whatsapp.phone_number.deleted` y detener envíos si ocurre.
+- [ ] Sincronizar templates centralizados de confirmación, recordatorio,
+      cancelación y reprogramación; esperar `APPROVED` en el locale exacto.
+- [ ] Verificar partner billing, crédito, umbral de alerta y atribución.
+- [ ] Actualizar la Conexión de WhatsApp y registrar el resultado append-only.
 
-Requisito: Partner Solution ID (Fase 4). Trabajo de código del agente:
+Un error deja la conexión en `provisioning`, `degraded` o `blocked`; nunca se
+oculta en logs ni se marca `ready` parcialmente.
 
-1. **Facebook Login for Business** en la app Meta: crear Configuration (WhatsApp Embedded Signup, system-user token 60 días, asset WhatsApp accounts, permiso solo `whatsapp_business_management`) → **Configuration ID**.
-2. Integrar el **popup de Embedded Signup** en Panacea (flujo superadmin): el doctor/clínica loguea con Facebook, crea/selecciona portfolio + WABA y verifica el número con OTP.
-3. Registrar el sender por **Twilio Senders API** con credenciales de la **subcuenta** de la clínica (una clínica ↔ una subcuenta Twilio ↔ una WABA).
-4. Guardar por clínica (cifrado, fuera del repo): subcuenta SID/token, WABA ID, sender ID, número E.164, estado (`PENDING`/`ONLINE`), display name.
-5. Almacenar el estado del onboarding en la tabla de Clínica existente (`whatsapp_number_e164` ya existe) y exponerlo en el flujo superadmin.
-6. Resolución por clínica en el webhook (el número receptor ya resuelve la clínica).
+## Fase 3 — Smoke y aceptación
 
-## Fase 6 — Plantillas de WhatsApp (fundador, con la app aprobada)
+Usar contactos sintéticos y una cuenta interna con consentimiento de prueba.
 
-Las plantillas pertenecen al **WABA** — una aprobación sirve para todos los números del mismo WABA.
+- [ ] Entrante de texto nuevo → resolución BSUID/teléfono → agente → respuesta.
+- [ ] Mensaje escrito desde Business App → `business_app` → almacenamiento y
+      `human_takeover`; el agente queda pausado.
+- [ ] `history_sync` se almacena sin generar respuestas.
+- [ ] Audio, imagen, documento, ubicación e interactivo → evento almacenado y
+      escalamiento, sin descarga/interpretación.
+- [ ] Plantilla fuera de ventana de servicio → delivery statuses y correlación
+      con la Entrega transaccional.
+- [ ] Duplicado/replay/lote/firma inválida → idempotencia o rechazo correcto.
+- [ ] Timeout/429/409 → backoff y sin duplicación.
+- [ ] `phone_number_id` desconocido → rechazo y alerta, sin cruzar tenants.
+- [ ] Opt-out explícito (“no me escriban más”) → bloqueo de envíos proactivos;
+      un nuevo consentimiento explícito es necesario para reactivar.
+- [ ] Datos clínicos en un mensaje → redirección a canal seguro y no envío.
 
-1. Twilio → **Content Template Builder** (o Content API): crear y enviar a aprobación:
-   - Confirmación de cita (Utility).
-   - Recordatorio de cita (Utility).
-   - Cancelación / reprogramación (Utility).
-   - (El texto final no debe incluir datos clínicos; usar placeholders `{{1}}` etc.)
-2. Categorizar correctamente (Utility preferible para transaccionales; categorías no pedidas tienden a Marketing).
-3. Avisar al agente los **Content SID** de las aprobadas para mapearlas en el código de salida (los textos actuales del adaptador son mínimos operativos).
+## Fase 4 — Habilitación de tráfico real
 
-## Fase 7 — Onboarding de cada clínica/doctor (mixto)
+La Clínica solo se habilita cuando:
 
-Ficha por clínica (recopilar fuera del repo):
+- [ ] Conexión técnica `ready`.
+- [ ] Gate legal/privacidad y contrato cerrados.
+- [ ] Consentimiento por Contacto/categoría registrable y auditable.
+- [ ] La Clínica acepta la operación `partner_managed` y tiene créditos.
+- [ ] No existe bloqueo de Meta, display name pendiente que impida producción,
+      pausa de calidad, webhook pausado ni deuda de billing.
+- [ ] Superadmin aprobó la evidencia de smoke y autorizó el cambio.
 
-1. Fundador pregunta al doctor: nombre y correo (invitación a Panacea), número E.164 dedicado (SIM libre de WhatsApp), razón social/NIT (contrato), display name propuesto.
-2. Agente: alta de la clínica + invitación (hoy por SQL/runbook; más adelante por la ruta superadmin) → Panacea operativa.
-3. Con el programa activo (Fase 5): el doctor entra al popup Embedded Signup (login Facebook, crea su WABA, recibe el OTP del número) — no sube documentos; hasta 2 números y 250 conversaciones/24 h sin verificación del negocio de la clínica (verificar para escalar).
-4. Agente: registra el sender vía Senders API, espera `ONLINE`, configura webhook del subaccount → `https://app.usepraxia.com/api/webhooks/twilio/whatsapp`, prueba idempotencia y firma.
+El primer tráfico real debe ser administrativo y de baja escala. No incluir
+diagnóstico, resultados, medicamentos, DUI, notas clínicas, documentos ni
+transcripciones.
 
-## Fase 8 — Pruebas end-to-end y flip de producción (mix, con OK del fundador)
+## Circuit breaker y continuidad
 
-1. Prueba con el sender de Praxia y contactos de prueba: mensaje entrante → Asclepio; recordatorio saliente por plantilla; cancelación; sin datos clínicos.
-2. Fundador: cambia en Coolify `WHATSAPP_DELIVERY=twilio` (solo producción) y confirma.
-3. Agente: verifica health, guard de arranque, webhook 200 con firma real, evento de recordatorio entregado; revisa los textos mínimos del adaptador.
-4. Cerrar la puerta legal antes de pacientes reales: **APO-5** (contrato, consentimiento/opt-in registrable por contacto, DPA Twilio) — sin eso no hay mensajes a pacientes reales.
+Abrir el circuito de una Clínica ante pausa de WABA/webhook, baja calidad,
+crédito agotado, error de Meta/Kapso o incumplimiento legal. Al abrirlo:
 
-## Resumen quién-hace-qué
+1. detener el agente y los envíos nuevos de la outbox para esa Clínica;
+2. conservar eventos y entregas para conciliación;
+3. notificar al superadmin y crear alerta operativa;
+4. permitir uso manual de la WhatsApp Business App;
+5. reactivar solo manualmente después de corregir y probar.
 
-| Fase                            | Fundador (consolas)                              | Agente (código/ops)                                  |
-| ------------------------------- | ------------------------------------------------ | ---------------------------------------------------- |
-| 1. Sender propio (Self Sign-up) | Todo el flujo + OTP                              | —                                                    |
-| 2. Secretos y activación        | Agrega secrets en Coolify (no por chat)          | Guard, verificación, smoke técnico                   |
-| 3. Meta app + App Review        | App, videos, permisos, data questions            | Guía/checklist; soporte en textos                    |
-| 4. Partner Solution             | Ticket Twilio + aceptar                          | —                                                    |
-| 5. Embedded Signup              | Configuration ID (parte de la app Meta)          | Integración popup + Senders API + estado por clínica |
-| 6. Plantillas                   | Crear/aprobar en Content Template Builder        | Mapear Content SIDs en el código de salida           |
-| 7. Clínica por clínica          | Pide ficha al doctor (correo, SIM, razón social) | Alta, invitación, sender, webhook                    |
-| 8. E2E y flip                   | OK + `WHATSAPP_DELIVERY=twilio`                  | Pruebas, verificación, monitoreo                     |
+Una caída de Kapso no cambia automáticamente a otro proveedor. La outbox usa
+backoff y la clínica queda `degraded`/`failed` según el diagnóstico.
 
-## Timeline estimado (en paralelo donde se pueda)
+## Offboarding
 
-- Fase 1: 1 día (desbloquea pruebas y plantillas).
-- Fase 3: 1-2 semanas + esperas de Meta (App Review + Access Verification ~5 días hábiles).
-- Fase 4: 1-2 días hábiles tras la aprobación.
-- Fase 5: días de desarrollo (agente) tras el Partner Solution ID.
-- Fase 6: plantillas en paralelo (espera de aprobación, días-semanas).
-- Verificación de negocio (APO-4): ya en curso (semanas según región) — sin ella: máximo 2 números por portfolio y 250 conversaciones/24 h.
+- Detener envíos y marcar la conexión `disconnected`.
+- Exportar configuración, templates, opt-ins, correlaciones y evidencia que
+  corresponda al período de retención.
+- Revocar la autorización/acceso con el consentimiento de la Clínica.
+- Desactivar webhooks y setup links de Praxia.
+- No borrar automáticamente el WABA, número, plantillas ni activos Meta de la
+  Clínica.
+- Coordinar borrado en Praxia, Kapso y backups según la matriz legal; no dejar
+  una copia indefinida en logs o archivos de soporte.
+
+## Evidencia y auditoría
+
+Para cada Clínica conservar actor, fecha, estado, customer/phone/WABA IDs no
+secretos, versión de templates, resultado de E2E, billing, incidentes,
+reintentos y decisiones de circuito. Los secretos permanecen fuera del repo y
+no se copian a Linear, chats ni comentarios de código.

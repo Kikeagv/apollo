@@ -252,7 +252,7 @@ proceso externo separado.
 - Selector de múltiples Clínicas dentro de una Sesión de clínica.
 - Expediente clínico, notas clínicas, motivo de consulta o apoyo a decisiones clínicas.
 - Campañas, seguimiento comercial o conversaciones completas de WhatsApp dentro de la ficha de Paciente.
-- Activación real de Twilio, WABA, sender, plantillas, base legal o aprobaciones externas.
+- Activación real de WhatsApp mediante Kapso, WABA/número, plantillas, base legal o aprobaciones externas (se documenta en los runbooks y ADRs de WhatsApp).
 - Cambiar la Agenda como autoridad, las reglas de disponibilidad, la política de RLS, la autenticación Better Auth, la retención de auditoría o las integraciones intercambiables.
 - Crear una entidad de dominio Pendiente o fusionar Escalamientos con Entregas transaccionales.
 - Hacer que Contacto y Paciente sean la misma entidad o eliminar el Vínculo explícito.

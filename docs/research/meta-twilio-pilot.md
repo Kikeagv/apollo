@@ -1,5 +1,12 @@
 # Meta + Twilio: activación del piloto de WhatsApp
 
+> **Documento histórico:** investigado antes de adoptar Kapso. Sus decisiones
+> de Tech Provider, subcuentas, sender y webhooks Twilio ya no son el camino de
+> Praxia. Para la decisión vigente ver
+> [`kapso-vs-twilio.md`](kapso-vs-twilio.md),
+> [ADR-0039](../adr/0039-onboarding-y-propiedad-de-whatsapp-por-clinica.md) y
+> [ADR-0040](../adr/0040-puerto-de-whatsapp-y-fuente-de-verdad-de-praxia.md).
+
 Investigado el 30 de julio de 2026. Las fuentes citadas son documentación oficial
 de Twilio; donde aplica, describen el flujo que Twilio integra con Meta/WhatsApp.
 

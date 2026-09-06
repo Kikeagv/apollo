@@ -55,8 +55,9 @@ tiempo de la clínica.
   piloto), con invitación por correo para el médico propietario.
 - Pago por transferencia registrado en la herramienta interna de operación;
   soporte con sesiones auditadas y vencimiento.
-- Un solo número de WhatsApp por clínica (el WABA compartido del proveedor en
-  el piloto; WABA propio por clínica en fases posteriores).
+- Un solo número y un WABA propio por clínica desde el piloto; la clínica
+  conserva la propiedad Meta y conecta su línea mediante Kapso
+  `coexistence`.
 
 ### 1.5 Principios de producto
 
@@ -99,7 +100,7 @@ tiempo de la clínica.
 
 Leyenda de estado: **[Producción]** desplegado y verificado ·
 **[Simulado]** flujo completo pero con adaptador simulado (WhatsApp de prueba)
-· **[Gate]** código listo, requiere aprobación externa (Meta/Twilio/legal).
+· **[Gate]** código listo, requiere aprobación externa (Meta/Kapso/legal).
 
 ### 2.1 Identidad y acceso
 
@@ -137,7 +138,7 @@ Leyenda de estado: **[Producción]** desplegado y verificado ·
 
 | Feature | Estado |
 |---|---|
-| Contacto identificado por número E.164 único dentro de la clínica; ficha administrativa | Producción |
+| Contacto con Identidad de WhatsApp por BSUID/teléfono opcional; ficha administrativa | Producción |
 | Paciente con ficha mínima (nombre, fecha de nacimiento) y vínculo explícito con uno o más contactos | Producción |
 | Vínculo de tutor con tutela legal registrada; visible al vincular menores | Producción |
 | Registro asistido de paciente por WhatsApp: DUI propio (adulto) o DUI del tutor (menor) | Simulado |
@@ -159,8 +160,9 @@ Leyenda de estado: **[Producción]** desplegado y verificado ·
 | Aviso adicional de escalamiento a la secretaria configurada (opcional por clínica) | Producción |
 | Entrega transaccional durable: reintentos a 1, 5, 15 y 60 minutos, concesión por worker, idempotencia | Producción |
 | Alerta operativa en el panel cuando una entrega falla definitivamente | Producción |
-| Notas de voz transcritas para aplicar el mismo flujo (activable por clínica) | Simulado + Gate legal |
-| Envío por WhatsApp real (Twilio) con firma y webhook verificado | Gate (código listo) |
+| Mensajes de la WhatsApp Business App activan takeover humano; historial sincronizado no dispara al agente | Gate Kapso |
+| Multimedia entrante se almacena y escala sin descargarse ni interpretarse en v1 | Gate Kapso/legal |
+| Envío por WhatsApp real (Kapso) con firma HMAC, idempotencia y webhook v2 verificado | Gate (código pendiente) |
 
 ### 2.5 Operación diaria del panel
 
@@ -169,7 +171,7 @@ Leyenda de estado: **[Producción]** desplegado y verificado ·
 | Bandejas de escalamiento: conversaciones y citas autogestionadas que requieren decisión humana | Producción |
 | Alertas de entrega transaccional fallida, resolubles en el panel | Producción |
 | Registros administrativos: contactos, pacientes, vínculos y citas canceladas | Producción |
-| Configuración del propietario: doctores, invitaciones, política de inasistencia, avisos, transcripción | Producción |
+| Configuración del propietario: doctores, invitaciones, política de inasistencia, avisos y takeover humano | Producción |
 | Perfil de médico (nombre público y especialidad) con verificación antes de operar | Producción |
 | Sesiones de soporte de Praxia visibles y auditadas con vencimiento | Producción |
 
@@ -181,7 +183,7 @@ Leyenda de estado: **[Producción]** desplegado y verificado ·
 | Suscripciones (activa/suspendida) y registro de pagos por transferencia | Producción |
 | Monitoreo: health check externo, cron de entregas cada minuto, alertas de deploy/backup por correo | Producción |
 | Backups de doble capa (copia diaria + recuperación a punto en el tiempo) con restauración probada | Producción |
-| Verificación de identidad del negocio ante Meta y aprobaciones Twilio | Gate externo |
+| Verificación de identidad del negocio ante Meta, términos/DPA de Kapso y aprobación de plantillas | Gate externo |
 
 ### 2.7 Sitio público
 
@@ -195,29 +197,34 @@ Leyenda de estado: **[Producción]** desplegado y verificado ·
 
 ## 3. Estado actual y hoja de ruta
 
-### Hoy (piloto, agosto de 2026)
+### Hoy (piloto, septiembre de 2026)
 
 - Aplicación y sitio público en producción; una clínica beta operando con
   datos sintéticos.
-- WhatsApp en modo simulado en producción; la integración real por Twilio está
-  escrita, probada y apagada detrás de un interruptor.
+- WhatsApp en modo simulado en producción; la integración real por Kapso aún
+  requiere implementar el adaptador, webhooks v2, setup links y provisioning.
 - Onboarding manual de clínica documentado y validado (runbook en el repo).
 
 ### Gates externos que bloquean datos reales
 
-- Verificación de negocio de Meta y aprobación del programa Tech Provider.
+- Verificación de negocio de Meta, autorización de cada propietario y
+  elegibilidad de los números para `coexistence`.
+- Revisión contractual/DPA de Kapso, subprocesadores, retención, billing
+  `partner_managed` y costos Meta.
 - Base legal (aviso/consentimiento validados, contrato con la clínica,
   retención, incidentes) conforme a la ley salvadoreña.
-- Validación de la transcripción de notas de voz.
+- Consentimiento por Contacto/categoría y catálogo de plantillas aprobado por
+  cada WABA.
 
 ### Siguiente (fase 2)
 
-- Activar WhatsApp real para el piloto (secretos en el proveedor, plantillas
-  aprobadas, smoke con contactos de prueba).
-- Onboarding de las 5 clínicas objetivo con sus números dedicados.
-- Alta de clínicas por Embedded Signup dentro de la aplicación (el médico solo
-  aporta número, correo y datos de la clínica; el OTP al SIM es su único paso
-  presencial).
+- Activar Kapso para el piloto (setup link, `coexistence`, plantillas
+  aprobadas, webhooks v2 y smoke con contactos sintéticos).
+- Onboarding de las 5 clínicas objetivo con sus propios números/WABA.
+- Flujo de alta manual desde superadmin: crear/revocar/regenerar el setup link,
+  ver provisioning, billing, templates, E2E y circuito de protección.
+- Flujo de propietario: completar Embedded Signup y el QR de coexistencia sin
+  entregar credenciales Meta a Praxia.
 - Lista de espera (fase 1b).
 
 ### Fuera del alcance de fase 1
@@ -237,5 +244,7 @@ del paciente, multi-sede y soporte a decisiones clínicas.
   visible y resoluble.
 - Privacidad verificable: aislamiento por clínica, auditorías activas, avisos
   publicados y trazabilidad de incidentes.
-- Onboarding de una clínica nueva en menos de una sesión, con un solo paso
-  presencial del médico (OTP del número).
+- Onboarding de una clínica nueva en menos de una sesión, con la autorización
+  Meta del propietario y un solo paso presencial para escanear el QR de
+  coexistencia desde su WhatsApp Business App; Praxia no recibe OTP ni
+  credenciales.

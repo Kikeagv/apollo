@@ -4,7 +4,7 @@ Objetivo: dejar el producto listo para que el equipo de Apolo dé de alta
 clínicas manualmente (una Clínica = un Médico propietario) y cada doctor entre
 a operar Panacea. Documento vivo; actualizar al cambiar el flujo de alta.
 
-## Estado del producto (2026-08-19)
+## Estado del producto (2026-09-05)
 
 - Alta de Clínica: flujo de aplicación `createSyntheticClinic` (requiere
   superadmin de Apolo, tabla `pg-drizzle_superadmin`). En producción **no hay
@@ -15,8 +15,10 @@ a operar Panacea. Documento vivo; actualizar al cambiar el flujo de alta.
   `https://app.usepraxia.com/activar-invitacion?token=…` (commit `844fc191`).
 - Activación: la persona crea contraseña (mín 8 chars), queda con membresía
   `owner` activa; login con OTP por correo en dispositivo nuevo.
-- WhatsApp: simulado en producción (flujos de Asclepio completos con datos
-  sintéticos). WhatsApp real = ticket `APO-25` (requiere aprobaciones APO-4).
+- WhatsApp: el camino productivo decidido es Kapso con un número/WABA propio por
+  Clínica, `coexistence`, `partner_managed` y setup link. La implementación del
+  adaptador, webhooks y UI de onboarding sigue siendo trabajo pendiente; el
+  adaptador simulado continúa siendo el único camino seguro hasta el piloto.
 - Datos reales de Pacientes: gate legal `APO-5` (no habilitar hasta aviso,
   consentimiento, contrato y retención aprobados).
 
@@ -72,6 +74,12 @@ enlace (vence en 72 horas):\nhttps://app.usepraxia.com/activar-invitacion?token=
    - Perfil de Médico (nombre público, especialidad).
    - Servicios de la Clínica y Ofertas por Médico (precio USD, duración, buffer).
    - Horarios vigentes y Bloqueos.
+   - Preflight de WhatsApp: número propio de la Clínica activo en WhatsApp
+     Business, responsable con acceso al Business Portfolio/WABA, sitio HTTPS,
+     privacidad/términos y dispositivo para completar el QR.
+   - Generar un único setup link de Kapso desde el flujo del Médico propietario
+     o del superadmin. El superadmin puede revocarlo/regenerarlo, pero nunca
+     recibe OTP, QR ni credenciales Meta.
 
 5. **Verificación operativa** (smoke):
    - `GET https://app.usepraxia.com/api/health` → 200.
@@ -83,6 +91,9 @@ enlace (vence en 72 horas):\nhttps://app.usepraxia.com/activar-invitacion?token=
 - [ ] `844fc191` desplegado en `praxia-app` (invitaciones por Resend).
 - [ ] Decide estructura: 5 Clínicas × 1 doctor propietario (nombres/emails).
 - [ ] Superadmin de Apolo creado o ruta de alta en la UI (decisión pendiente).
-- [ ] WhatsApp: decidir simulado (sintético) o real (`APO-25`, `APO-4`).
+- [ ] WhatsApp: ejecutar el [runbook del piloto](activacion-whatsapp-piloto.md)
+      con Kapso, `coexistence`, `partner_managed` y contactos sintéticos.
+- [ ] Cada Clínica aporta su propio número/WABA; no reutilizar un número entre
+      Clínicas ni asumir migración desde Twilio.
 - [ ] Legal `APO-5` antes de datos reales de Pacientes.
 - [ ] Smoke end-to-end: alta → invitación → activación → Panacea (1 clínica).
