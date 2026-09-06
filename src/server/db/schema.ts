@@ -28,6 +28,11 @@ import type { DemoRequestRateLimitScope } from "~/server/application/demo-reques
 import type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
 import type { ClinicReadinessStatus } from "~/domain/clinic-setup";
 import type {
+  WhatsAppPreflightBlocker,
+  WhatsAppPreflightChecks,
+  WhatsAppPreflightStatus,
+} from "~/domain/whatsapp-preflight";
+import type {
   WhatsAppConnectionMetadata,
   WhatsAppConnectionStatus,
   WhatsAppConnectionType,
@@ -161,6 +166,72 @@ export const whatsappConnections = createTable(
     uniqueIndex("whatsapp_connection_phone_number_id_unique")
       .on(table.phoneNumberId)
       .where(sql`${table.phoneNumberId} IS NOT NULL`),
+  ],
+);
+
+/** Estado resumible de las comprobaciones previas al enlace de Kapso. */
+export const whatsappPreflights = createTable(
+  "whatsapp_preflight",
+  {
+    clinicId: uuid("clinic_id")
+      .primaryKey()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    customerId: text("customer_id"),
+    status: text("status")
+      .$type<WhatsAppPreflightStatus>()
+      .default("not-run")
+      .notNull(),
+    checks: jsonb("checks").$type<WhatsAppPreflightChecks>(),
+    blockers: jsonb("blockers")
+      .$type<WhatsAppPreflightBlocker[]>()
+      .default([])
+      .notNull(),
+    nextAction: text("next_action").notNull(),
+    reason: text("reason"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("whatsapp_preflight_customer_idx").on(table.customerId)],
+);
+
+/** Evidencia del alta Kapso; nunca contiene OTP, QR, tokens ni documentos. */
+export const whatsappOnboardingAuditEvents = createTable(
+  "whatsapp_onboarding_audit_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "restrict" }),
+    actorIdentityId: text("actor_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    customerId: text("customer_id"),
+    action: text("action")
+      .$type<
+        | "customer-confirmed"
+        | "customer-created"
+        | "onboarding-provider-unavailable"
+        | "preflight-executed"
+      >()
+      .notNull(),
+    result: text("result")
+      .$type<"blocked" | "failed" | "succeeded">()
+      .notNull(),
+    reason: text("reason").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("whatsapp_onboarding_audit_clinic_idx").on(
+      table.clinicId,
+      table.occurredAt,
+    ),
   ],
 );
 
