@@ -31,7 +31,7 @@ afterEach(() => {
 describe("whatsAppSender", () => {
   it("devuelve el adaptador simulado por defecto", async () => {
     const { delivery, simulated } = await importFresh({});
-    expect(delivery.whatsAppSender().appointmentMessageSender).toBe(
+    expect(delivery.whatsAppSender().appointmentMessageSender).not.toBe(
       simulated.simulatedAppointmentMessageSender,
     );
     expect(delivery.whatsAppSender().provider).toBe("simulated");
@@ -58,6 +58,29 @@ describe("whatsAppSender", () => {
     expect(delivery.whatsAppProvider()).toBe("kapso");
     expect(JSON.stringify(sender)).not.toContain("kapso-api-key-test");
     expect(JSON.stringify(sender)).not.toContain("kapso-webhook-secret-test");
+  });
+
+  it("conserva la idempotencia del proveedor simulado", async () => {
+    const { simulated } = await importFresh({});
+    const reminder = {
+      appointmentId: "appointment-idempotent",
+      clinicId: "clinic-1",
+      idempotencyKey: "appointment-idempotent:24h:contact-1",
+      recipient: {
+        id: "contact-1",
+        name: "Ana",
+        phoneE164: "+50370000001",
+      },
+    };
+    const initialCount =
+      simulated.getSentSimulatedAppointmentReminders().length;
+
+    await simulated.simulatedAppointmentReminderSender.send(reminder);
+    await simulated.simulatedAppointmentReminderSender.send(reminder);
+
+    expect(simulated.getSentSimulatedAppointmentReminders()).toHaveLength(
+      initialCount + 1,
+    );
   });
 
   it("no mezcla secretos entre dos cargas de entorno", async () => {

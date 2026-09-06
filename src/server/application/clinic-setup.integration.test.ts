@@ -427,7 +427,6 @@ async function createFixture() {
         .values({
           isSynthetic: true,
           name,
-          whatsappNumberE164: `+5037${Date.now().toString().slice(-7)}`,
         })
         .returning({ id: clinics.id });
       if (clinic === undefined) throw new Error("No se creó la Clínica");

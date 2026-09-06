@@ -7,8 +7,8 @@ import {
 import { captureTransactionalDeliveryCallback } from "~/server/application/transactional-deliveries";
 import { publicProcedure } from "~/server/api/trpc";
 import { drizzleSimulatedWhatsAppBookingStore } from "~/server/db/simulated-whatsapp-booking-store";
-import { sendSimulatedConversationEscalationNotification } from "~/server/whatsapp/simulated-appointment-messages";
 import { createSimulatedAudioTranscriber } from "~/server/integrations/audio-transcriber";
+import { whatsAppProviderAdapter } from "~/server/whatsapp/whatsapp-delivery";
 import {
   drizzleTransactionalDeliveryCallbackStore,
   suppressPendingReminderDeliveries,
@@ -25,14 +25,20 @@ export const asclepioRouter = {
         to: z.string().max(32),
       }),
     )
-    .mutation(({ input }) =>
-      processSimulatedWhatsAppMessage(input, {
-        ...drizzleSimulatedWhatsAppBookingStore,
-        notifySecretaryOfConversationEscalation:
-          sendSimulatedConversationEscalationNotification,
-        suppressPendingReminderDeliveries,
-      }),
-    ),
+    .mutation(({ input }) => {
+      const provider = whatsAppProviderAdapter();
+      return processSimulatedWhatsAppMessage(
+        input,
+        {
+          ...drizzleSimulatedWhatsAppBookingStore,
+          notifySecretaryOfConversationEscalation: (notification) =>
+            provider.sendConversationEscalationNotification(notification),
+          suppressPendingReminderDeliveries,
+        },
+        undefined,
+        provider,
+      );
+    }),
   /**
    * Entrada exclusiva del adaptador simulado. El transcript sirve para simular
    * al proveedor: nunca se guarda ni se incluye en errores del caso de uso.
@@ -51,8 +57,9 @@ export const asclepioRouter = {
         to: z.string().max(32),
       }),
     )
-    .mutation(({ input }) =>
-      processSimulatedWhatsAppVoiceNote(
+    .mutation(({ input }) => {
+      const provider = whatsAppProviderAdapter();
+      return processSimulatedWhatsAppVoiceNote(
         {
           audio: Buffer.from(input.audioBase64, "base64"),
           contentType: input.contentType,
@@ -62,16 +69,18 @@ export const asclepioRouter = {
         },
         {
           ...drizzleSimulatedWhatsAppBookingStore,
-          notifySecretaryOfConversationEscalation:
-            sendSimulatedConversationEscalationNotification,
+          notifySecretaryOfConversationEscalation: (notification) =>
+            provider.sendConversationEscalationNotification(notification),
           suppressPendingReminderDeliveries,
         },
         createSimulatedAudioTranscriber({
           failure: input.simulatedFailure,
           transcript: input.simulatedTranscript,
         }),
-      ),
-    ),
+        undefined,
+        provider,
+      );
+    }),
   receiveSimulatedAppointmentReminderCallback: publicProcedure
     .input(
       z.object({

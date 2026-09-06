@@ -5,6 +5,7 @@ import { env } from "~/env";
 import { filterPanaceaConfigurationOverview } from "~/domain/panacea-configuration";
 import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
 import { getPanaceaConfigurationOverview } from "~/server/application/panacea-configuration";
+import { getWhatsAppConnection } from "~/server/application/whatsapp-connections";
 import {
   declareClinicReady,
   getClinicSetup,
@@ -91,6 +92,7 @@ import {
   drizzleDoctorInvitationStore,
 } from "~/server/db/doctor-invitation-store";
 import { drizzlePanaceaConfigurationReader } from "~/server/db/panacea-configuration-store";
+import { drizzleWhatsAppConnectionReader } from "~/server/db/whatsapp-connection-store";
 import { drizzlePanaceaTeamReader } from "~/server/db/panacea-team-store";
 import {
   drizzleDoctorStatusStore,
@@ -111,7 +113,7 @@ import {
   drizzleVoiceTranscriptionSettingsStore,
 } from "~/server/db/simulated-whatsapp-booking-store";
 import { clinicInvitationEmailSender } from "~/server/email/clinic-invitation-email";
-import { whatsAppSender } from "~/server/whatsapp/whatsapp-delivery";
+import { whatsAppProviderAdapter } from "~/server/whatsapp/whatsapp-delivery";
 import {
   getNoShowPolicy,
   setNoShowPolicy,
@@ -160,6 +162,13 @@ export const panaceaRouter = {
     getNoShowPolicy(
       { clinicId: ctx.clinic.clinicId, identityId: ctx.clinic.identityId },
       drizzleNoShowPolicyStore,
+    ),
+  ),
+
+  getWhatsAppConnection: clinicProcedure.query(({ ctx }) =>
+    getWhatsAppConnection(
+      { clinicId: ctx.clinic.clinicId, identityId: ctx.clinic.identityId },
+      drizzleWhatsAppConnectionReader,
     ),
   ),
 
@@ -966,7 +975,7 @@ export const panaceaRouter = {
         },
         drizzleManualAppointmentStore,
         undefined,
-        whatsAppSender().appointmentMessageSender,
+        whatsAppProviderAdapter(),
       ),
     ),
 
@@ -987,7 +996,7 @@ export const panaceaRouter = {
         },
         drizzleManualAppointmentStore,
         undefined,
-        whatsAppSender().appointmentMessageSender,
+        whatsAppProviderAdapter(),
       ),
     ),
 

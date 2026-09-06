@@ -421,6 +421,13 @@
       "when": 1788380692000,
       "tag": "0060_apo73_repair_clinic_terms_acceptance_trigger",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788661495000,
+      "tag": "0061_apo82_whatsapp_connections",
+      "breakpoints": true
     }
   ]
 }

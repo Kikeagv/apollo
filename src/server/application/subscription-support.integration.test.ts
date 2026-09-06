@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import { createSubscriptionSupport } from "./subscription-support";
 import { db } from "../db";
 import {
@@ -19,6 +20,7 @@ import {
   patients,
   transferPayments,
   user as identities,
+  whatsappConnections,
 } from "../db/schema";
 import {
   drizzleSubscriptionSupportStore,
@@ -216,7 +218,6 @@ async function createFixture() {
         .values({
           isSynthetic: true,
           name: "Clínica Aurora APO-24",
-          whatsappNumberE164,
         })
         .returning({ id: clinics.id });
       if (created === undefined) throw new Error("No se creó la Clínica");
@@ -226,6 +227,10 @@ async function createFixture() {
       await transaction.execute(
         sql`select set_config('app.subscription_status', 'active', true)`,
       );
+      await transaction.insert(whatsappConnections).values({
+        ...createSimulatedWhatsAppConnection(created.id),
+        phoneNumberE164: whatsappNumberE164,
+      });
       await transaction.insert(clinicUsers).values({
         active: true,
         clinicId: created.id,

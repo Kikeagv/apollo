@@ -1,6 +1,7 @@
 import { PanaceaDestinationPage } from "~/app/panacea-destination-page";
 import { EscalationNotificationSettingsSection } from "~/app/escalation-notification-settings-section";
 import { NoShowPolicySection } from "~/app/no-show-policy-section";
+import { WhatsAppConnectionSection } from "~/app/whatsapp-connection-section";
 import { VoiceNoteTranscriptionSettingsSection } from "~/app/voice-note-transcription-settings-section";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 
@@ -25,6 +26,7 @@ export default async function WhatsAppSettingsPage() {
           de clínica se realizará en un proceso separado cuando corresponda.
         </AlertDescription>
       </Alert>
+      <WhatsAppConnectionSection />
       <NoShowPolicySection />
       <EscalationNotificationSettingsSection />
       <VoiceNoteTranscriptionSettingsSection />

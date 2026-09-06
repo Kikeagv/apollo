@@ -1,3 +1,5 @@
+import type { WhatsAppProvider } from "./whatsapp-provider";
+
 export type AppointmentReminderRecipient = {
   id: string;
   name: string;
@@ -8,6 +10,7 @@ export type AppointmentReminderSender = {
   send(input: {
     appointmentId: string;
     clinicId: string;
+    idempotencyKey: string;
     recipient: AppointmentReminderRecipient;
   }): Promise<void>;
 };
@@ -89,7 +92,7 @@ export async function sendAppointmentReminder(
     now: Date;
   },
   store: AppointmentReminderStore,
-  sender: AppointmentReminderSender,
+  sender: AppointmentReminderSender | WhatsAppProvider,
 ) {
   const recipients = await store.listReminderRecipients(input);
   if (recipients === undefined) {
@@ -100,9 +103,11 @@ export async function sendAppointmentReminder(
   for (const recipient of recipients) {
     let result: "sent" | "failed" = "sent";
     try {
-      await sender.send({
+      const reminderSender = appointmentReminderSender(sender);
+      await reminderSender.send({
         appointmentId: input.appointmentId,
         clinicId: input.clinicId,
+        idempotencyKey: `${input.appointmentId}:${input.checkpoint}:${recipient.id}`,
         recipient,
       });
     } catch {
@@ -126,7 +131,7 @@ export async function runAppointmentScheduler(
   input: { now: Date },
   schedulerStore: AppointmentSchedulerStore,
   reminderStore: AppointmentReminderStore,
-  sender: AppointmentReminderSender,
+  sender: AppointmentReminderSender | WhatsAppProvider,
   agendaEmailSender?: DailyAgendaEmailSender,
 ) {
   const releasedReservations =
@@ -162,6 +167,14 @@ export async function runAppointmentScheduler(
     sentReminders,
     sentDailyAgendas: dailyAgendas.length,
   };
+}
+
+function appointmentReminderSender(
+  sender: AppointmentReminderSender | WhatsAppProvider,
+): AppointmentReminderSender {
+  return "appointmentReminderSender" in sender
+    ? sender.appointmentReminderSender
+    : sender;
 }
 
 /** Conserva el resultado del proveedor como evento, sin alterar la Cita. */

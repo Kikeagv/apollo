@@ -4,28 +4,18 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 import { assertWhatsAppRuntimeReady } from "~/domain/whatsapp-runtime";
-import type { AppointmentReminderSender } from "~/server/application/appointment-reminders";
-import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
-import type { ManualAppointmentMessageSender } from "~/server/application/manual-appointments";
+import type { WhatsAppProvider } from "~/server/application/whatsapp-provider";
 import { env } from "~/env";
+import { requireWhatsAppConnectionReady } from "~/server/db/whatsapp-connection-store";
 import {
   sendSimulatedConversationEscalationNotification,
+  sendSimulatedConversationReply,
   simulatedAppointmentMessageSender,
   simulatedAppointmentReminderSender,
 } from "./simulated-appointment-messages";
 import { createKapsoWhatsAppSenders } from "./kapso-whatsapp";
 
-export type WhatsAppSenderBundle = {
-  appointmentMessageSender: ManualAppointmentMessageSender;
-  appointmentReminderSender: AppointmentReminderSender;
-  provider: WhatsAppProviderId;
-  sendConversationEscalationNotification(input: {
-    clinicId: string;
-    escalationId: string;
-    recipientPhoneE164: string;
-    trigger: ConversationEscalationTrigger;
-  }): Promise<void>;
-};
+export type WhatsAppSenderBundle = WhatsAppProvider;
 
 /** Kapso exige sus dos secretos de proyecto; el modo simulado no exige ninguno. */
 export function assertWhatsAppDeliveryAllowed() {
@@ -41,11 +31,39 @@ if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) {
 }
 
 const simulatedBundle: WhatsAppSenderBundle = {
-  appointmentMessageSender: simulatedAppointmentMessageSender,
-  appointmentReminderSender: simulatedAppointmentReminderSender,
+  appointmentMessageSender: {
+    async send(input) {
+      await requireWhatsAppConnectionReady({
+        clinicId: input.clinicId,
+        provider: "simulated",
+      });
+      await simulatedAppointmentMessageSender.send(input);
+    },
+  },
+  appointmentReminderSender: {
+    async send(input) {
+      await requireWhatsAppConnectionReady({
+        clinicId: input.clinicId,
+        provider: "simulated",
+      });
+      await simulatedAppointmentReminderSender.send(input);
+    },
+  },
   provider: "simulated",
-  sendConversationEscalationNotification:
-    sendSimulatedConversationEscalationNotification,
+  sendConversationReply: async (input) => {
+    await requireWhatsAppConnectionReady({
+      clinicId: input.clinicId,
+      provider: "simulated",
+    });
+    await sendSimulatedConversationReply(input);
+  },
+  sendConversationEscalationNotification: async (input) => {
+    await requireWhatsAppConnectionReady({
+      clinicId: input.clinicId,
+      provider: "simulated",
+    });
+    await sendSimulatedConversationEscalationNotification(input);
+  },
 };
 
 let kapsoCache: WhatsAppSenderBundle | undefined;
@@ -55,7 +73,7 @@ let kapsoCache: WhatsAppSenderBundle | undefined;
  * cae silenciosamente al adaptador simulado si todavía falta la Conexión de
  * WhatsApp propia de una Clínica.
  */
-export function whatsAppSender(): WhatsAppSenderBundle {
+export function whatsAppProviderAdapter(): WhatsAppProvider {
   if (env.WHATSAPP_DELIVERY === "simulated") return simulatedBundle;
   if (kapsoCache === undefined) {
     const senders = createKapsoWhatsAppSenders();
@@ -63,11 +81,17 @@ export function whatsAppSender(): WhatsAppSenderBundle {
       appointmentMessageSender: senders.appointmentMessageSender,
       appointmentReminderSender: senders.appointmentReminderSender,
       provider: "kapso",
+      sendConversationReply: (input) => senders.sendConversationReply(input),
       sendConversationEscalationNotification: (input) =>
         senders.sendConversationEscalationNotification(input),
     };
   }
   return kapsoCache;
+}
+
+/** Nombre histórico para consumidores que todavía solicitan el bundle. */
+export function whatsAppSender(): WhatsAppSenderBundle {
+  return whatsAppProviderAdapter();
 }
 
 /** Proveedor activo sin exponer la configuración sensible del entorno. */

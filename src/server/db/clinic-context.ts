@@ -6,6 +6,7 @@ import {
   clinicUsers,
   clinics,
   doctors,
+  whatsappConnections,
 } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -123,9 +124,21 @@ export async function inSimulatedWhatsAppInboundTransaction<T>(
     await transaction.execute(
       sql`select set_config('app.whatsapp_inbound', 'true', true)`,
     );
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_inbound_phone_e164', ${whatsappNumberE164}, true)`,
+    );
+    const connection = await transaction.query.whatsappConnections.findFirst({
+      columns: { clinicId: true },
+      where: and(
+        eq(whatsappConnections.phoneNumberE164, whatsappNumberE164),
+        eq(whatsappConnections.provider, "simulated"),
+        eq(whatsappConnections.status, "ready"),
+      ),
+    });
+    if (connection === undefined) return undefined;
     const clinic = await transaction.query.clinics.findFirst({
       columns: { id: true, subscriptionStatus: true },
-      where: eq(clinics.whatsappNumberE164, whatsappNumberE164),
+      where: eq(clinics.id, connection.clinicId),
     });
     if (clinic === undefined) return undefined;
     if (clinic.subscriptionStatus === "suspended") return undefined;
@@ -145,6 +158,33 @@ export async function inSimulatedWhatsAppClinicTransaction<T>(
       sql`select set_config('app.whatsapp_inbound', 'true', true)`,
     );
     await configureSimulatedWhatsAppClinic(transaction, clinicId);
+    return operation(transaction);
+  });
+}
+
+/** Contexto mínimo para que un proveedor valide la conexión de una Clínica. */
+export async function inWhatsAppProviderTransaction<T>(
+  clinicId: string,
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_provider', 'true', true)`,
+    );
+    await transaction.execute(
+      sql`select set_config('app.clinic_id', ${clinicId}, true)`,
+    );
+    const clinic = await transaction.query.clinics.findFirst({
+      columns: { subscriptionStatus: true },
+      where: eq(clinics.id, clinicId),
+    });
+    if (clinic === undefined || clinic.subscriptionStatus === "suspended") {
+      return undefined;
+    }
+    await transaction.execute(
+      sql`select set_config('app.subscription_status', ${clinic.subscriptionStatus}, true)`,
+    );
     return operation(transaction);
   });
 }

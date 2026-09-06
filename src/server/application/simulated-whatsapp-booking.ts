@@ -6,6 +6,7 @@ import type {
   AudioContentType,
   AudioTranscriber,
 } from "~/server/integrations/audio-transcriber";
+import type { WhatsAppProvider } from "./whatsapp-provider";
 
 const RESERVATION_DURATION_MS = 10 * 60_000;
 
@@ -214,6 +215,7 @@ export async function processSimulatedWhatsAppMessage(
   input: SimulatedWhatsAppInboundMessage,
   store: SimulatedWhatsAppBookingStore,
   now = new Date(),
+  replyProvider?: Pick<WhatsAppProvider, "sendConversationReply">,
 ): Promise<WhatsAppBookingResponse> {
   const normalized = {
     ...input,
@@ -238,6 +240,12 @@ export async function processSimulatedWhatsAppMessage(
     id: normalized.id,
     response,
   });
+  await sendConversationReply(replyProvider, {
+    clinicId: received.clinicId,
+    idempotencyKey: normalized.id,
+    recipientPhoneE164: normalized.from,
+    text: response.text,
+  });
   return response;
 }
 
@@ -250,6 +258,7 @@ export async function processSimulatedWhatsAppVoiceNote(
   store: SimulatedWhatsAppBookingStore,
   transcriber: AudioTranscriber,
   now = new Date(),
+  replyProvider?: Pick<WhatsAppProvider, "sendConversationReply">,
 ): Promise<WhatsAppBookingResponse> {
   const normalized = {
     ...input,
@@ -274,7 +283,21 @@ export async function processSimulatedWhatsAppVoiceNote(
     id: normalized.id,
     response,
   });
+  await sendConversationReply(replyProvider, {
+    clinicId: received.clinicId,
+    idempotencyKey: normalized.id,
+    recipientPhoneE164: normalized.from,
+    text: response.text,
+  });
   return response;
+}
+
+async function sendConversationReply(
+  provider: Pick<WhatsAppProvider, "sendConversationReply"> | undefined,
+  input: Parameters<WhatsAppProvider["sendConversationReply"]>[0],
+) {
+  if (provider === undefined || input.text.length === 0) return;
+  await provider.sendConversationReply(input);
 }
 
 async function transcribeVoiceNote(

@@ -1,3 +1,5 @@
+import type { WhatsAppProvider } from "./whatsapp-provider";
+
 export type ManualAppointment = {
   id: string;
   startsAt: Date;
@@ -218,7 +220,7 @@ export async function createManualAppointment(
   store: ManualAppointmentCreator &
     Partial<ManualAppointmentMessageDeliveryRecorder>,
   now = new Date(),
-  messageSender?: ManualAppointmentMessageSender,
+  messageSender?: ManualAppointmentMessageSender | WhatsAppProvider,
 ) {
   if (input.startsAt <= now) {
     throw new Error("La Cita manual debe iniciar en el futuro");
@@ -254,7 +256,7 @@ export async function cancelManualAppointment(
   store: ManualAppointmentCanceller &
     Partial<ManualAppointmentMessageDeliveryRecorder>,
   now = new Date(),
-  messageSender?: ManualAppointmentMessageSender,
+  messageSender?: ManualAppointmentMessageSender | WhatsAppProvider,
 ) {
   const appointment = await store.cancel({
     ...input,
@@ -325,7 +327,7 @@ async function deliverTransactionalMessage(
         Partial<ManualAppointmentMessageDeliveryRecorder>)
     | (ManualAppointmentCanceller &
         Partial<ManualAppointmentMessageDeliveryRecorder>),
-  messageSender: ManualAppointmentMessageSender | undefined,
+  messageSender: ManualAppointmentMessageSender | WhatsAppProvider | undefined,
 ) {
   if (appointment.transactionalMessage === undefined) return;
   if (messageSender === undefined || !hasMessageDeliveryRecorder(store)) {
@@ -335,7 +337,9 @@ async function deliverTransactionalMessage(
   }
   let result: "sent" | "failed" = "sent";
   try {
-    await messageSender.send(appointment.transactionalMessage);
+    await manualAppointmentMessageSender(messageSender).send(
+      appointment.transactionalMessage,
+    );
   } catch {
     result = "failed";
   }
@@ -347,6 +351,14 @@ async function deliverTransactionalMessage(
     result,
     type: appointment.transactionalMessage.type,
   });
+}
+
+function manualAppointmentMessageSender(
+  sender: ManualAppointmentMessageSender | WhatsAppProvider,
+): ManualAppointmentMessageSender {
+  return "appointmentMessageSender" in sender
+    ? sender.appointmentMessageSender
+    : sender;
 }
 
 function hasMessageDeliveryRecorder(

@@ -15,6 +15,7 @@ import {
   effectiveSchedules,
   serviceOffers,
   services,
+  whatsappConnections,
 } from "~/server/db/schema";
 import type { PanaceaConfigurationReader } from "~/server/application/panacea-configuration";
 
@@ -47,62 +48,71 @@ export const drizzlePanaceaConfigurationReader: PanaceaConfigurationReader = {
       const eligibleDoctorIds = new Set(doctorIds);
       const today = localDate(new Date());
 
-      const [invitationRows, serviceRows, offerRows, scheduleRows, clinic] =
-        await Promise.all([
-          membership.role === "owner"
-            ? transaction.query.clinicInvitations.findMany({
-                columns: { consumedAt: true, expiresAt: true },
-                where: and(
-                  eq(clinicInvitations.clinicId, input.clinicId),
-                  eq(clinicInvitations.role, "doctor"),
-                  isNull(clinicInvitations.consumedAt),
-                  gt(clinicInvitations.expiresAt, new Date()),
+      const [
+        invitationRows,
+        serviceRows,
+        offerRows,
+        scheduleRows,
+        clinic,
+        whatsappConnection,
+      ] = await Promise.all([
+        membership.role === "owner"
+          ? transaction.query.clinicInvitations.findMany({
+              columns: { consumedAt: true, expiresAt: true },
+              where: and(
+                eq(clinicInvitations.clinicId, input.clinicId),
+                eq(clinicInvitations.role, "doctor"),
+                isNull(clinicInvitations.consumedAt),
+                gt(clinicInvitations.expiresAt, new Date()),
+              ),
+            })
+          : [],
+        transaction.query.services.findMany({
+          columns: { id: true },
+          where: eq(services.clinicId, input.clinicId),
+        }),
+        transaction.query.serviceOffers.findMany({
+          columns: {
+            bufferMinutes: true,
+            doctorId: true,
+            durationMinutes: true,
+            serviceId: true,
+          },
+          where: and(
+            eq(serviceOffers.clinicId, input.clinicId),
+            eq(serviceOffers.active, true),
+          ),
+        }),
+        doctorIds.length === 0
+          ? []
+          : transaction.query.effectiveSchedules.findMany({
+              columns: {
+                doctorId: true,
+                effectiveFrom: true,
+                effectiveUntil: true,
+              },
+              where: and(
+                eq(effectiveSchedules.clinicId, input.clinicId),
+                inArray(effectiveSchedules.doctorId, doctorIds),
+                or(
+                  isNull(effectiveSchedules.effectiveUntil),
+                  gte(effectiveSchedules.effectiveUntil, today),
                 ),
-              })
-            : [],
-          transaction.query.services.findMany({
-            columns: { id: true },
-            where: eq(services.clinicId, input.clinicId),
-          }),
-          transaction.query.serviceOffers.findMany({
-            columns: {
-              bufferMinutes: true,
-              doctorId: true,
-              durationMinutes: true,
-              serviceId: true,
-            },
-            where: and(
-              eq(serviceOffers.clinicId, input.clinicId),
-              eq(serviceOffers.active, true),
-            ),
-          }),
-          doctorIds.length === 0
-            ? []
-            : transaction.query.effectiveSchedules.findMany({
-                columns: {
-                  doctorId: true,
-                  effectiveFrom: true,
-                  effectiveUntil: true,
-                },
-                where: and(
-                  eq(effectiveSchedules.clinicId, input.clinicId),
-                  inArray(effectiveSchedules.doctorId, doctorIds),
-                  or(
-                    isNull(effectiveSchedules.effectiveUntil),
-                    gte(effectiveSchedules.effectiveUntil, today),
-                  ),
-                ),
-              }),
-          transaction.query.clinics.findFirst({
-            columns: {
-              escalationNotificationsEnabled: true,
-              noShowPolicy: true,
-              whatsappNumberE164: true,
-              voiceTranscriptionEnabled: true,
-            },
-            where: eq(clinics.id, input.clinicId),
-          }),
-        ]);
+              ),
+            }),
+        transaction.query.clinics.findFirst({
+          columns: {
+            escalationNotificationsEnabled: true,
+            noShowPolicy: true,
+            voiceTranscriptionEnabled: true,
+          },
+          where: eq(clinics.id, input.clinicId),
+        }),
+        transaction.query.whatsappConnections.findFirst({
+          columns: { status: true },
+          where: eq(whatsappConnections.clinicId, input.clinicId),
+        }),
+      ]);
 
       const serviceIds = new Set(serviceRows.map((service) => service.id));
       const activeOffers = offerRows.filter(
@@ -135,8 +145,7 @@ export const drizzlePanaceaConfigurationReader: PanaceaConfigurationReader = {
         },
         whatsapp: {
           configured:
-            (clinic?.whatsappNumberE164 !== null &&
-              clinic?.whatsappNumberE164 !== undefined) ||
+            whatsappConnection?.status === "ready" ||
             clinic?.noShowPolicy === "cancel-after-third-reminder" ||
             clinic?.escalationNotificationsEnabled === true ||
             clinic?.voiceTranscriptionEnabled === true,

@@ -15,6 +15,7 @@ import {
   clinicInvitations,
   identityAuditEvents,
   user as identities,
+  whatsappConnections,
 } from "../db/schema";
 import { drizzleSyntheticClinicRegistration } from "../db/synthetic-clinic-registration";
 import {
@@ -87,7 +88,11 @@ describe("alta controlada persistente de Clínica sintética", () => {
               await transaction.query.identityAuditEvents.findMany({
                 where: eq(identityAuditEvents.clinicId, clinic.id),
               });
-            return { invitation, auditEvents };
+            const connection =
+              await transaction.query.whatsappConnections.findFirst({
+                where: eq(whatsappConnections.clinicId, clinic.id),
+              });
+            return { connection, invitation, auditEvents };
           },
         );
 
@@ -100,6 +105,14 @@ describe("alta controlada persistente de Clínica sintética", () => {
           recipientName: "Dra. Ana Reyes",
         });
         expect(persisted.invitation?.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(persisted.connection).toMatchObject({
+          connectionType: "simulated",
+          provider: "simulated",
+          status: "ready",
+        });
+        expect(persisted.connection?.phoneNumberE164).toMatch(
+          /^\+5037[0-9]{10}$/,
+        );
         expect(persisted.auditEvents).toEqual(
           expect.arrayContaining([
             expect.objectContaining({

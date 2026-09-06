@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createInMemorySimulatedWhatsAppBookingStore,
@@ -6,8 +6,45 @@ import {
   processSimulatedWhatsAppMessage,
 } from "./simulated-whatsapp-booking";
 import { createSimulatedAudioTranscriber } from "~/server/integrations/audio-transcriber";
+import type { WhatsAppProvider } from "./whatsapp-provider";
 
 describe("reservar una Cita adulta por WhatsApp simulado", () => {
+  it("envía la respuesta por el WhatsAppProvider con su clave idempotente", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const sendConversationReply = vi.fn().mockResolvedValue(undefined);
+    const provider = {
+      sendConversationReply,
+    } satisfies Pick<WhatsAppProvider, "sendConversationReply">;
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "reply-1",
+          text: "info",
+          to: "+50370000001",
+        },
+        store,
+        new Date("2026-08-14T12:00:00.000Z"),
+        provider,
+      ),
+    ).resolves.toMatchObject({ kind: "public-information" });
+
+    expect(sendConversationReply).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      idempotencyKey: "reply-1",
+      recipientPhoneE164: "+50370000002",
+      text: "No hay servicios disponibles.",
+    });
+  });
+
   it("transcribe temporalmente una nota de voz habilitada y la entrega a Asclepio como voz", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: {

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 
+import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import { type SyntheticClinicRegistration } from "~/server/application/create-synthetic-clinic";
 import { inSuperadminTransaction } from "~/server/db/clinic-context";
 import { hashClinicInvitationToken } from "~/server/db/clinic-invitation-token";
@@ -8,6 +9,7 @@ import {
   clinics,
   clinicInvitations,
   identityAuditEvents,
+  whatsappConnections,
 } from "~/server/db/schema";
 
 export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
@@ -29,6 +31,9 @@ export const drizzleSyntheticClinicRegistration: SyntheticClinicRegistration = {
         await transaction.execute(
           sql`select set_config('app.subscription_status', 'active', true)`,
         );
+        await transaction
+          .insert(whatsappConnections)
+          .values(createSimulatedWhatsAppConnection(createdClinic.id));
         await transaction.insert(clinicReadiness).values({
           clinicId: createdClinic.id,
         });

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import { processSimulatedWhatsAppMessage } from "./simulated-whatsapp-booking";
 import { listPendingGuardianshipVerifications } from "./administrative-records";
 import { sendAppointmentReminder } from "./appointment-reminders";
@@ -59,6 +60,7 @@ import {
   transactionalDeliveryAttempts,
   transactionalDeliveries,
   user as identities,
+  whatsappConnections,
 } from "../db/schema";
 
 const databaseTest =
@@ -797,13 +799,16 @@ async function createFixture() {
         .values({
           isSynthetic: true,
           name,
-          whatsappNumberE164: number,
         })
         .returning({ id: clinics.id });
       if (clinic === undefined) throw new Error("No se creó la Clínica");
       await transaction.execute(
         sql`select set_config('app.clinic_id', ${clinic.id}, true)`,
       );
+      await transaction.insert(whatsappConnections).values({
+        ...createSimulatedWhatsAppConnection(clinic.id),
+        phoneNumberE164: number ?? null,
+      });
       await transaction.insert(clinicUsers).values({
         clinicId: clinic.id,
         identityId,

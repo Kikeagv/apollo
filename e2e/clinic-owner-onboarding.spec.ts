@@ -308,6 +308,17 @@ test("el propietario configura las políticas operativas de WhatsApp", async ({
       page.locator('[data-whatsapp-activation-boundary="true"]'),
     ).toContainText("no activan WhatsApp real");
 
+    const connection = page.locator('[data-whatsapp-connection="true"]');
+    await expect(connection).toContainText("Proveedor");
+    await expect(connection).toContainText("Simulado");
+    await expect(connection).toContainText("Estado");
+    await expect(connection).toContainText("Lista");
+    await expect(connection).toContainText("Última prueba");
+    await expect(connection).toContainText("Siguiente acción");
+    await expect(connection).toContainText("Modo simulado listo");
+    await expect(connection).not.toContainText("KAPSO_API_KEY");
+    await expect(connection).not.toContainText("KAPSO_WEBHOOK_SECRET");
+
     const noShow = page.locator('[data-whatsapp-policy="no-show"]');
     const noShowSelect = noShow.locator('select[name="no-show-policy"]');
     await expect(noShowSelect).toHaveValue("alert");

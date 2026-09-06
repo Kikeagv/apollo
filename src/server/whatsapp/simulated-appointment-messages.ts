@@ -14,7 +14,7 @@ const sentAppointmentMessages: ManualAppointmentTransactionalMessage[] = [];
 const sentAppointmentReminders: Array<{
   appointmentId: string;
   clinicId: string;
-  idempotencyKey?: string;
+  idempotencyKey: string;
   recipient: AppointmentReminderRecipient;
 }> = [];
 const sentConversationEscalationNotifications: Array<{
@@ -22,6 +22,12 @@ const sentConversationEscalationNotifications: Array<{
   escalationId: string;
   recipientPhoneE164: string;
   trigger: ConversationEscalationTrigger;
+}> = [];
+const sentConversationReplies: Array<{
+  clinicId: string;
+  idempotencyKey: string;
+  recipientPhoneE164: string;
+  text: string;
 }> = [];
 
 /** Adaptador simulado de WhatsApp para Mensajes transaccionales de Cita. */
@@ -35,7 +41,7 @@ export const simulatedAppointmentMessageSender: ManualAppointmentMessageSender =
 /** Adaptador simulado para recordatorios proactivos de Citas. */
 export const simulatedAppointmentReminderSender: AppointmentReminderSender = {
   async send(reminder) {
-    sentAppointmentReminders.push(reminder);
+    await sendSimulatedAppointmentReminder(reminder);
   },
 };
 
@@ -66,6 +72,23 @@ export async function sendSimulatedConversationEscalationNotification(input: {
   sentConversationEscalationNotifications.push(input);
 }
 
+/** Respuesta simulada idempotente del agente hacia el Contacto. */
+export async function sendSimulatedConversationReply(input: {
+  clinicId: string;
+  idempotencyKey: string;
+  recipientPhoneE164: string;
+  text: string;
+}) {
+  if (
+    sentConversationReplies.some(
+      (reply) => reply.idempotencyKey === input.idempotencyKey,
+    )
+  ) {
+    return;
+  }
+  sentConversationReplies.push(input);
+}
+
 export function getSentSimulatedAppointmentMessages() {
   return [...sentAppointmentMessages];
 }
@@ -76,4 +99,8 @@ export function getSentSimulatedAppointmentReminders() {
 
 export function getSentSimulatedConversationEscalationNotifications() {
   return [...sentConversationEscalationNotifications];
+}
+
+export function getSentSimulatedConversationReplies() {
+  return [...sentConversationReplies];
 }

@@ -27,6 +27,12 @@ import type { PendingPriority } from "~/domain/pending";
 import type { DemoRequestRateLimitScope } from "~/server/application/demo-request";
 import type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
 import type { ClinicReadinessStatus } from "~/domain/clinic-setup";
+import type {
+  WhatsAppConnectionMetadata,
+  WhatsAppConnectionStatus,
+  WhatsAppConnectionType,
+} from "~/domain/whatsapp-connection";
+import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -99,7 +105,6 @@ export const verification = pgTable("verification", {
 export const clinics = createTable("clinic", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
-  whatsappNumberE164: text("whatsapp_number_e164"),
   noShowPolicy: text("no_show_policy")
     .$type<NoShowPolicy>()
     .default("alert")
@@ -120,6 +125,44 @@ export const clinics = createTable("clinic", {
     .defaultNow()
     .notNull(),
 });
+
+/** Relación operativa única entre una Clínica y su proveedor de WhatsApp. */
+export const whatsappConnections = createTable(
+  "whatsapp_connection",
+  {
+    clinicId: uuid("clinic_id")
+      .primaryKey()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    connectionType: text("connection_type")
+      .$type<WhatsAppConnectionType>()
+      .notNull(),
+    customer: text("customer").notNull(),
+    lastTestAt: timestamp("last_test_at", { withTimezone: true }),
+    metadata: jsonb("metadata")
+      .$type<WhatsAppConnectionMetadata>()
+      .default({})
+      .notNull(),
+    phoneNumberE164: text("phone_number_e164"),
+    phoneNumberId: text("phone_number_id"),
+    provider: text("provider").$type<WhatsAppProviderId>().notNull(),
+    status: text("status").$type<WhatsAppConnectionStatus>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_connection_customer_unique").on(table.customer),
+    uniqueIndex("whatsapp_connection_phone_number_e164_unique")
+      .on(table.phoneNumberE164)
+      .where(sql`${table.phoneNumberE164} IS NOT NULL`),
+    uniqueIndex("whatsapp_connection_phone_number_id_unique")
+      .on(table.phoneNumberId)
+      .where(sql`${table.phoneNumberId} IS NOT NULL`),
+  ],
+);
 
 /** Contrato vigente de aceptación de términos compartido por toda la Clínica. */
 export const clinicTermsContract = createTable("clinic_terms_contract", {
