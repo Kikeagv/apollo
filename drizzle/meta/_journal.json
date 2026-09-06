@@ -428,6 +428,13 @@
       "when": 1788661495000,
       "tag": "0061_apo82_whatsapp_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1788723594488,
+      "tag": "0062_apo83_kapso_onboarding",
+      "breakpoints": true
     }
   ]
 }
