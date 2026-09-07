@@ -1,4 +1,9 @@
 import type { WhatsAppConnection } from "~/domain/whatsapp-connection";
+import type {
+  WhatsAppSetupLink,
+  WhatsAppSetupLinkStatus,
+} from "~/domain/whatsapp-setup-link";
+import { whatsappSetupLinkStatus } from "~/domain/whatsapp-setup-link";
 import {
   evaluateKapsoWhatsAppPreflight,
   isValidE164PhoneNumber,
@@ -14,6 +19,8 @@ import {
   KapsoProviderUnavailableError,
   type KapsoCustomer,
   type KapsoOnboardingProvider,
+  type KapsoSetupLink,
+  type KapsoSetupLinkProviderStatus,
 } from "~/server/whatsapp/kapso-onboarding";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
 
@@ -33,6 +40,27 @@ export type KapsoWhatsAppOnboardingSnapshot = {
   customerId: string | null;
   ownerName: string | null;
   preflight: KapsoWhatsAppPreflightSnapshot | null;
+  setupLink: WhatsAppSetupLink | null;
+  setupLinkHistory: KapsoWhatsAppSetupLinkAuditEvent[];
+  setupLinkProviderError: string | null;
+  setupLinkProviderId: string | null;
+  setupLinkProviderStatus: KapsoSetupLinkProviderStatus | null;
+};
+
+export type KapsoWhatsAppSetupLinkAuditEvent = {
+  action:
+    | "setup-link-confirmed"
+    | "setup-link-created"
+    | "setup-link-expired"
+    | "setup-link-provider-unavailable"
+    | "setup-link-regenerated"
+    | "setup-link-revoked"
+    | "setup-link-used";
+  actorIdentityId: string;
+  occurredAt: Date;
+  reason: string;
+  result: "blocked" | "failed" | "succeeded";
+  setupLinkId: string | null;
 };
 
 export type KapsoWhatsAppOnboardingAuditEvent = {
@@ -40,10 +68,18 @@ export type KapsoWhatsAppOnboardingAuditEvent = {
     | "customer-confirmed"
     | "customer-created"
     | "onboarding-provider-unavailable"
-    | "preflight-executed";
+    | "preflight-executed"
+    | "setup-link-confirmed"
+    | "setup-link-created"
+    | "setup-link-expired"
+    | "setup-link-provider-unavailable"
+    | "setup-link-regenerated"
+    | "setup-link-revoked"
+    | "setup-link-used";
   customerId: string | null;
   reason: string;
   result: "blocked" | "failed" | "succeeded";
+  setupLinkId?: string | null;
 };
 
 export type KapsoWhatsAppConnectionUpdate = {
@@ -55,18 +91,32 @@ export type KapsoWhatsAppConnectionUpdate = {
   status: "blocked" | "pending";
 };
 
+export type KapsoWhatsAppSetupLinkUpdate = {
+  createdAt: Date;
+  expiresAt: Date;
+  kapsoSetupLinkId: string;
+  providerError: string | null;
+  providerStatus: KapsoSetupLinkProviderStatus | null;
+  revokedAt: Date | null;
+  status: WhatsAppSetupLinkStatus;
+  url: string;
+  usedAt: Date | null;
+};
+
 export type KapsoWhatsAppOnboardingStore = {
   read(input: {
+    access?: "clinic-owner" | "superadmin";
     actorIdentityId: string;
     clinicId: string;
   }): Promise<KapsoWhatsAppOnboardingSnapshot>;
   save(input: {
+    access?: "clinic-owner" | "superadmin";
     actorIdentityId: string;
     auditEvents: KapsoWhatsAppOnboardingAuditEvent[];
     clinicId: string;
     connection?: KapsoWhatsAppConnectionUpdate;
     customerId: string | null;
-    preflight: {
+    preflight?: {
       blockers: WhatsAppPreflightBlocker[];
       checkedAt: Date;
       checks: WhatsAppPreflightChecks;
@@ -74,6 +124,7 @@ export type KapsoWhatsAppOnboardingStore = {
       reason: string | null;
       status: WhatsAppPreflightStatus;
     };
+    setupLink?: KapsoWhatsAppSetupLinkUpdate;
   }): Promise<void>;
 };
 
@@ -100,11 +151,108 @@ const providerUnavailableNextAction =
 const providerUnavailableReason =
   "Kapso no está disponible para el onboarding.";
 
-export function getKapsoWhatsAppOnboarding(
-  input: { actorIdentityId: string; clinicId: string },
+export async function getKapsoWhatsAppOnboarding(
+  input: {
+    access?: "clinic-owner" | "superadmin";
+    actorIdentityId: string;
+    clinicId: string;
+  },
   store: KapsoWhatsAppOnboardingStore = drizzleKapsoOnboardingStore,
+  provider?: KapsoOnboardingProvider,
 ) {
-  return store.read(input);
+  const snapshot = await store.read(input);
+  if (
+    provider === undefined ||
+    snapshot.customerId === null ||
+    snapshot.setupLink === null ||
+    snapshot.setupLinkProviderId === null
+  ) {
+    return snapshot;
+  }
+  const setupLink = snapshot.setupLink;
+  const setupLinkProviderId = snapshot.setupLinkProviderId;
+
+  try {
+    const remoteLink = (
+      await provider.listSetupLinks(snapshot.customerId)
+    ).find((link) => link.id === setupLinkProviderId);
+
+    const now = new Date();
+    if (remoteLink === undefined) {
+      const localStatus = whatsappSetupLinkStatus(setupLink, now);
+      const shouldPersistExpired =
+        localStatus === "expired" && setupLink.status === "active";
+      if (localStatus === "used" || localStatus === "revoked") {
+        return snapshot;
+      }
+      if (!shouldPersistExpired && localStatus !== "active") {
+        return snapshot;
+      }
+      const status = shouldPersistExpired ? "expired" : "revoked";
+      await store.save({
+        access: input.access,
+        actorIdentityId: input.actorIdentityId,
+        auditEvents: [
+          {
+            action: setupLinkStatusAuditAction(status),
+            customerId: snapshot.customerId,
+            reason:
+              status === "expired"
+                ? "El enlace alcanzó su fecha de vencimiento y ya no está disponible en Kapso."
+                : "Kapso ya no reporta el enlace de configuración activo.",
+            result: "succeeded",
+            setupLinkId: setupLinkProviderId,
+          },
+        ],
+        clinicId: input.clinicId,
+        customerId: snapshot.customerId,
+        setupLink: {
+          createdAt: setupLink.createdAt,
+          expiresAt: setupLink.expiresAt,
+          kapsoSetupLinkId: setupLinkProviderId,
+          providerError: null,
+          providerStatus: null,
+          revokedAt: status === "revoked" ? now : setupLink.revokedAt,
+          status,
+          url: setupLink.url,
+          usedAt: setupLink.usedAt,
+        },
+      });
+      return store.read(input);
+    }
+
+    const status = whatsappSetupLinkStatus(remoteLink, now);
+    if (
+      setupLink.status === status &&
+      setupLink.expiresAt.getTime() === remoteLink.expiresAt.getTime() &&
+      setupLink.url === remoteLink.url &&
+      snapshot.setupLinkProviderError === remoteLink.whatsappSetupError &&
+      snapshot.setupLinkProviderStatus === remoteLink.whatsappSetupStatus
+    ) {
+      return snapshot;
+    }
+
+    await store.save({
+      access: input.access,
+      actorIdentityId: input.actorIdentityId,
+      auditEvents: [
+        {
+          action: setupLinkStatusAuditAction(status),
+          customerId: snapshot.customerId,
+          reason: "Kapso actualizó el estado del enlace de configuración.",
+          result: "succeeded",
+          setupLinkId: remoteLink.id,
+        },
+      ],
+      clinicId: input.clinicId,
+      customerId: snapshot.customerId,
+      setupLink: toSetupLinkUpdate(remoteLink, now),
+    });
+    return store.read(input);
+  } catch (error) {
+    if (isProviderFailure(error)) return snapshot;
+    throw error;
+  }
 }
 
 export async function prepareKapsoWhatsAppOnboarding(
@@ -360,6 +508,33 @@ function toPersistedChecks(
     qrDeviceAvailable: input.qrDeviceAvailable,
     whatsappBusinessApp: input.whatsappBusinessApp,
   };
+}
+
+function toSetupLinkUpdate(
+  link: KapsoSetupLink,
+  now: Date,
+): KapsoWhatsAppSetupLinkUpdate {
+  const status = whatsappSetupLinkStatus(link, now);
+  return {
+    createdAt: link.createdAt,
+    expiresAt: link.expiresAt,
+    kapsoSetupLinkId: link.id,
+    providerError: link.whatsappSetupError,
+    providerStatus: link.whatsappSetupStatus,
+    revokedAt: status === "revoked" ? now : null,
+    status,
+    url: link.url,
+    usedAt: status === "used" ? now : null,
+  };
+}
+
+function setupLinkStatusAuditAction(
+  status: WhatsAppSetupLinkStatus,
+): KapsoWhatsAppOnboardingAuditEvent["action"] {
+  if (status === "active") return "setup-link-confirmed";
+  if (status === "used") return "setup-link-used";
+  if (status === "expired") return "setup-link-expired";
+  return "setup-link-revoked";
 }
 
 function isConflict(error: unknown) {

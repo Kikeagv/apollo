@@ -6,6 +6,8 @@ import { filterPanaceaConfigurationOverview } from "~/domain/panacea-configurati
 import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
 import { getPanaceaConfigurationOverview } from "~/server/application/panacea-configuration";
 import { getWhatsAppConnection } from "~/server/application/whatsapp-connections";
+import { getKapsoWhatsAppOnboarding } from "~/server/application/kapso-onboarding";
+import { manageKapsoWhatsAppSetupLink } from "~/server/application/whatsapp-setup-links";
 import {
   declareClinicReady,
   getClinicSetup,
@@ -93,6 +95,7 @@ import {
 } from "~/server/db/doctor-invitation-store";
 import { drizzlePanaceaConfigurationReader } from "~/server/db/panacea-configuration-store";
 import { drizzleWhatsAppConnectionReader } from "~/server/db/whatsapp-connection-store";
+import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
 import { drizzlePanaceaTeamReader } from "~/server/db/panacea-team-store";
 import {
   drizzleDoctorStatusStore,
@@ -114,6 +117,7 @@ import {
 } from "~/server/db/simulated-whatsapp-booking-store";
 import { clinicInvitationEmailSender } from "~/server/email/clinic-invitation-email";
 import { whatsAppProviderAdapter } from "~/server/whatsapp/whatsapp-delivery";
+import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboarding";
 import {
   getNoShowPolicy,
   setNoShowPolicy,
@@ -145,6 +149,10 @@ const patientContactInput = z.discriminatedUnion("kind", [
   }),
 ]);
 
+const kapsoOnboardingProvider = createKapsoOnboardingProvider({
+  apiKey: env.KAPSO_API_KEY,
+});
+
 export const panaceaRouter = {
   status: publicProcedure.query(() => ({
     service: "panacea",
@@ -171,6 +179,47 @@ export const panaceaRouter = {
       drizzleWhatsAppConnectionReader,
     ),
   ),
+
+  getKapsoOnboarding: clinicProcedure.query(({ ctx }) => {
+    if (ctx.clinic.role !== "owner") {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+    return getKapsoWhatsAppOnboarding(
+      {
+        access: "clinic-owner",
+        actorIdentityId: ctx.clinic.identityId,
+        clinicId: ctx.clinic.clinicId,
+      },
+      drizzleKapsoOnboardingStore,
+      kapsoOnboardingProvider,
+    );
+  }),
+
+  manageKapsoWhatsAppSetupLink: clinicProcedure
+    .input(
+      z.object({
+        action: z.enum(["generate", "regenerate", "revoke"]),
+        reason: z.string().trim().min(1).max(500).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      if (ctx.clinic.role !== "owner" || input.action === "revoke") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      return manageKapsoWhatsAppSetupLink(
+        {
+          ...input,
+          actorIdentityId: ctx.clinic.identityId,
+          actorType: "clinic-owner",
+          clinicId: ctx.clinic.clinicId,
+        },
+        {
+          appUrl: env.PUBLIC_SITE_URL,
+          provider: kapsoOnboardingProvider,
+          store: drizzleKapsoOnboardingStore,
+        },
+      );
+    }),
 
   setNoShowPolicy: clinicProcedure
     .input(

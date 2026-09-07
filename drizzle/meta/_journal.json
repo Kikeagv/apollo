@@ -435,6 +435,13 @@
       "when": 1788723594488,
       "tag": "0062_apo83_kapso_onboarding",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1788798000000,
+      "tag": "0063_apo84_setup_link_lifecycle",
+      "breakpoints": true
     }
   ]
 }

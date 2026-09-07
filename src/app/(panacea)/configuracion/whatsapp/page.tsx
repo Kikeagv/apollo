@@ -1,7 +1,10 @@
 import { PanaceaDestinationPage } from "~/app/panacea-destination-page";
 import { EscalationNotificationSettingsSection } from "~/app/escalation-notification-settings-section";
 import { NoShowPolicySection } from "~/app/no-show-policy-section";
-import { WhatsAppConnectionSection } from "~/app/whatsapp-connection-section";
+import {
+  WhatsAppConnectionSection,
+  WhatsAppSetupLinkSection,
+} from "~/app/whatsapp-connection-section";
 import { VoiceNoteTranscriptionSettingsSection } from "~/app/voice-note-transcription-settings-section";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 
@@ -18,15 +21,16 @@ export default async function WhatsAppSettingsPage() {
     >
       <Alert data-whatsapp-activation-boundary="true" variant="warning">
         <AlertTitle>
-          Configuración inicial separada de Activación de clínica
+          Configuración de WhatsApp con el Médico propietario
         </AlertTitle>
         <AlertDescription>
-          Estas preferencias no activan WhatsApp real ni configuran Kapso, WABA,
-          número, plantillas, base legal o aprobaciones externas. La Activación
-          de clínica se realizará en un proceso separado cuando corresponda.
+          El enlace de abajo inicia la configuración del número de la Clínica.
+          El propietario debe completar el flujo de Meta; la sesión de Praxia
+          nunca recibe ni guarda OTP, QR, contraseñas o credenciales.
         </AlertDescription>
       </Alert>
       <WhatsAppConnectionSection />
+      <WhatsAppSetupLinkSection />
       <NoShowPolicySection />
       <EscalationNotificationSettingsSection />
       <VoiceNoteTranscriptionSettingsSection />

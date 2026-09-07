@@ -9,7 +9,9 @@ import {
   whatsappConnections,
 } from "~/server/db/schema";
 
-type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type ClinicTransaction = Parameters<
+  Parameters<typeof db.transaction>[0]
+>[0];
 
 /**
  * Fija el contexto de Identidad y Clínica dentro de una transacción antes de

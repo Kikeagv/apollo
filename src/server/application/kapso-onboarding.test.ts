@@ -245,6 +245,9 @@ function providerFixture(options: {
       customerFound = true;
       return options.customer;
     }),
+    createSetupLink: vi.fn(async () => {
+      throw new Error("setup link not used in this test");
+    }),
     findCustomerByExternalId: vi.fn(async () => {
       if (options.unavailable) throw new KapsoProviderUnavailableError();
       return customerFound ? options.customer : undefined;
@@ -262,6 +265,10 @@ function providerFixture(options: {
           phoneNumberId: "phone-1",
         },
       ];
+    }),
+    listSetupLinks: vi.fn(async () => []),
+    revokeSetupLink: vi.fn(async () => {
+      throw new Error("setup link not used in this test");
     }),
   };
 }
@@ -290,6 +297,11 @@ function storeFixture(
     customerId: null,
     ownerName: options.withoutOwner ? null : "Dra. Ana Reyes",
     preflight: null,
+    setupLink: null,
+    setupLinkHistory: [],
+    setupLinkProviderError: null,
+    setupLinkProviderId: null,
+    setupLinkProviderStatus: null,
   };
   const store = {
     saved: undefined as
@@ -314,7 +326,7 @@ function storeFixture(
       snapshot = {
         ...snapshot,
         customerId: input.customerId,
-        preflight: input.preflight,
+        preflight: input.preflight ?? snapshot.preflight,
       };
     },
   } satisfies KapsoWhatsAppOnboardingStore & {

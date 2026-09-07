@@ -6,6 +6,7 @@ import {
   getKapsoWhatsAppOnboarding,
   prepareKapsoWhatsAppOnboarding,
 } from "~/server/application/kapso-onboarding";
+import { manageKapsoWhatsAppSetupLink } from "~/server/application/whatsapp-setup-links";
 import { createSubscriptionSupport } from "~/server/application/subscription-support";
 import {
   drizzleWhatsAppRuntimeDiagnosticReader,
@@ -74,6 +75,7 @@ export const apoloRouter = {
           clinicId: input.clinicId,
         },
         drizzleKapsoOnboardingStore,
+        kapsoOnboardingProvider,
       ),
     ),
 
@@ -102,6 +104,29 @@ export const apoloRouter = {
           actorIdentityId: ctx.session.user.id,
         },
         {
+          provider: kapsoOnboardingProvider,
+          store: drizzleKapsoOnboardingStore,
+        },
+      ),
+    ),
+
+  manageKapsoWhatsAppSetupLink: protectedProcedure
+    .input(
+      z.object({
+        action: z.enum(["generate", "regenerate", "revoke"]),
+        clinicId: z.string().uuid(),
+        reason: z.string().trim().min(1).max(500).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      manageKapsoWhatsAppSetupLink(
+        {
+          ...input,
+          actorIdentityId: ctx.session.user.id,
+          actorType: "superadmin",
+        },
+        {
+          appUrl: env.PUBLIC_SITE_URL,
           provider: kapsoOnboardingProvider,
           store: drizzleKapsoOnboardingStore,
         },

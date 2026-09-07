@@ -18,6 +18,7 @@ import {
   whatsappConnections,
   whatsappOnboardingAuditEvents,
   whatsappPreflights,
+  whatsappSetupLinks,
 } from "~/server/db/schema";
 
 const databaseTest =
@@ -78,10 +79,55 @@ describe("persistencia y RLS del onboarding Kapso", () => {
 
         await expect(
           drizzleKapsoOnboardingStore.read({
+            access: "clinic-owner",
             actorIdentityId: primaryOwnerIdentityId,
             clinicId: fixture.primaryClinicId,
           }),
-        ).rejects.toThrow("La Identidad no está autorizada");
+        ).resolves.toMatchObject({
+          customerId: "kapso-customer-apo-83",
+          setupLink: null,
+        });
+
+        await drizzleKapsoOnboardingStore.save({
+          access: "clinic-owner",
+          actorIdentityId: primaryOwnerIdentityId,
+          auditEvents: [
+            {
+              action: "setup-link-created",
+              customerId: "kapso-customer-apo-83",
+              reason: "Enlace creado por el propietario.",
+              result: "succeeded",
+              setupLinkId: "kapso-link-apo-84",
+            },
+          ],
+          clinicId: fixture.primaryClinicId,
+          customerId: "kapso-customer-apo-83",
+          setupLink: {
+            createdAt: new Date("2026-09-06T12:00:00.000Z"),
+            expiresAt: new Date("2026-10-06T12:00:00.000Z"),
+            kapsoSetupLinkId: "kapso-link-apo-84",
+            providerError: null,
+            providerStatus: "pending",
+            revokedAt: null,
+            status: "active",
+            url: "https://app.kapso.ai/setup/opaque-token",
+            usedAt: null,
+          },
+        });
+
+        await expect(
+          drizzleKapsoOnboardingStore.read({
+            access: "clinic-owner",
+            actorIdentityId: primaryOwnerIdentityId,
+            clinicId: fixture.primaryClinicId,
+          }),
+        ).resolves.toMatchObject({
+          setupLink: {
+            status: "active",
+            url: "https://app.kapso.ai/setup/opaque-token",
+          },
+          setupLinkProviderId: "kapso-link-apo-84",
+        });
 
         await expect(
           inClinicTransaction(
@@ -94,6 +140,7 @@ describe("persistencia y RLS del onboarding Kapso", () => {
                 .select({
                   clinicId: whatsappOnboardingAuditEvents.clinicId,
                   customerId: whatsappOnboardingAuditEvents.customerId,
+                  setupLinkId: whatsappOnboardingAuditEvents.setupLinkId,
                 })
                 .from(whatsappOnboardingAuditEvents),
               preflight: await transaction
@@ -102,6 +149,12 @@ describe("persistencia y RLS del onboarding Kapso", () => {
                   customerId: whatsappPreflights.customerId,
                 })
                 .from(whatsappPreflights),
+              setupLink: await transaction
+                .select({
+                  clinicId: whatsappSetupLinks.clinicId,
+                  kapsoSetupLinkId: whatsappSetupLinks.kapsoSetupLinkId,
+                })
+                .from(whatsappSetupLinks),
             }),
           ),
         ).resolves.toEqual({
@@ -109,12 +162,24 @@ describe("persistencia y RLS del onboarding Kapso", () => {
             {
               clinicId: fixture.primaryClinicId,
               customerId: "kapso-customer-apo-83",
+              setupLinkId: null,
+            },
+            {
+              clinicId: fixture.primaryClinicId,
+              customerId: "kapso-customer-apo-83",
+              setupLinkId: "kapso-link-apo-84",
             },
           ],
           preflight: [
             {
               clinicId: fixture.primaryClinicId,
               customerId: "kapso-customer-apo-83",
+            },
+          ],
+          setupLink: [
+            {
+              clinicId: fixture.primaryClinicId,
+              kapsoSetupLinkId: "kapso-link-apo-84",
             },
           ],
         });
@@ -132,9 +197,12 @@ describe("persistencia y RLS del onboarding Kapso", () => {
               preflight: await transaction
                 .select({ clinicId: whatsappPreflights.clinicId })
                 .from(whatsappPreflights),
+              setupLink: await transaction
+                .select({ clinicId: whatsappSetupLinks.clinicId })
+                .from(whatsappSetupLinks),
             }),
           ),
-        ).resolves.toEqual({ audit: [], preflight: [] });
+        ).resolves.toEqual({ audit: [], preflight: [], setupLink: [] });
 
         const persisted = await inSuperadminTransaction(
           superadminIdentityId,
@@ -154,11 +222,24 @@ describe("persistencia y RLS del onboarding Kapso", () => {
         expect(JSON.stringify(persisted.audit)).not.toMatch(
           /otp|qr|token|secret/i,
         );
-        expect(persisted.audit[0]).toMatchObject({
-          actorIdentityId: superadminIdentityId,
-          customerId: "kapso-customer-apo-83",
-          result: "succeeded",
-        });
+        expect(persisted.audit).toHaveLength(2);
+        expect(persisted.audit).toContainEqual(
+          expect.objectContaining({
+            actorIdentityId: superadminIdentityId,
+            customerId: "kapso-customer-apo-83",
+            result: "succeeded",
+            setupLinkId: null,
+          }),
+        );
+        expect(persisted.audit).toContainEqual(
+          expect.objectContaining({
+            actorIdentityId: primaryOwnerIdentityId,
+            action: "setup-link-created",
+            result: "succeeded",
+            setupLinkId: "kapso-link-apo-84",
+          }),
+        );
+        expect(JSON.stringify(persisted.audit)).not.toContain("opaque-token");
       } finally {
         await fixture.cleanup();
       }

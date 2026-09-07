@@ -210,4 +210,177 @@ describe("adaptador de onboarding de Kapso", () => {
     ).rejects.toThrow("Kapso no está disponible");
     await expect(unavailable).rejects.not.toThrow("kapso-secret");
   });
+
+  it("genera un enlace de coexistence con billing partner_managed", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            created_at: "2026-09-07T12:00:00.000Z",
+            expires_at: "2026-10-07T12:00:00.000Z",
+            id: "setup-link-1",
+            meta_billing_mode: "partner_managed",
+            status: "active",
+            token: "must-not-cross-the-boundary",
+            url: "https://app.kapso.ai/whatsapp/setup/opaque-link",
+            whatsapp_setup_error: null,
+            whatsapp_setup_status: "pending",
+          },
+        }),
+        { status: 201 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.createSetupLink({
+        allowedOrigin: "https://app.usepraxia.com",
+        customerId: "kapso-customer-1",
+        failureRedirectUrl: "https://app.usepraxia.com/configuracion/whatsapp",
+        successRedirectUrl: "https://app.usepraxia.com/configuracion/whatsapp",
+      }),
+    ).resolves.toEqual({
+      createdAt: new Date("2026-09-07T12:00:00.000Z"),
+      expiresAt: new Date("2026-10-07T12:00:00.000Z"),
+      id: "setup-link-1",
+      status: "active",
+      url: "https://app.kapso.ai/whatsapp/setup/opaque-link",
+      whatsappSetupError: null,
+      whatsappSetupStatus: "pending",
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.kapso.ai/platform/v1/customers/kapso-customer-1/setup_links",
+      expect.objectContaining({
+        body: JSON.stringify({
+          setup_link: {
+            allowed_connection_types: ["coexistence"],
+            allowed_origins: ["https://app.usepraxia.com"],
+            failure_redirect_url:
+              "https://app.usepraxia.com/configuracion/whatsapp",
+            language: "es",
+            meta_billing_mode: "partner_managed",
+            provision_phone_number: false,
+            success_redirect_url:
+              "https://app.usepraxia.com/configuracion/whatsapp",
+          },
+        }),
+        method: "POST",
+      }),
+    );
+  });
+
+  it("lista los enlaces del customer sin devolver tokens", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              created_at: "2026-09-07T12:00:00.000Z",
+              expires_at: "2026-10-07T12:00:00.000Z",
+              id: "setup-link-1",
+              status: "active",
+              token: "must-not-cross-the-boundary",
+              url: "https://app.kapso.ai/whatsapp/setup/opaque-link",
+              whatsapp_setup_error: "access_token=must-not-cross-boundary",
+              whatsapp_setup_status: "pending",
+            },
+          ],
+          meta: { page: 1, total_pages: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(provider.listSetupLinks("kapso-customer-1")).resolves.toEqual([
+      {
+        createdAt: new Date("2026-09-07T12:00:00.000Z"),
+        expiresAt: new Date("2026-10-07T12:00:00.000Z"),
+        id: "setup-link-1",
+        status: "active",
+        url: "https://app.kapso.ai/whatsapp/setup/opaque-link",
+        whatsappSetupError:
+          "Kapso reportó un bloqueo durante la configuración.",
+        whatsappSetupStatus: "pending",
+      },
+    ]);
+    expect(JSON.stringify(fetchImpl.mock.results)).not.toContain(
+      "access_token=must-not-cross-boundary",
+    );
+  });
+
+  it("rechaza una expiración de Kapso distinta a 30 días", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            created_at: "2026-09-07T12:00:00.000Z",
+            expires_at: "2026-10-08T12:00:00.000Z",
+            id: "setup-link-1",
+            status: "active",
+            url: "https://app.kapso.ai/whatsapp/setup/opaque-link",
+            whatsapp_setup_error: null,
+            whatsapp_setup_status: "pending",
+          },
+        }),
+        { status: 201 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.createSetupLink({
+        allowedOrigin: "https://app.usepraxia.com",
+        customerId: "kapso-customer-1",
+        failureRedirectUrl: "https://app.usepraxia.com/error",
+        successRedirectUrl: "https://app.usepraxia.com/success",
+      }),
+    ).rejects.toThrow("expiración distinta");
+  });
+
+  it("revoca un enlace existente mediante el estado de Kapso", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            created_at: "2026-09-07T12:00:00.000Z",
+            expires_at: "2026-10-07T12:00:00.000Z",
+            id: "setup-link-1",
+            status: "revoked",
+            url: "https://app.kapso.ai/whatsapp/setup/opaque-link",
+            whatsapp_setup_error: null,
+            whatsapp_setup_status: "pending",
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.revokeSetupLink({
+        customerId: "kapso-customer-1",
+        setupLinkId: "setup-link-1",
+      }),
+    ).resolves.toMatchObject({ id: "setup-link-1", status: "revoked" });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.kapso.ai/platform/v1/customers/kapso-customer-1/setup_links/setup-link-1",
+      expect.objectContaining({
+        body: JSON.stringify({ setup_link: { status: "revoked" } }),
+        method: "PATCH",
+      }),
+    );
+  });
 });

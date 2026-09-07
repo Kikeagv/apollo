@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   date,
   foreignKey,
   index,
@@ -37,6 +38,7 @@ import type {
   WhatsAppConnectionStatus,
   WhatsAppConnectionType,
 } from "~/domain/whatsapp-connection";
+import type { WhatsAppSetupLinkStatus } from "~/domain/whatsapp-setup-link";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
@@ -199,6 +201,66 @@ export const whatsappPreflights = createTable(
   (table) => [index("whatsapp_preflight_customer_idx").on(table.customerId)],
 );
 
+/** Enlace Kapso vigente o histórico para la configuración de una Clínica. */
+export const whatsappSetupLinks = createTable(
+  "whatsapp_setup_link",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    customerId: text("customer_id").notNull(),
+    kapsoSetupLinkId: text("kapso_setup_link_id").notNull(),
+    url: text("url").notNull(),
+    providerStatus: text("provider_status"),
+    providerError: text("provider_error"),
+    status: text("status").$type<WhatsAppSetupLinkStatus>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdByIdentityId: text("created_by_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("whatsapp_setup_link_clinic_idx").on(table.clinicId, table.createdAt),
+    index("whatsapp_setup_link_customer_idx").on(table.customerId),
+    uniqueIndex("whatsapp_setup_link_kapso_id_unique").on(
+      table.kapsoSetupLinkId,
+    ),
+    uniqueIndex("whatsapp_setup_link_active_customer_unique")
+      .on(table.customerId)
+      .where(sql`${table.status} = 'active'`),
+    check(
+      "whatsapp_setup_link_status",
+      sql`${table.status} IN ('active', 'used', 'expired', 'revoked')`,
+    ),
+    check(
+      "whatsapp_setup_link_customer_not_blank",
+      sql`btrim(${table.customerId}) <> ''`,
+    ),
+    check(
+      "whatsapp_setup_link_kapso_id_not_blank",
+      sql`btrim(${table.kapsoSetupLinkId}) <> ''`,
+    ),
+    check(
+      "whatsapp_setup_link_provider_status",
+      sql`${table.providerStatus} IS NULL OR ${table.providerStatus} IN ('pending', 'completed', 'failed', 'unknown')`,
+    ),
+    check("whatsapp_setup_link_url_https", sql`${table.url} ~ '^https://'`),
+    check(
+      "whatsapp_setup_link_expiry_after_creation",
+      sql`${table.expiresAt} = ${table.createdAt} + interval '30 days'`,
+    ),
+  ],
+);
+
 /** Evidencia del alta Kapso; nunca contiene OTP, QR, tokens ni documentos. */
 export const whatsappOnboardingAuditEvents = createTable(
   "whatsapp_onboarding_audit_event",
@@ -211,12 +273,20 @@ export const whatsappOnboardingAuditEvents = createTable(
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     customerId: text("customer_id"),
+    setupLinkId: text("setup_link_id"),
     action: text("action")
       .$type<
         | "customer-confirmed"
         | "customer-created"
         | "onboarding-provider-unavailable"
         | "preflight-executed"
+        | "setup-link-confirmed"
+        | "setup-link-created"
+        | "setup-link-expired"
+        | "setup-link-provider-unavailable"
+        | "setup-link-regenerated"
+        | "setup-link-revoked"
+        | "setup-link-used"
       >()
       .notNull(),
     result: text("result")
@@ -232,6 +302,7 @@ export const whatsappOnboardingAuditEvents = createTable(
       table.clinicId,
       table.occurredAt,
     ),
+    index("whatsapp_onboarding_audit_setup_link_idx").on(table.setupLinkId),
   ],
 );
 

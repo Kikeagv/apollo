@@ -2,6 +2,26 @@
 
 import { useState } from "react";
 
+import {
+  whatsappSetupLinkStatus,
+  whatsappSetupLinkStatusLabel,
+  type WhatsAppSetupLink,
+} from "~/domain/whatsapp-setup-link";
+import { formatDateTime } from "~/app/format-date";
+import {
+  setupLinkActionLabel,
+  setupLinkNextActionLabel,
+  setupLinkProviderStatusLabel,
+} from "~/app/whatsapp-setup-link-presentation";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
 import { api } from "~/trpc/react";
 
 /** Panel mínimo, aislado de Panacea, para pagos, estado y soporte comercial. */
@@ -43,6 +63,9 @@ export function ApoloOperations() {
     api.apolo.prepareKapsoWhatsAppOnboarding.useMutation({
       onSuccess: () => onboarding.refetch(),
     });
+  const manageSetupLink = api.apolo.manageKapsoWhatsAppSetupLink.useMutation({
+    onSuccess: () => onboarding.refetch(),
+  });
   const recordPayment = api.apolo.recordTransferPayment.useMutation();
   const setSubscription = api.apolo.changeSubscriptionStatus.useMutation({
     onSuccess: () => clinics.refetch(),
@@ -290,7 +313,28 @@ export function ApoloOperations() {
             Consultando estado de onboarding…
           </p>
         ) : onboarding.data ? (
-          <OnboardingSummary snapshot={onboarding.data} />
+          <>
+            <OnboardingSummary snapshot={onboarding.data} />
+            <SetupLinkOperations
+              clinicId={clinicId}
+              isPending={manageSetupLink.isPending}
+              onManage={(action, actionReason) =>
+                manageSetupLink.mutate({
+                  action,
+                  clinicId,
+                  ...(actionReason === undefined
+                    ? {}
+                    : { reason: actionReason }),
+                })
+              }
+              snapshot={onboarding.data}
+            />
+            {manageSetupLink.error ? (
+              <p className="text-sm text-amber-200" role="alert">
+                {manageSetupLink.error.message}
+              </p>
+            ) : null}
+          </>
         ) : clinicId ? (
           <p className="text-sm text-slate-300">
             Todavía no hay un preflight ejecutado para esta Clínica.
@@ -481,6 +525,203 @@ function OnboardingSummary({
       ) : null}
     </div>
   );
+}
+
+function SetupLinkOperations({
+  clinicId,
+  isPending,
+  onManage,
+  snapshot,
+}: {
+  clinicId: string;
+  isPending: boolean;
+  onManage: (
+    action: "generate" | "regenerate" | "revoke",
+    reason?: string,
+  ) => void;
+  snapshot: {
+    preflight: { status: string } | null;
+    setupLink: WhatsAppSetupLink | null;
+    setupLinkProviderError: string | null;
+    setupLinkProviderStatus: string | null;
+    setupLinkHistory: {
+      action: string;
+      actorIdentityId: string;
+      occurredAt: Date | string;
+      reason: string;
+    }[];
+  };
+}) {
+  const [pendingAction, setPendingAction] = useState<
+    "regenerate" | "revoke" | null
+  >(null);
+  const [actionReason, setActionReason] = useState("");
+  const setupLink = snapshot.setupLink;
+  const status = setupLink === null ? null : whatsappSetupLinkStatus(setupLink);
+  const preflightPassed = snapshot.preflight?.status === "passed";
+
+  return (
+    <section
+      aria-labelledby="setup-link-operations-title"
+      className="space-y-3 rounded-lg border border-teal-500/70 bg-slate-900/60 p-4 text-sm"
+      data-setup-link-operations="true"
+    >
+      <div>
+        <h3 className="font-semibold" id="setup-link-operations-title">
+          Enlace de configuración de WhatsApp
+        </h3>
+        <p className="mt-1 text-slate-300">
+          Se entrega únicamente desde esta sesión autenticada. El propietario
+          completa OTP, QR, contraseñas y credenciales de Meta; Praxia no los
+          recibe ni los guarda.
+        </p>
+      </div>
+      {setupLink !== null && status !== null ? (
+        <dl className="grid gap-2 sm:grid-cols-2">
+          <DiagnosticValue
+            label="Estado del enlace"
+            value={whatsappSetupLinkStatusLabel(status)}
+          />
+          <DiagnosticValue
+            label="Vencimiento"
+            value={formatSetupLinkDate(setupLink.expiresAt)}
+          />
+          <DiagnosticValue
+            label="Estado remoto"
+            value={setupLinkProviderStatusLabel(
+              snapshot.setupLinkProviderStatus,
+            )}
+          />
+          <DiagnosticValue
+            label="Creado"
+            value={formatSetupLinkDate(setupLink.createdAt)}
+          />
+          <DiagnosticValue
+            label="Revocado"
+            value={
+              setupLink.revokedAt === null
+                ? "No"
+                : formatSetupLinkDate(setupLink.revokedAt)
+            }
+          />
+          <div className="sm:col-span-2">
+            <DiagnosticValue
+              label="Siguiente acción"
+              value={setupLinkNextActionLabel(
+                setupLink,
+                snapshot.setupLinkProviderStatus,
+                snapshot.setupLinkProviderError,
+              )}
+            />
+          </div>
+        </dl>
+      ) : (
+        <p className="text-slate-300">
+          No hay un enlace activo registrado para esta Clínica.
+        </p>
+      )}
+      {snapshot.setupLinkProviderError !== null ? (
+        <p className="text-amber-200" role="status">
+          {snapshot.setupLinkProviderError}
+        </p>
+      ) : null}
+      {snapshot.setupLinkHistory.length > 0 ? (
+        <ol className="space-y-2 text-slate-300">
+          {snapshot.setupLinkHistory.map((event, index) => (
+            <li key={`${String(event.occurredAt)}-${event.action}-${index}`}>
+              {setupLinkActionLabel(event.action)} · {event.reason} ·{" "}
+              {formatDateTime(event.occurredAt)} · actor {event.actorIdentityId}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {setupLink !== null && status === "active" ? (
+          <>
+            <a
+              className="rounded border border-teal-300 px-3 py-2 font-medium text-teal-200"
+              href={setupLink.url}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Abrir enlace
+            </a>
+            <button
+              className="rounded border border-amber-300 px-3 py-2 disabled:opacity-50"
+              disabled={!preflightPassed || isPending}
+              onClick={() => setPendingAction("revoke")}
+              type="button"
+            >
+              Revocar enlace
+            </button>
+          </>
+        ) : null}
+        <button
+          className="rounded bg-teal-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+          disabled={!clinicId || !preflightPassed || isPending}
+          onClick={() => {
+            if (status === "active") {
+              setPendingAction("regenerate");
+              return;
+            }
+            onManage("generate");
+          }}
+          type="button"
+        >
+          {status === "active" ? "Regenerar enlace" : "Generar enlace"}
+        </button>
+      </div>
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingAction(null);
+            setActionReason("");
+          }
+        }}
+        open={pendingAction !== null}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>
+            {pendingAction === "revoke"
+              ? "¿Revocar el enlace de configuración?"
+              : "¿Regenerar el enlace de configuración?"}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {pendingAction === "revoke"
+              ? "El enlace dejará de ser utilizable y la Clínica tendrá que generar otro para continuar."
+              : "El enlace actual se revocará antes de crear uno nuevo. El propietario deberá completar el nuevo enlace."}
+          </AlertDialogDescription>
+          <label className="mt-3 block text-sm">
+            Motivo (opcional)
+            <textarea
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              onChange={(event) => setActionReason(event.target.value)}
+              value={actionReason}
+            />
+          </label>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isPending}
+              onClick={() => {
+                if (pendingAction === null) return;
+                onManage(pendingAction, actionReason.trim() || undefined);
+                setPendingAction(null);
+                setActionReason("");
+              }}
+            >
+              {isPending ? "Procesando…" : "Confirmar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  );
+}
+
+function formatSetupLinkDate(value: Date | string | null) {
+  if (value === null) return "No registrado";
+  return formatDateTime(value);
 }
 
 function onboardingConnectionStatusLabel(status: string) {
