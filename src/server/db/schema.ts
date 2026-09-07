@@ -38,6 +38,7 @@ import type {
   WhatsAppConnectionStatus,
   WhatsAppConnectionType,
 } from "~/domain/whatsapp-connection";
+import type { KapsoWebhookEventPayload } from "~/domain/whatsapp-kapso-provisioning";
 import type { WhatsAppSetupLinkStatus } from "~/domain/whatsapp-setup-link";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 
@@ -144,6 +145,7 @@ export const whatsappConnections = createTable(
       .$type<WhatsAppConnectionType>()
       .notNull(),
     customer: text("customer").notNull(),
+    businessAccountId: text("business_account_id"),
     lastTestAt: timestamp("last_test_at", { withTimezone: true }),
     metadata: jsonb("metadata")
       .$type<WhatsAppConnectionMetadata>()
@@ -162,12 +164,119 @@ export const whatsappConnections = createTable(
   },
   (table) => [
     uniqueIndex("whatsapp_connection_customer_unique").on(table.customer),
+    uniqueIndex("whatsapp_connection_business_account_id_unique")
+      .on(table.businessAccountId)
+      .where(sql`${table.businessAccountId} IS NOT NULL`),
     uniqueIndex("whatsapp_connection_phone_number_e164_unique")
       .on(table.phoneNumberE164)
       .where(sql`${table.phoneNumberE164} IS NOT NULL`),
     uniqueIndex("whatsapp_connection_phone_number_id_unique")
       .on(table.phoneNumberId)
       .where(sql`${table.phoneNumberId} IS NOT NULL`),
+  ],
+);
+
+/** Cola durable de eventos Kapso aceptados por el webhook compartido. */
+export const whatsappWebhookEvents = createTable(
+  "whatsapp_webhook_event",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    eventName: text("event_name").notNull(),
+    payload: jsonb("payload").$type<KapsoWebhookEventPayload>().notNull(),
+    status: text("status")
+      .$type<"pending" | "processing" | "processed" | "rejected" | "ignored">()
+      .notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    leaseToken: text("lease_token"),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_webhook_event_idempotency_unique").on(
+      table.idempotencyKey,
+    ),
+    index("whatsapp_webhook_event_status_idx").on(
+      table.status,
+      table.nextAttemptAt,
+    ),
+    index("whatsapp_webhook_event_phone_idx").on(
+      table.eventName,
+      table.receivedAt,
+    ),
+    check(
+      "whatsapp_webhook_event_status",
+      sql`${table.status} IN ('pending', 'processing', 'processed', 'rejected', 'ignored')`,
+    ),
+    check(
+      "whatsapp_webhook_event_name",
+      sql`${table.eventName} IN (
+        'whatsapp.phone_number.created',
+        'whatsapp.phone_number.deleted',
+        'whatsapp.message.received',
+        'whatsapp.message.sent',
+        'whatsapp.message.delivered',
+        'whatsapp.message.read',
+        'whatsapp.message.failed',
+        'whatsapp.conversation.created',
+        'whatsapp.conversation.ended',
+        'whatsapp.conversation.inactive'
+      )`,
+    ),
+    check(
+      "whatsapp_webhook_event_idempotency_not_blank",
+      sql`btrim(${table.idempotencyKey}) <> ''`,
+    ),
+  ],
+);
+
+/** Resultado resumible de cada llamada de provisión para un evento. */
+export const whatsappProvisioningSteps = createTable(
+  "whatsapp_provisioning_step",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => whatsappWebhookEvents.id, { onDelete: "cascade" }),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    phoneNumberId: text("phone_number_id").notNull(),
+    step: text("step")
+      .$type<"project-webhook" | "phone-number-webhook">()
+      .notNull(),
+    status: text("status").$type<"succeeded" | "failed">().notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    remoteId: text("remote_id"),
+    lastError: text("last_error"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_provisioning_step_event_step_unique").on(
+      table.eventId,
+      table.step,
+    ),
+    index("whatsapp_provisioning_step_clinic_idx").on(
+      table.clinicId,
+      table.updatedAt,
+    ),
+    check(
+      "whatsapp_provisioning_step_name",
+      sql`${table.step} IN ('project-webhook', 'phone-number-webhook')`,
+    ),
+    check(
+      "whatsapp_provisioning_step_status",
+      sql`${table.status} IN ('succeeded', 'failed')`,
+    ),
   ],
 );
 

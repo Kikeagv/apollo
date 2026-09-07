@@ -442,6 +442,13 @@
       "when": 1788798000000,
       "tag": "0063_apo84_setup_link_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1788806400000,
+      "tag": "0064_apo85_kapso_provisioning",
+      "breakpoints": true
     }
   ]
 }

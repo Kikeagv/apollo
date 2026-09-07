@@ -20,11 +20,15 @@ export type WhatsAppConnectionMetadata = Record<string, string | null>;
 
 const publicMetadataKeys = new Set([
   "billingStatus",
+  "businessAccountId",
   "businessAccountName",
   "displayPhoneE164",
   "health",
   "mode",
+  "nextAction",
+  "projectId",
   "source",
+  "statusReason",
   "templatesStatus",
   "webhookStatus",
 ]);
@@ -34,6 +38,7 @@ export type WhatsAppConnection = {
   connectionType: WhatsAppConnectionType;
   createdAt: Date;
   customer: string;
+  businessAccountId?: string | null;
   lastTestAt: Date | null;
   metadata: WhatsAppConnectionMetadata;
   phoneNumberE164: string | null;

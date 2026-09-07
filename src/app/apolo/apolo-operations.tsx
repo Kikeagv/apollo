@@ -499,7 +499,21 @@ function OnboardingSummary({
           label="Phone number ID"
           value={snapshot.connection?.phoneNumberId ?? "Pendiente"}
         />
+        <DiagnosticValue
+          label="WABA / business account"
+          value={snapshot.connection?.metadata.businessAccountId ?? "Pendiente"}
+        />
       </dl>
+      {snapshot.connection?.metadata.statusReason ? (
+        <p className="text-amber-200">
+          Estado: {snapshot.connection.metadata.statusReason}
+        </p>
+      ) : null}
+      {snapshot.connection?.metadata.nextAction ? (
+        <p className="text-teal-200">
+          Siguiente acción: {snapshot.connection.metadata.nextAction}
+        </p>
+      ) : null}
       {snapshot.preflight ? (
         <>
           <p>

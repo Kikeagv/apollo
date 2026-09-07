@@ -207,6 +207,37 @@ export async function inAppointmentSchedulerTransaction<T>(
   });
 }
 
+/**
+ * Entrada pública de Kapso: solo permite insertar la representación ya
+ * validada del evento, nunca resolver ni mutar una Clínica. La lectura mínima
+ * de confirmación solo permite devolver el UUID generado o detectar un
+ * duplicado, no expone el payload al endpoint.
+ */
+export async function inWhatsAppWebhookIngressTransaction<T>(
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_webhook_ingress', 'true', true)`,
+    );
+    return operation(transaction);
+  });
+}
+
+/** Contexto acotado del worker asíncrono de provisión Kapso. */
+export async function inWhatsAppProvisioningWorkerTransaction<T>(
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_provisioning_worker', 'true', true)`,
+    );
+    return operation(transaction);
+  });
+}
+
 async function configureSimulatedWhatsAppClinic(
   transaction: ClinicTransaction,
   clinicId: string,

@@ -257,6 +257,12 @@ function SetupLinkHistory({
 }
 
 function ConnectionDetails({ connection }: { connection: WhatsAppConnection }) {
+  const nextAction =
+    connection.metadata.nextAction ?? whatsappConnectionNextAction(connection);
+  const statusReason = connection.metadata.statusReason;
+  const businessAccountId =
+    connection.businessAccountId ?? connection.metadata.businessAccountId;
+
   return (
     <div
       className="space-y-6"
@@ -285,11 +291,17 @@ function ConnectionDetails({ connection }: { connection: WhatsAppConnection }) {
         </div>
         <div>
           <dt className="text-muted-foreground text-sm">Siguiente acción</dt>
-          <dd className="mt-1 font-medium">
-            {whatsappConnectionNextAction(connection)}
-          </dd>
+          <dd className="mt-1 font-medium">{nextAction}</dd>
         </div>
       </dl>
+      {statusReason !== undefined && statusReason !== null ? (
+        <p
+          className="border-border bg-muted/20 rounded-lg border p-4 text-sm leading-6"
+          role="status"
+        >
+          {statusReason}
+        </p>
+      ) : null}
       <div className="border-border bg-muted/20 rounded-lg border p-4 text-sm">
         <p className="font-medium">Identificadores operativos</p>
         <dl className="text-muted-foreground mt-3 grid gap-2 sm:grid-cols-2">
@@ -307,6 +319,12 @@ function ConnectionDetails({ connection }: { connection: WhatsAppConnection }) {
             <dt>phone_number_id</dt>
             <dd className="text-foreground break-all">
               {connection.phoneNumberId ?? "No asignado"}
+            </dd>
+          </div>
+          <div>
+            <dt>WABA / business account</dt>
+            <dd className="text-foreground break-all">
+              {businessAccountId ?? "No asignado"}
             </dd>
           </div>
         </dl>
