@@ -28,6 +28,54 @@ const databaseTest =
 
 describe("persistencia y RLS de provisión Kapso", () => {
   databaseTest(
+    "serializa workers que reconcilian el mismo recurso remoto",
+    async () => {
+      const scope = `apo-85-lock-${randomUUID()}`;
+      const order: string[] = [];
+      let resolveFirstEntered: (() => void) | undefined;
+      let releaseFirst: (() => void) | undefined;
+      const firstEntered = new Promise<void>((resolve) => {
+        resolveFirstEntered = resolve;
+      });
+      const firstRelease = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const first =
+        drizzleWhatsAppProvisioningStore.withWebhookProvisioningLock({
+          operation: async () => {
+            order.push("first-start");
+            resolveFirstEntered?.();
+            await firstRelease;
+            order.push("first-end");
+          },
+          scope,
+        });
+
+      await firstEntered;
+      let secondStarted = false;
+      const second =
+        drizzleWhatsAppProvisioningStore.withWebhookProvisioningLock({
+          operation: async () => {
+            secondStarted = true;
+            order.push("second-start");
+          },
+          scope,
+        });
+
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        expect(secondStarted).toBe(false);
+        expect(order).toEqual(["first-start"]);
+      } finally {
+        releaseFirst?.();
+        await Promise.all([first, second]);
+      }
+
+      expect(order).toEqual(["first-start", "first-end", "second-start"]);
+    },
+  );
+
+  databaseTest(
     "registra idempotencia, aísla Clínicas y conserva una asociación única",
     async () => {
       const fixture = await createFixture();
@@ -112,6 +160,32 @@ describe("persistencia y RLS de provisión Kapso", () => {
             store: drizzleWhatsAppProvisioningStore,
           }),
         ).resolves.toMatchObject({ accepted: true });
+        const [firstEvent] = await db
+          .select({
+            id: whatsappWebhookEvents.id,
+            receivedAt: whatsappWebhookEvents.receivedAt,
+          })
+          .from(whatsappWebhookEvents)
+          .where(
+            eq(whatsappWebhookEvents.idempotencyKey, fixture.idempotencyKey),
+          );
+        if (firstEvent === undefined) {
+          throw new Error("Falta el evento base de prueba");
+        }
+        await expect(
+          drizzleWhatsAppProvisioningStore.hasNewerCreatedEvent({
+            event: {
+              businessAccountId: fixture.primary.businessAccountId,
+              customerId: fixture.primary.customer,
+              displayPhoneE164: "+50370000000",
+              eventName: "whatsapp.phone_number.deleted",
+              phoneNumberId: fixture.primary.phoneNumberId,
+              projectId: fixture.primary.projectId,
+            },
+            eventId: firstEvent.id,
+            receivedAt: firstEvent.receivedAt,
+          }),
+        ).resolves.toBe(true);
         const firstClaim =
           await drizzleWhatsAppProvisioningStore.claimDueEvents({
             limit: 1,

@@ -49,6 +49,7 @@ function createFakeStore(initialConnection = connection()) {
         leaseToken: null,
         nextAttemptAt: null,
         payload: input.event,
+        receivedAt: new Date(sequence),
         status: "pending",
       };
       events.push(item);
@@ -98,8 +99,23 @@ function createFakeStore(initialConnection = connection()) {
         metadata: input.metadata ?? currentConnection.metadata,
       };
     },
+    async withWebhookProvisioningLock(input) {
+      return input.operation();
+    },
     async getStep(input) {
       return steps.get(`${input.eventId}:${input.step}`);
+    },
+    async hasNewerCreatedEvent(input) {
+      return events.some(
+        (candidate) =>
+          candidate.id !== input.eventId &&
+          candidate.status !== "rejected" &&
+          candidate.payload.eventName === "whatsapp.phone_number.created" &&
+          candidate.receivedAt > input.receivedAt &&
+          candidate.payload.phoneNumberId === input.event.phoneNumberId &&
+          candidate.payload.customerId === input.event.customerId &&
+          candidate.payload.projectId === input.event.projectId,
+      );
     },
     async saveStep(input) {
       steps.set(`${input.eventId}:${input.step}`, {
@@ -219,6 +235,36 @@ describe("worker de provisión Kapso", () => {
       remoteId: "project-webhook-1",
       status: "succeeded",
     });
+  });
+
+  it("serializa la provisión por recurso remoto de Kapso", async () => {
+    const fake = createFakeStore();
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.created",
+      idempotencyKey: "kapso-lock-1",
+      payload: {
+        customer: { id: "customer-1" },
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+    const scopes: string[] = [];
+    const store: KapsoProvisioningStore = {
+      ...fake.store,
+      async withWebhookProvisioningLock(input) {
+        scopes.push(input.scope);
+        return input.operation();
+      },
+    };
+
+    await runKapsoProvisioningWorker(
+      { now: new Date("2026-09-07T12:00:00.000Z") },
+      store,
+      createFakeProvider(),
+    );
+
+    expect(scopes).toEqual(["lifecycle:phone-1", "project", "phone:phone-1"]);
   });
 
   it("rechaza una asociación cruzada sin tocar la conexión", async () => {
@@ -370,7 +416,9 @@ describe("worker de provisión Kapso", () => {
       runKapsoProvisioningWorker(
         { now: new Date() },
         fake.store,
-        createFakeProvider(),
+        createFakeProvider({
+          getPhoneNumber: vi.fn().mockResolvedValue(undefined),
+        }),
       ),
     ).resolves.toMatchObject({ processed: 1 });
     expect(fake.getConnection()).toMatchObject({ status: "disconnected" });
@@ -399,5 +447,97 @@ describe("worker de provisión Kapso", () => {
       phoneNumberId: "phone-1",
       status: "provisioning",
     });
+  });
+
+  it("no desconecta si Kapso todavía reporta el número activo", async () => {
+    const fake = createFakeStore(
+      connection({ phoneNumberId: "phone-1", status: "ready" }),
+    );
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.deleted",
+      idempotencyKey: "kapso-stale-delete-1",
+      payload: {
+        customer: { id: "customer-1" },
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+
+    const provider = createFakeProvider();
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        provider,
+      ),
+    ).resolves.toMatchObject({ processed: 1 });
+
+    expect(provider.getPhoneNumber).toHaveBeenCalledWith("phone-1");
+    expect(fake.getConnection().status).toBe("ready");
+  });
+
+  it("cede un delete a un created recibido después para la misma identidad", async () => {
+    const fake = createFakeStore(
+      connection({ phoneNumberId: "phone-1", status: "pending" }),
+    );
+    const payload = {
+      customer: { id: "customer-1" },
+      phone_number_id: "phone-1",
+      project: { id: "project-1" },
+    };
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.deleted",
+      idempotencyKey: "kapso-out-of-order-delete-1",
+      payload,
+      store: fake.store,
+    });
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.created",
+      idempotencyKey: "kapso-out-of-order-created-1",
+      payload,
+      store: fake.store,
+    });
+    const provider = createFakeProvider();
+
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        provider,
+      ),
+    ).resolves.toMatchObject({ processed: 2 });
+    expect(fake.getConnection().status).toBe("provisioning");
+    expect(provider.getPhoneNumber).toHaveBeenCalledTimes(1);
+  });
+
+  it("reintenta un delete si Kapso no puede revalidar el número", async () => {
+    const fake = createFakeStore(
+      connection({ phoneNumberId: "phone-1", status: "ready" }),
+    );
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.deleted",
+      idempotencyKey: "kapso-delete-timeout-1",
+      payload: {
+        customer: { id: "customer-1" },
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+    const provider = createFakeProvider({
+      getPhoneNumber: vi
+        .fn()
+        .mockRejectedValue(new KapsoProvisioningProviderError(503, "caído")),
+    });
+
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        provider,
+      ),
+    ).resolves.toMatchObject({ retried: 1 });
+    expect(fake.getConnection().status).toBe("ready");
   });
 });

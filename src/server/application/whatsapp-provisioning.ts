@@ -22,6 +22,7 @@ export type KapsoProvisioningEvent = {
   leaseToken: string | null;
   nextAttemptAt: Date | null;
   payload: KapsoPhoneNumberLifecycleEvent;
+  receivedAt: Date;
   status: KapsoProvisioningEventStatus;
 };
 
@@ -62,6 +63,11 @@ export type KapsoProvisioningStore = {
     phoneNumberId: string;
     step: "phone-number-webhook" | "project-webhook";
   }) => Promise<KapsoProvisioningStepState | undefined>;
+  hasNewerCreatedEvent: (input: {
+    event: KapsoPhoneNumberLifecycleEvent;
+    eventId: string;
+    receivedAt: Date;
+  }) => Promise<boolean>;
   markProcessed: (input: {
     eventId: string;
     leaseToken: string;
@@ -108,6 +114,10 @@ export type KapsoProvisioningStore = {
     phoneNumberId?: string | null;
     status?: WhatsAppConnectionStatus;
   }) => Promise<void>;
+  withWebhookProvisioningLock: <T>(input: {
+    operation: () => Promise<T>;
+    scope: string;
+  }) => Promise<T>;
 };
 
 export type KapsoProvisioningPhoneNumber = {
@@ -252,6 +262,19 @@ async function processEvent(
   store: KapsoProvisioningStore,
   provider: KapsoProvisioningProvider,
 ) {
+  return store.withWebhookProvisioningLock({
+    operation: () =>
+      processEventUnderLifecycleLock(event, now, store, provider),
+    scope: `lifecycle:${event.payload.phoneNumberId}`,
+  });
+}
+
+async function processEventUnderLifecycleLock(
+  event: KapsoProvisioningEvent,
+  now: Date,
+  store: KapsoProvisioningStore,
+  provider: KapsoProvisioningProvider,
+) {
   const lifecycleEvent = event.payload;
   const resolved = await store.resolveConnection({ event: lifecycleEvent });
   if (resolved.kind !== "matched") {
@@ -264,7 +287,13 @@ async function processEvent(
   const connection = resolved.connection;
 
   if (lifecycleEvent.eventName === "whatsapp.phone_number.deleted") {
-    await processDeletedEvent(event, connection, lifecycleEvent, store);
+    await processDeletedEvent(
+      event,
+      connection,
+      lifecycleEvent,
+      store,
+      provider,
+    );
     return;
   }
 
@@ -283,8 +312,36 @@ async function processDeletedEvent(
   connection: KapsoProvisioningConnection,
   event: KapsoPhoneNumberLifecycleEvent,
   store: KapsoProvisioningStore,
+  provider: KapsoProvisioningProvider,
 ) {
   if (connection.status === "disconnected") return;
+
+  if (
+    await store.hasNewerCreatedEvent({
+      event,
+      eventId: eventRecord.id,
+      receivedAt: eventRecord.receivedAt,
+    })
+  ) {
+    return;
+  }
+
+  let phoneNumber: KapsoProvisioningPhoneNumber | undefined;
+  try {
+    phoneNumber = await provider.getPhoneNumber(event.phoneNumberId);
+  } catch (error) {
+    if (isRetryableProviderError(error)) {
+      throw new KapsoProvisioningRetryError(toErrorMessage(error));
+    }
+    throw error;
+  }
+  if (phoneNumber !== undefined) {
+    // Kapso puede entregar un delete atrasado después de que el mismo número
+    // haya sido reconectado. La lectura actual del recurso remoto es la única
+    // señal disponible para evitar desconectar esa nueva generación.
+    assertPhoneNumberMatchesEvent(phoneNumber, event);
+    return;
+  }
 
   await store.updateConnection({
     clinicId: connection.clinicId,
@@ -465,7 +522,13 @@ async function ensureStep(input: {
   if (existing?.status === "succeeded") return;
 
   try {
-    const result = await input.providerCall();
+    const result = await input.store.withWebhookProvisioningLock({
+      operation: input.providerCall,
+      scope:
+        input.step === "project-webhook"
+          ? "project"
+          : `phone:${input.event.payload.phoneNumberId}`,
+    });
     await input.store.saveStep({
       clinicId: input.clinicId,
       eventId: input.event.id,

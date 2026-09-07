@@ -113,6 +113,122 @@ describe("adaptador de provisión de Kapso", () => {
     );
   });
 
+  it("recupera un POST ambiguo cuando Kapso ya creó el webhook", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [], meta: { total_pages: 1 } })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "timeout" }), { status: 504 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                active: true,
+                events: [
+                  "whatsapp.phone_number.created",
+                  "whatsapp.phone_number.deleted",
+                ],
+                id: "project-webhook-recovered",
+                kind: "kapso",
+                phone_number_id: null,
+                url: "https://app.usepraxia.com/api/webhooks/kapso",
+              },
+            ],
+            meta: { total_pages: 1 },
+          }),
+        ),
+      );
+    const provider = createKapsoProvisioningProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+      secretKey: "webhook-secret",
+      webhookUrl: "https://app.usepraxia.com/api/webhooks/kapso",
+    });
+
+    await expect(provider.ensureProjectWebhook()).resolves.toEqual({
+      remoteId: "project-webhook-recovered",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("recupera un conflicto ambiguo al crear el webhook de número", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [], meta: { total_pages: 1 } })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "already exists" }), {
+          status: 409,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                active: true,
+                buffer_enabled: false,
+                events: [
+                  "whatsapp.message.received",
+                  "whatsapp.message.sent",
+                  "whatsapp.message.delivered",
+                  "whatsapp.message.read",
+                  "whatsapp.message.failed",
+                  "whatsapp.conversation.created",
+                  "whatsapp.conversation.ended",
+                  "whatsapp.conversation.inactive",
+                ],
+                id: "phone-webhook-recovered",
+                kind: "kapso",
+                phone_number_id: "phone-1",
+                url: "https://app.usepraxia.com/api/webhooks/kapso",
+              },
+            ],
+            meta: { total_pages: 1 },
+          }),
+        ),
+      );
+    const provider = createKapsoProvisioningProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+      secretKey: "webhook-secret",
+      webhookUrl: "https://app.usepraxia.com/api/webhooks/kapso",
+    });
+
+    await expect(provider.ensurePhoneNumberWebhook("phone-1")).resolves.toEqual(
+      { remoteId: "phone-webhook-recovered" },
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("trata una respuesta 2xx inválida como creación ambigua y reintentable", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [], meta: { total_pages: 1 } })),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 201 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [], meta: { total_pages: 1 } })),
+      );
+    const provider = createKapsoProvisioningProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+      secretKey: "webhook-secret",
+      webhookUrl: "https://app.usepraxia.com/api/webhooks/kapso",
+    });
+
+    await expect(provider.ensureProjectWebhook()).rejects.toMatchObject({
+      status: 0,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
   it("confirma el webhook de número existente sin crear un duplicado y exige no buffering", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

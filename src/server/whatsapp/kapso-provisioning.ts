@@ -42,6 +42,7 @@ const listResponseSchema = z.object({
 
 const webhookResponseSchema = z.object({ data: webhookSchema });
 const phoneNumberResponseSchema = z.object({ data: phoneNumberSchema });
+type KapsoWebhook = z.infer<typeof webhookSchema>;
 
 export class KapsoProvisioningProviderUnavailableError extends Error {
   constructor() {
@@ -105,19 +106,22 @@ export function createKapsoProvisioningProvider(
         };
       }
 
-      const created = await requestJson(
+      return createWebhookAndRecover({
+        apiKey: options.apiKey,
+        body: JSON.stringify({
+          whatsapp_webhook: phoneWebhookInput(options),
+        }),
+        createPath: `/whatsapp/phone_numbers/${encodeURIComponent(phoneNumberId)}/webhooks`,
         fetchImpl,
-        options.apiKey,
-        `/whatsapp/phone_numbers/${encodeURIComponent(phoneNumberId)}/webhooks`,
-        {
-          body: JSON.stringify({
-            whatsapp_webhook: phoneWebhookInput(options),
-          }),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        },
-      );
-      return { remoteId: parseWebhookResponse(created).id };
+        matches: (webhook) =>
+          webhook.kind !== "meta" &&
+          webhook.active !== false &&
+          webhook.buffer_enabled === false &&
+          webhook.url === options.webhookUrl &&
+          webhook.phone_number_id === phoneNumberId &&
+          includesAll(webhook.events, kapsoPhoneNumberWebhookEvents),
+        listPath: `/whatsapp/phone_numbers/${encodeURIComponent(phoneNumberId)}/webhooks`,
+      });
     },
 
     async ensureProjectWebhook() {
@@ -160,19 +164,21 @@ export function createKapsoProvisioningProvider(
         };
       }
 
-      const created = await requestJson(
+      return createWebhookAndRecover({
+        apiKey: options.apiKey,
+        body: JSON.stringify({
+          whatsapp_webhook: projectWebhookInput(options),
+        }),
+        createPath: "/whatsapp/webhooks",
         fetchImpl,
-        options.apiKey,
-        "/whatsapp/webhooks",
-        {
-          body: JSON.stringify({
-            whatsapp_webhook: projectWebhookInput(options),
-          }),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        },
-      );
-      return { remoteId: parseWebhookResponse(created).id };
+        matches: (webhook) =>
+          webhook.kind !== "meta" &&
+          webhook.active !== false &&
+          webhook.phone_number_id == null &&
+          webhook.url === options.webhookUrl &&
+          includesAll(webhook.events, kapsoProjectWebhookEvents),
+        listPath: "/whatsapp/webhooks",
+      });
     },
 
     async getPhoneNumber(phoneNumberId) {
@@ -250,6 +256,65 @@ async function listWebhooks(
     if (page >= totalPages) return webhooks;
     page += 1;
   }
+}
+
+async function createWebhookAndRecover(input: {
+  apiKey: string | undefined;
+  body: string;
+  createPath: string;
+  fetchImpl: typeof fetch;
+  listPath: string;
+  matches: (webhook: KapsoWebhook) => boolean;
+}) {
+  try {
+    const created = await requestJson(
+      input.fetchImpl,
+      input.apiKey,
+      input.createPath,
+      {
+        body: input.body,
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
+    );
+    return { remoteId: parseWebhookResponse(created).id };
+  } catch (error) {
+    if (!isAmbiguousCreateError(error)) throw error;
+
+    try {
+      const recovered = (
+        await listWebhooks(input.fetchImpl, input.apiKey, input.listPath)
+      ).find(input.matches);
+      if (recovered !== undefined) return { remoteId: recovered.id };
+    } catch {
+      // Conserva el error del POST; el siguiente job volverá a reconciliar.
+    }
+    throw retryableCreateError(error);
+  }
+}
+
+function isAmbiguousCreateError(error: unknown) {
+  if (error instanceof z.ZodError) return true;
+  return (
+    error instanceof KapsoProvisioningProviderError &&
+    (error.status === 0 ||
+      error.status === 408 ||
+      error.status === 409 ||
+      error.status >= 500 ||
+      (error.status >= 200 && error.status < 300))
+  );
+}
+
+function retryableCreateError(error: unknown) {
+  if (error instanceof KapsoProvisioningProviderError && error.status === 0) {
+    return error;
+  }
+  return new KapsoProvisioningProviderError(
+    0,
+    error instanceof Error
+      ? `No se pudo confirmar la creación del webhook: ${error.message}`
+      : "No se pudo confirmar la creación del webhook",
+  );
 }
 
 async function requestJson(

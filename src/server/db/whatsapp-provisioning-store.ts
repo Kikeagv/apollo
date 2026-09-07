@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 
 import type {
   KapsoProvisioningConnection,
@@ -138,6 +138,34 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
             remoteId: result.remoteId ?? undefined,
             status: result.status,
           } satisfies KapsoProvisioningStepState);
+    });
+  },
+
+  async hasNewerCreatedEvent({ event, eventId, receivedAt }) {
+    return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+      const candidates = await transaction
+        .select({ id: whatsappWebhookEvents.id })
+        .from(whatsappWebhookEvents)
+        .where(
+          and(
+            ne(whatsappWebhookEvents.id, eventId),
+            eq(
+              whatsappWebhookEvents.eventName,
+              "whatsapp.phone_number.created",
+            ),
+            inArray(whatsappWebhookEvents.status, [
+              "pending",
+              "processing",
+              "processed",
+            ]),
+            gte(whatsappWebhookEvents.receivedAt, receivedAt),
+            sql`${whatsappWebhookEvents.payload}->>'phoneNumberId' = ${event.phoneNumberId}`,
+            sql`${whatsappWebhookEvents.payload}->>'customerId' = ${event.customerId}`,
+            sql`${whatsappWebhookEvents.payload}->>'projectId' = ${event.projectId}`,
+          ),
+        )
+        .limit(1);
+      return candidates.length > 0;
     });
   },
 
@@ -365,6 +393,15 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
         );
     });
   },
+
+  async withWebhookProvisioningLock({ operation, scope }) {
+    return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${scope}))`,
+      );
+      return operation();
+    });
+  },
 };
 
 function toProvisioningEvent(
@@ -377,6 +414,7 @@ function toProvisioningEvent(
     leaseToken: event.leaseToken,
     nextAttemptAt: event.nextAttemptAt,
     payload: event.payload as KapsoPhoneNumberLifecycleEvent,
+    receivedAt: event.receivedAt,
     status: event.status,
   };
 }

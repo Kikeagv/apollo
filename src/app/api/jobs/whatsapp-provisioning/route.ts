@@ -21,7 +21,10 @@ export async function POST(request: Request) {
   // configuración manual previa en Kapso.
   let projectWebhook: "reconciled" | "unavailable" = "reconciled";
   try {
-    await provider.ensureProjectWebhook();
+    await drizzleWhatsAppProvisioningStore.withWebhookProvisioningLock({
+      operation: () => provider.ensureProjectWebhook(),
+      scope: "project",
+    });
   } catch {
     // El drenaje de la cola sigue siendo útil para `deleted` y para reintentar
     // el paso de proyecto desde cada evento `created`.
