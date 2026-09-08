@@ -944,6 +944,66 @@ describe("migraciones de PostgreSQL", () => {
               and column_name = 'project_id'
           `;
           expect(provisioningColumns).toEqual([{ column_name: "project_id" }]);
+
+          const inboundTables = await migrated<
+            Array<{ relforcerowsecurity: boolean; relrowsecurity: boolean }>
+          >`
+            select c.relrowsecurity, c.relforcerowsecurity
+            from pg_class c
+            inner join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relname in (
+                'pg-drizzle_whatsapp_identity',
+                'pg-drizzle_whatsapp_inbound_message',
+                'pg-drizzle_whatsapp_inbound_reply',
+                'pg-drizzle_whatsapp_conversation_lock'
+              )
+            order by c.relname
+          `;
+          expect(inboundTables).toEqual([
+            { relforcerowsecurity: true, relrowsecurity: true },
+            { relforcerowsecurity: true, relrowsecurity: true },
+            { relforcerowsecurity: true, relrowsecurity: true },
+            { relforcerowsecurity: true, relrowsecurity: true },
+          ]);
+
+          const inboundPolicies = await migrated<
+            Array<{ name: string; table_name: string }>
+          >`
+            select policyname as name, tablename as table_name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename in (
+                'pg-drizzle_whatsapp_identity',
+                'pg-drizzle_whatsapp_inbound_message',
+                'pg-drizzle_whatsapp_inbound_reply',
+                'pg-drizzle_whatsapp_conversation_lock'
+              )
+          `;
+          expect(inboundPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                name: "whatsapp_identity_worker_manage",
+                table_name: "pg-drizzle_whatsapp_identity",
+              },
+              {
+                name: "whatsapp_inbound_message_ingress_insert",
+                table_name: "pg-drizzle_whatsapp_inbound_message",
+              },
+              {
+                name: "whatsapp_inbound_message_worker_manage",
+                table_name: "pg-drizzle_whatsapp_inbound_message",
+              },
+              {
+                name: "whatsapp_inbound_reply_worker_manage",
+                table_name: "pg-drizzle_whatsapp_inbound_reply",
+              },
+              {
+                name: "whatsapp_conversation_lock_worker_manage",
+                table_name: "pg-drizzle_whatsapp_conversation_lock",
+              },
+            ]),
+          );
         } finally {
           await migrated.end();
         }

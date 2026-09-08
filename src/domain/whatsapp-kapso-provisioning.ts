@@ -45,6 +45,7 @@ export const kapsoPhoneNumberWebhookEvents = [
   "whatsapp.conversation.created",
   "whatsapp.conversation.ended",
   "whatsapp.conversation.inactive",
+  "whatsapp.contact.identity_changed",
 ] as const;
 
 export const kapsoPhoneNumberWebhookEventNames = kapsoPhoneNumberWebhookEvents;

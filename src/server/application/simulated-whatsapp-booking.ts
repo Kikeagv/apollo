@@ -95,6 +95,12 @@ type AppointmentSelfManagementResult =
   | { kind: "unavailable" };
 
 export type SimulatedWhatsAppBookingStore = {
+  beginResolvedMessage?(input: {
+    clinicId: string;
+    contactId: string;
+    id: string;
+    origin: WhatsAppMessageOrigin;
+  }): Promise<{ duplicate: WhatsAppBookingResponse | null }>;
   beginMessage(input: {
     from: string;
     id: string;
@@ -250,6 +256,47 @@ export async function processSimulatedWhatsAppMessage(
 }
 
 /**
+ * Ejecuta el mismo diálogo administrativo para un mensaje ya resuelto por un
+ * adaptador real. La identidad, la deduplicación y el envío quedan fuera de
+ * este caso de uso; aquí solo se entrega el Contacto autorizado a Asclepio.
+ */
+export async function processWhatsAppTextForContact(
+  input: {
+    clinicId: string;
+    contactId: string;
+    messageId: string;
+    text: string;
+  },
+  store: SimulatedWhatsAppBookingStore,
+  now = new Date(),
+): Promise<WhatsAppBookingResponse> {
+  const received = await store.beginResolvedMessage?.({
+    clinicId: input.clinicId,
+    contactId: input.contactId,
+    id: input.messageId,
+    origin: "text",
+  });
+  if (received?.duplicate !== undefined && received.duplicate !== null) {
+    return received.duplicate;
+  }
+
+  const response = await processReceivedMessage(
+    { origin: "text", text: input.text },
+    input,
+    store,
+    now,
+  );
+  if (received !== undefined) {
+    await store.completeMessage({
+      clinicId: input.clinicId,
+      id: input.messageId,
+      response,
+    });
+  }
+  return response;
+}
+
+/**
  * Procesa una nota de voz sin conservar el audio ni el texto transcrito. Una
  * falla siempre se deriva a una persona antes de que Asclepio ejecute agenda.
  */
@@ -396,7 +443,7 @@ function transcriberContentType(
 }
 
 async function processReceivedMessage(
-  input: SimulatedWhatsAppInboundMessage & { origin: WhatsAppMessageOrigin },
+  input: { origin: WhatsAppMessageOrigin; text: string },
   received: { clinicId: string; contactId: string },
   store: SimulatedWhatsAppBookingStore,
   now: Date,

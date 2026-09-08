@@ -238,6 +238,22 @@ export async function inWhatsAppProvisioningWorkerTransaction<T>(
   });
 }
 
+/** Contexto del worker que resuelve inbound de Kapso bajo RLS de Clínica. */
+export async function inWhatsAppInboundWorkerTransaction<T>(
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_inbound_worker', 'true', true)`,
+    );
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_inbound', 'true', true)`,
+    );
+    return operation(transaction);
+  });
+}
+
 async function configureSimulatedWhatsAppClinic(
   transaction: ClinicTransaction,
   clinicId: string,

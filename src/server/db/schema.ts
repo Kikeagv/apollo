@@ -26,6 +26,7 @@ import type {
 } from "~/server/application/simulated-whatsapp-booking";
 import type { PendingPriority } from "~/domain/pending";
 import type { DemoRequestRateLimitScope } from "~/server/application/demo-request";
+import type { WhatsAppIdentityStatus } from "~/domain/whatsapp-identity";
 import type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
 import type { ClinicReadinessStatus } from "~/domain/clinic-setup";
 import type {
@@ -233,7 +234,8 @@ export const whatsappWebhookEvents = createTable(
         'whatsapp.message.failed',
         'whatsapp.conversation.created',
         'whatsapp.conversation.ended',
-        'whatsapp.conversation.inactive'
+        'whatsapp.conversation.inactive',
+        'whatsapp.contact.identity_changed'
       )`,
     ),
     check(
@@ -1308,6 +1310,265 @@ export const contacts = createTable(
     ),
     index("contact_clinic_idx").on(table.clinicId),
     index("contact_clinic_name_idx").on(table.clinicId, table.name),
+  ],
+);
+
+/** Snapshot histórico de una identidad de WhatsApp dentro de una Clínica. */
+export const whatsappIdentities = createTable(
+  "whatsapp_identity",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id"),
+    phoneNumberId: text("phone_number_id").notNull(),
+    waId: text("wa_id"),
+    phoneE164: text("phone_e164"),
+    businessScopedUserId: text("business_scoped_user_id"),
+    parentBusinessScopedUserId: text("parent_business_scoped_user_id"),
+    username: text("username"),
+    status: text("status").$type<WhatsAppIdentityStatus>().notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    sourceMessageId: text("source_message_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("whatsapp_identity_clinic_id_unique").on(table.clinicId, table.id),
+    index("whatsapp_identity_clinic_contact_idx").on(
+      table.clinicId,
+      table.contactId,
+    ),
+    index("whatsapp_identity_lookup_idx").on(
+      table.clinicId,
+      table.phoneNumberId,
+      table.businessScopedUserId,
+      table.phoneE164,
+    ),
+    uniqueIndex("whatsapp_identity_active_bsuid_unique")
+      .on(table.clinicId, table.phoneNumberId, table.businessScopedUserId)
+      .where(
+        sql`${table.status} = 'active' AND ${table.businessScopedUserId} IS NOT NULL`,
+      ),
+    uniqueIndex("whatsapp_identity_active_phone_unique")
+      .on(table.clinicId, table.phoneNumberId, table.phoneE164)
+      .where(
+        sql`${table.status} = 'active' AND ${table.phoneE164} IS NOT NULL`,
+      ),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "whatsapp_identity_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+    check(
+      "whatsapp_identity_status",
+      sql`${table.status} IN ('active', 'historical', 'conflict', 'unresolved')`,
+    ),
+  ],
+);
+
+/** Cola durable y auditable de mensajes Kapso antes de despertar Asclepio. */
+export const whatsappInboundMessages = createTable(
+  "whatsapp_inbound_message",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    eventName: text("event_name").notNull(),
+    messageId: text("message_id").notNull(),
+    batchSequence: integer("batch_sequence"),
+    phoneNumberId: text("phone_number_id").notNull(),
+    conversationId: text("conversation_id"),
+    customerId: text("customer_id"),
+    direction: text("direction")
+      .$type<"inbound" | "outbound" | "unknown">()
+      .notNull(),
+    origin: text("origin")
+      .$type<"cloud_api" | "business_app" | "history_sync" | "unknown">()
+      .notNull(),
+    type: text("type").notNull(),
+    text: text("text"),
+    fromWaId: text("from_wa_id"),
+    phoneE164: text("phone_e164"),
+    businessScopedUserId: text("business_scoped_user_id"),
+    parentBusinessScopedUserId: text("parent_business_scoped_user_id"),
+    username: text("username"),
+    messageTimestamp: timestamp("message_timestamp", { withTimezone: true }),
+    rawPayload: jsonb("raw_payload").$type<Record<string, unknown>>().notNull(),
+    clinicId: uuid("clinic_id"),
+    contactId: uuid("contact_id"),
+    identityId: uuid("identity_id"),
+    assistantResponseText: text("assistant_response_text"),
+    status: text("status")
+      .$type<
+        | "awaiting-consent"
+        | "conflict"
+        | "ignored"
+        | "pending"
+        | "processed"
+        | "processing"
+        | "rejected"
+      >()
+      .notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    consentReference: text("consent_reference"),
+    serviceWindowExpiresAt: timestamp("service_window_expires_at", {
+      withTimezone: true,
+    }),
+    receivedAt: timestamp("received_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_inbound_message_idempotency_unique").on(
+      table.idempotencyKey,
+    ),
+    uniqueIndex("whatsapp_inbound_message_message_unique").on(
+      table.phoneNumberId,
+      table.messageId,
+    ),
+    index("whatsapp_inbound_message_claim_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.receivedAt,
+      table.batchSequence,
+    ),
+    index("whatsapp_inbound_message_conversation_idx").on(
+      table.clinicId,
+      table.conversationId,
+      table.receivedAt,
+    ),
+    index("whatsapp_inbound_message_identity_idx").on(
+      table.clinicId,
+      table.contactId,
+      table.receivedAt,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "whatsapp_inbound_message_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.identityId],
+      foreignColumns: [whatsappIdentities.clinicId, whatsappIdentities.id],
+      name: "whatsapp_inbound_message_identity_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId],
+      foreignColumns: [clinics.id],
+      name: "whatsapp_inbound_message_clinic_fk",
+    }).onDelete("cascade"),
+    check(
+      "whatsapp_inbound_message_event_name",
+      sql`${table.eventName} = 'whatsapp.message.received'`,
+    ),
+    check(
+      "whatsapp_inbound_message_status",
+      sql`${table.status} IN ('awaiting-consent', 'conflict', 'ignored', 'pending', 'processed', 'processing', 'rejected')`,
+    ),
+    check(
+      "whatsapp_inbound_message_direction",
+      sql`${table.direction} IN ('inbound', 'outbound', 'unknown')`,
+    ),
+    check(
+      "whatsapp_inbound_message_origin",
+      sql`${table.origin} IN ('cloud_api', 'business_app', 'history_sync', 'unknown')`,
+    ),
+  ],
+);
+
+export type WhatsAppInboundReplyStatus =
+  "failed" | "pending" | "processing" | "sent";
+
+/** Outbox durable de respuestas inbound; APO-89 podrá drenarlo hacia Kapso. */
+export const whatsappInboundReplies = createTable(
+  "whatsapp_inbound_reply",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    recipientBusinessScopedUserId: text("recipient_business_scoped_user_id"),
+    recipientPhoneE164: text("recipient_phone_e164"),
+    buttonLabel: text("button_label"),
+    text: text("text").notNull(),
+    status: text("status")
+      .$type<WhatsAppInboundReplyStatus>()
+      .default("pending")
+      .notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    providerMessageId: text("provider_message_id"),
+    lastError: text("last_error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("whatsapp_inbound_reply_clinic_id_unique").on(
+      table.clinicId,
+      table.id,
+    ),
+    uniqueIndex("whatsapp_inbound_reply_idempotency_unique").on(
+      table.clinicId,
+      table.idempotencyKey,
+    ),
+    index("whatsapp_inbound_reply_ready_idx").on(
+      table.status,
+      table.nextAttemptAt,
+    ),
+    check(
+      "whatsapp_inbound_reply_recipient",
+      sql`${table.recipientBusinessScopedUserId} IS NOT NULL OR ${table.recipientPhoneE164} IS NOT NULL`,
+    ),
+    check(
+      "whatsapp_inbound_reply_status",
+      sql`${table.status} IN ('failed', 'pending', 'processing', 'sent')`,
+    ),
+  ],
+);
+
+/** Lease distribuido por conversación para serializar efectos de Asclepio. */
+export const whatsappConversationLocks = createTable(
+  "whatsapp_conversation_lock",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    conversationId: text("conversation_id").notNull(),
+    ownerToken: text("owner_token").notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("whatsapp_conversation_lock_clinic_id_unique").on(
+      table.clinicId,
+      table.id,
+    ),
+    uniqueIndex("whatsapp_conversation_lock_key_unique").on(
+      table.clinicId,
+      table.conversationId,
+    ),
+    index("whatsapp_conversation_lock_expiry_idx").on(table.leaseExpiresAt),
   ],
 );
 

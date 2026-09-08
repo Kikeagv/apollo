@@ -13,6 +13,7 @@ import {
   inWhatsAppProvisioningWorkerTransaction,
   inWhatsAppWebhookIngressTransaction,
 } from "~/server/db/clinic-context";
+import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
 import {
   clinics,
   whatsappConnections,
@@ -23,6 +24,8 @@ import {
 const PROVISIONING_LEASE_MS = 10 * 60_000;
 
 export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
+  enqueueInbound: (input) => drizzleWhatsAppInboundStore.enqueueInbound(input),
+
   async claimDueEvents({ limit, now }) {
     return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
       const candidates = await transaction

@@ -15,6 +15,7 @@ import {
   clinics,
   user as identities,
   whatsappConnections,
+  whatsappInboundMessages,
   whatsappWebhookEvents,
 } from "~/server/db/schema";
 import {
@@ -107,7 +108,21 @@ describe("persistencia y RLS de provisión Kapso", () => {
           receiveKapsoWebhook({
             eventName: "whatsapp.message.received",
             idempotencyKey: fixture.ignoredIdempotencyKey,
-            payload: { id: "message-1" },
+            payload: {
+              conversation: {
+                id: "conversation-1",
+                phone_number: "50370000001",
+                phone_number_id: fixture.primary.phoneNumberId,
+              },
+              message: {
+                from: "50370000001",
+                id: "message-1",
+                kapso: { direction: "inbound", origin: "cloud_api" },
+                text: { body: "info" },
+                type: "text",
+              },
+              phone_number_id: fixture.primary.phoneNumberId,
+            },
             store: drizzleWhatsAppProvisioningStore,
           }),
         ).resolves.toMatchObject({ accepted: true });
@@ -142,15 +157,15 @@ describe("persistencia y RLS de provisión Kapso", () => {
         expect(eventRecord).toEqual([{ lastError: null }]);
         await expect(
           db
-            .select({ status: whatsappWebhookEvents.status })
-            .from(whatsappWebhookEvents)
+            .select({ status: whatsappInboundMessages.status })
+            .from(whatsappInboundMessages)
             .where(
               eq(
-                whatsappWebhookEvents.idempotencyKey,
+                whatsappInboundMessages.idempotencyKey,
                 fixture.ignoredIdempotencyKey,
               ),
             ),
-        ).resolves.toEqual([{ status: "ignored" }]);
+        ).resolves.toEqual([{ status: "pending" }]);
 
         await expect(
           receiveKapsoWebhook({
@@ -390,6 +405,14 @@ async function createFixture() {
             `${idempotencyKey}-message`,
             `${idempotencyKey}-lease`,
           ]),
+        );
+      await db
+        .delete(whatsappInboundMessages)
+        .where(
+          eq(
+            whatsappInboundMessages.idempotencyKey,
+            `${idempotencyKey}-message`,
+          ),
         );
       await inSuperadminTransaction(
         superadminIdentityId,

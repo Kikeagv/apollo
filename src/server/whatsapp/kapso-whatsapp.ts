@@ -4,7 +4,9 @@ import {
   WhatsAppConnectionRequiredError,
   type WhatsAppProvider,
 } from "~/server/application/whatsapp-provider";
+import type { WhatsAppInboundReplySender } from "~/server/application/whatsapp-inbound";
 import { requireWhatsAppConnectionReady } from "~/server/db/whatsapp-connection-store";
+import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
 
 export { WhatsAppConnectionRequiredError } from "~/server/application/whatsapp-provider";
 
@@ -32,5 +34,22 @@ export function createKapsoWhatsAppSenders(): KapsoWhatsAppSenders {
     sendConversationReply: (input) => requireConnection(input.clinicId),
     sendConversationEscalationNotification: (input) =>
       requireConnection(input.clinicId),
+  };
+}
+
+/**
+ * Puerto del worker inbound. APO-87 deja la respuesta en un outbox durable;
+ * APO-89 podrá drenarlo hacia Kapso sin cambiar el caso de uso ni perder la
+ * idempotencia del mensaje entrante.
+ */
+export function createKapsoInboundReplySender(): WhatsAppInboundReplySender {
+  return {
+    async send(input) {
+      await requireWhatsAppConnectionReady({
+        clinicId: input.clinicId,
+        provider: "kapso",
+      });
+      await drizzleWhatsAppInboundStore.enqueueReply(input);
+    },
   };
 }

@@ -105,14 +105,30 @@ describe("webhook compartido de Kapso", () => {
   });
 
   it("acepta y conserva la idempotencia de eventos de número reservados para mensajería", async () => {
-    const rawBody = JSON.stringify({ id: "message-1" });
-    const enqueueIgnored = vi.fn().mockResolvedValue({
-      accepted: true,
-      eventId: "event-message-1",
+    const rawBody = JSON.stringify({
+      message: {
+        id: "message-1",
+        type: "text",
+        from: "50370001111",
+        text: { body: "info" },
+        kapso: { direction: "inbound", origin: "cloud_api" },
+      },
+      conversation: {
+        id: "conversation-1",
+        phone_number: "50370001111",
+        phone_number_id: "phone-1",
+      },
+      phone_number_id: "phone-1",
     });
+    const enqueueInbound = vi
+      .fn<NonNullable<KapsoProvisioningStore["enqueueInbound"]>>()
+      .mockResolvedValue({
+        accepted: true,
+        eventId: "event-message-1",
+      });
     const response = await createKapsoWebhookHandler({
       secret: "webhook-secret",
-      store: { enqueue: vi.fn(), enqueueIgnored },
+      store: { enqueue: vi.fn(), enqueueIgnored: vi.fn(), enqueueInbound },
     })(
       new Request("https://app.usepraxia.com/api/webhooks/kapso", {
         body: rawBody,
@@ -134,10 +150,89 @@ describe("webhook compartido de Kapso", () => {
       duplicate: false,
       eventId: "event-message-1",
     });
-    expect(enqueueIgnored).toHaveBeenCalledWith({
-      eventName: "whatsapp.message.received",
-      idempotencyKey: "kapso-message-1",
-      payload: { id: "message-1" },
-    });
+    const call = enqueueInbound.mock.calls[0]?.[0];
+    if (call === undefined) throw new Error("Falta la llamada inbound");
+    expect(call.idempotencyKey).toBe("kapso-message-1");
+    expect(call.message.eventName).toBe("whatsapp.message.received");
+    expect(call.message.id).toBe("message-1");
+  });
+
+  it("acepta un lote y encola cada mensaje con una clave derivada independiente", async () => {
+    const payload = {
+      type: "whatsapp.message.received",
+      batch: true,
+      data: [
+        {
+          message: {
+            id: "message-1",
+            type: "text",
+            from: "50370001111",
+            text: { body: "info" },
+            kapso: { direction: "inbound", origin: "cloud_api" },
+          },
+          conversation: {
+            id: "conversation-1",
+            phone_number: "50370001111",
+            phone_number_id: "phone-1",
+          },
+          phone_number_id: "phone-1",
+        },
+        {
+          message: {
+            id: "message-2",
+            type: "text",
+            from: "US.USER.2",
+            text: { body: "servicios" },
+            kapso: { direction: "inbound", origin: "cloud_api" },
+          },
+          conversation: {
+            id: "conversation-1",
+            phone_number: null,
+            business_scoped_user_id: "US.USER.2",
+            phone_number_id: "phone-1",
+          },
+          phone_number_id: "phone-1",
+        },
+      ],
+      batch_info: { first_sequence: 10, last_sequence: 11 },
+    };
+    const rawBody = JSON.stringify(payload);
+    const enqueueInbound = vi
+      .fn<NonNullable<KapsoProvisioningStore["enqueueInbound"]>>()
+      .mockResolvedValue({
+        accepted: true,
+        eventId: "queued",
+      });
+
+    const response = await createKapsoWebhookHandler({
+      secret: "webhook-secret",
+      store: {
+        enqueue: vi.fn(),
+        enqueueIgnored: vi.fn(),
+        enqueueInbound,
+      },
+    })(
+      new Request("https://app.usepraxia.com/api/webhooks/kapso", {
+        body: rawBody,
+        headers: {
+          "X-Idempotency-Key": "kapso-batch-1",
+          "X-Webhook-Event": "whatsapp.message.received",
+          "X-Webhook-Signature": createKapsoWebhookSignature(
+            rawBody,
+            "webhook-secret",
+          ),
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(enqueueInbound).toHaveBeenCalledTimes(2);
+    expect(
+      enqueueInbound.mock.calls.map(([call]) => call.idempotencyKey),
+    ).toEqual(["kapso-batch-1:message-1", "kapso-batch-1:message-2"]);
+    expect(
+      enqueueInbound.mock.calls.map(([call]) => call.message.batchSequence),
+    ).toEqual([10, 11]);
   });
 });

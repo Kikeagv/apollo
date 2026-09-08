@@ -75,6 +75,41 @@ const EMPTY_CONVERSATION: BookingConversation = {
 /** Adaptador PostgreSQL del transporte simulado; conserva RLS e idempotencia. */
 export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore =
   {
+    async beginResolvedMessage(input) {
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        async (transaction) => {
+          const [created] = await transaction
+            .insert(simulatedWhatsAppMessages)
+            .values({
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              id: input.id,
+              origin: input.origin,
+            })
+            .onConflictDoNothing()
+            .returning({ id: simulatedWhatsAppMessages.id });
+          if (created !== undefined) return { duplicate: null };
+
+          const existing =
+            await transaction.query.simulatedWhatsAppMessages.findFirst({
+              columns: { response: true },
+              where: and(
+                eq(simulatedWhatsAppMessages.clinicId, input.clinicId),
+                eq(simulatedWhatsAppMessages.contactId, input.contactId),
+                eq(simulatedWhatsAppMessages.id, input.id),
+              ),
+            });
+          return {
+            duplicate:
+              existing?.response == null
+                ? null
+                : hydrateStoredResponse(existing.response),
+          };
+        },
+      );
+    },
+
     async beginMessage(input) {
       return inSimulatedWhatsAppInboundTransaction(
         input.to,

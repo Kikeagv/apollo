@@ -1,3 +1,4 @@
+import { KapsoInboundMessageError } from "~/domain/whatsapp-inbound";
 import { KapsoLifecycleEventError } from "~/domain/whatsapp-kapso-provisioning";
 import { receiveKapsoWebhook } from "~/server/application/whatsapp-provisioning";
 import { verifyKapsoWebhookSignature } from "~/server/whatsapp/kapso-webhook-security";
@@ -47,9 +48,13 @@ export function createKapsoWebhookHandler(input: {
         accepted: result.accepted,
         duplicate: !result.accepted,
         eventId: result.eventId,
+        ...("eventIds" in result ? { eventIds: result.eventIds } : {}),
       });
     } catch (error) {
-      if (error instanceof KapsoLifecycleEventError) {
+      if (
+        error instanceof KapsoInboundMessageError ||
+        error instanceof KapsoLifecycleEventError
+      ) {
         return new Response("Evento inválido", { status: 400 });
       }
       return new Response("No se pudo registrar el evento", { status: 503 });

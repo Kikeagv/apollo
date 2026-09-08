@@ -1,4 +1,8 @@
 import {
+  parseKapsoInboundMessagePayload,
+  type KapsoInboundMessage,
+} from "~/domain/whatsapp-inbound";
+import {
   KapsoLifecycleEventError,
   isKapsoPhoneNumberLifecycleEventName,
   isKapsoPhoneNumberWebhookEventName,
@@ -56,6 +60,10 @@ export type KapsoProvisioningStore = {
     eventName: string;
     idempotencyKey: string;
     payload: Record<string, unknown>;
+  }) => Promise<{ accepted: boolean; eventId: string }>;
+  enqueueInbound?: (input: {
+    idempotencyKey: string;
+    message: KapsoInboundMessage;
   }) => Promise<{ accepted: boolean; eventId: string }>;
   getStep: (input: {
     clinicId: string;
@@ -166,8 +174,34 @@ export async function receiveKapsoWebhook(input: {
   eventName: string;
   idempotencyKey: string;
   payload: unknown;
-  store: Pick<KapsoProvisioningStore, "enqueue" | "enqueueIgnored">;
+  store: Pick<KapsoProvisioningStore, "enqueue" | "enqueueIgnored"> &
+    Pick<KapsoProvisioningStore, "enqueueInbound">;
 }) {
+  if (input.eventName === "whatsapp.message.received") {
+    if (input.store.enqueueInbound === undefined) {
+      throw new Error("Falta el almacén de mensajes entrantes de Kapso");
+    }
+    const enqueueInbound = input.store.enqueueInbound;
+    const messages = parseKapsoInboundMessagePayload(input.payload);
+    const results = await Promise.all(
+      messages.map((message) =>
+        enqueueInbound({
+          idempotencyKey:
+            messages.length === 1
+              ? input.idempotencyKey
+              : `${input.idempotencyKey}:${message.id}`,
+          message,
+        }),
+      ),
+    );
+    return {
+      accepted: results.some((result) => result.accepted),
+      eventId: results.length === 1 ? results[0]?.eventId : undefined,
+      ...(results.length > 1
+        ? { eventIds: results.map((result) => result.eventId) }
+        : {}),
+    };
+  }
   if (isKapsoPhoneNumberWebhookEventName(input.eventName)) {
     if (
       typeof input.payload !== "object" ||
