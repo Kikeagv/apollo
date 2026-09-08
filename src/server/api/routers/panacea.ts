@@ -6,6 +6,7 @@ import { filterPanaceaConfigurationOverview } from "~/domain/panacea-configurati
 import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
 import { getPanaceaConfigurationOverview } from "~/server/application/panacea-configuration";
 import { getWhatsAppConnection } from "~/server/application/whatsapp-connections";
+import { getWhatsAppReadiness } from "~/server/application/whatsapp-readiness";
 import { getKapsoWhatsAppOnboarding } from "~/server/application/kapso-onboarding";
 import { manageKapsoWhatsAppSetupLink } from "~/server/application/whatsapp-setup-links";
 import {
@@ -95,6 +96,7 @@ import {
 } from "~/server/db/doctor-invitation-store";
 import { drizzlePanaceaConfigurationReader } from "~/server/db/panacea-configuration-store";
 import { drizzleWhatsAppConnectionReader } from "~/server/db/whatsapp-connection-store";
+import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
 import { drizzlePanaceaTeamReader } from "~/server/db/panacea-team-store";
 import {
@@ -179,6 +181,20 @@ export const panaceaRouter = {
       drizzleWhatsAppConnectionReader,
     ),
   ),
+
+  getWhatsAppReadiness: clinicProcedure.query(({ ctx }) => {
+    if (ctx.clinic.role !== "owner") {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+    return getWhatsAppReadiness(
+      {
+        access: "clinic-owner",
+        actorIdentityId: ctx.clinic.identityId,
+        clinicId: ctx.clinic.clinicId,
+      },
+      drizzleWhatsAppReadinessStore,
+    );
+  }),
 
   getKapsoOnboarding: clinicProcedure.query(({ ctx }) => {
     if (ctx.clinic.role !== "owner") {

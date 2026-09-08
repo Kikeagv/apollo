@@ -796,6 +796,163 @@ describe("migraciones de PostgreSQL", () => {
       }
     },
   );
+
+  databaseTest(
+    "crean los gates de readiness con RLS y estados de proveedor explícitos",
+    async () => {
+      const databaseName = `apo_86_${randomUUID().replaceAll("-", "")}`;
+      const admin = postgres(process.env.DATABASE_URL!, { max: 1 });
+      const migratedUrl = new URL(process.env.DATABASE_URL!);
+      migratedUrl.pathname = `/${databaseName}`;
+
+      try {
+        await admin.unsafe(`create database "${databaseName}"`);
+        await run(
+          process.execPath,
+          [
+            "node_modules/drizzle-kit/bin.cjs",
+            "migrate",
+            "--config=drizzle.config.ts",
+          ],
+          {
+            cwd: process.cwd(),
+            env: { ...process.env, DATABASE_URL: migratedUrl.toString() },
+          },
+        );
+
+        const migrated = postgres(migratedUrl.toString(), { max: 1 });
+        try {
+          const rlsTables = await migrated<
+            Array<{ relforcerowsecurity: boolean; relrowsecurity: boolean }>
+          >`
+            select c.relrowsecurity, c.relforcerowsecurity
+            from pg_class c
+            inner join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relname in (
+                'pg-drizzle_whatsapp_readiness',
+                'pg-drizzle_whatsapp_critical_template',
+                'pg-drizzle_whatsapp_billing'
+              )
+            order by c.relname
+          `;
+          expect(rlsTables).toEqual([
+            { relforcerowsecurity: true, relrowsecurity: true },
+            { relforcerowsecurity: true, relrowsecurity: true },
+            { relforcerowsecurity: true, relrowsecurity: true },
+          ]);
+
+          const policies = await migrated<
+            Array<{ name: string; table_name: string }>
+          >`
+            select policyname as name, tablename as table_name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename in (
+                'pg-drizzle_whatsapp_readiness',
+                'pg-drizzle_whatsapp_critical_template',
+                'pg-drizzle_whatsapp_billing'
+              )
+          `;
+          expect(policies).toEqual(
+            expect.arrayContaining([
+              {
+                name: "whatsapp_readiness_superadmin_manage",
+                table_name: "pg-drizzle_whatsapp_readiness",
+              },
+              {
+                name: "whatsapp_readiness_clinic_owner_read",
+                table_name: "pg-drizzle_whatsapp_readiness",
+              },
+              {
+                name: "whatsapp_readiness_provider_read",
+                table_name: "pg-drizzle_whatsapp_readiness",
+              },
+              {
+                name: "whatsapp_critical_template_superadmin_manage",
+                table_name: "pg-drizzle_whatsapp_critical_template",
+              },
+              {
+                name: "whatsapp_critical_template_clinic_owner_read",
+                table_name: "pg-drizzle_whatsapp_critical_template",
+              },
+              {
+                name: "whatsapp_critical_template_provider_read",
+                table_name: "pg-drizzle_whatsapp_critical_template",
+              },
+              {
+                name: "whatsapp_billing_superadmin_manage",
+                table_name: "pg-drizzle_whatsapp_billing",
+              },
+              {
+                name: "whatsapp_billing_clinic_owner_read",
+                table_name: "pg-drizzle_whatsapp_billing",
+              },
+              {
+                name: "whatsapp_billing_provider_read",
+                table_name: "pg-drizzle_whatsapp_billing",
+              },
+            ]),
+          );
+
+          const templateStatuses = await migrated<
+            Array<{ definition: string }>
+          >`
+            select pg_get_constraintdef(oid) as definition
+            from pg_constraint
+            where conrelid = 'pg-drizzle_whatsapp_critical_template'::regclass
+              and conname = 'whatsapp_critical_template_status'
+          `;
+          expect(templateStatuses[0]?.definition).toContain(
+            "'PENDING', 'APPROVED', 'REJECTED', 'DISABLED'",
+          );
+          const templateCategories = await migrated<
+            Array<{ definition: string }>
+          >`
+            select pg_get_constraintdef(oid) as definition
+            from pg_constraint
+            where conrelid = 'pg-drizzle_whatsapp_critical_template'::regclass
+              and conname = 'whatsapp_critical_template_category'
+          `;
+          expect(templateCategories[0]?.definition).toContain("'UTILITY'");
+
+          const readinessColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_readiness'
+              and column_name in ('e2e_evidence_scope', 'number_health', 'number_health_checked_at', 'project_id', 'provisioning_event_id')
+            order by column_name
+          `;
+          expect(readinessColumns).toEqual([
+            { column_name: "e2e_evidence_scope" },
+            { column_name: "number_health" },
+            { column_name: "number_health_checked_at" },
+            { column_name: "project_id" },
+            { column_name: "provisioning_event_id" },
+          ]);
+
+          const provisioningColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_provisioning_step'
+              and column_name = 'project_id'
+          `;
+          expect(provisioningColumns).toEqual([{ column_name: "project_id" }]);
+        } finally {
+          await migrated.end();
+        }
+      } finally {
+        await admin.unsafe(`drop database if exists "${databaseName}"`);
+        await admin.end();
+      }
+    },
+  );
 });
 
 async function withSuperadminContext<T>(

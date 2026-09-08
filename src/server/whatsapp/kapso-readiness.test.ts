@@ -1,0 +1,339 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  createKapsoReadinessProvider,
+  KapsoReadinessProviderError,
+} from "./kapso-readiness";
+
+const templateNames = [
+  "appointment_confirmation",
+  "appointment_reminder",
+  "appointment_cancellation",
+  "appointment_reschedule",
+];
+
+describe("adaptador de readiness de Kapso", () => {
+  it("sincroniza desde producción, normaliza Submitted a PENDING y conserva rechazo/deshabilitación", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ account_mode: "LIVE" })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { status: "healthy" } })),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                category: "UTILITY",
+                components: [
+                  {
+                    text: "Hola {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
+                    type: "BODY",
+                  },
+                ],
+                id: "template-confirmation",
+                language: "es",
+                name: templateNames[0],
+                status: "APPROVED",
+              },
+              {
+                components: [],
+                category: "UTILITY",
+                id: "template-reminder",
+                language: "en_US",
+                name: templateNames[1],
+                status: "Submitted",
+              },
+            ],
+            paging: { cursors: { after: "cursor-2" } },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                components: [],
+                category: "UTILITY",
+                id: "template-reminder-es",
+                language: "es",
+                name: templateNames[1],
+                status: "APPROVED",
+              },
+              {
+                components: [],
+                category: "UTILITY",
+                id: "template-cancellation",
+                language: "es",
+                name: templateNames[2],
+                rejected_reason: "La categoría no corresponde",
+                status: "REJECTED",
+              },
+              {
+                components: [],
+                category: "UTILITY",
+                id: "template-reschedule",
+                language: "es",
+                name: templateNames[3],
+                reason: "Pausada por Meta",
+                status: "DISABLED",
+              },
+            ],
+            paging: { cursors: { after: null } },
+          }),
+        ),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    const result = await provider.syncTemplates({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+
+    expect(result.numberEnvironment).toBe("production");
+    expect(result.numberHealth).toBe("healthy");
+    expect(result.templates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "UTILITY",
+          kind: "confirmation",
+          status: "APPROVED",
+          variables: [
+            "patient_name",
+            "clinic_name",
+            "appointment_date",
+            "appointment_time",
+            "doctor_name",
+          ],
+        }),
+        expect.objectContaining({
+          kind: "reminder",
+          locale: "es",
+          status: "APPROVED",
+        }),
+        expect.objectContaining({
+          kind: "cancellation",
+          rejectionReason: "La categoría no corresponde",
+          status: "REJECTED",
+        }),
+        expect.objectContaining({
+          kind: "reschedule",
+          rejectionReason: "Pausada por Meta",
+          status: "DISABLED",
+        }),
+      ]),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      "https://api.kapso.ai/whatsapp_templates/sync",
+      expect.objectContaining({
+        body: JSON.stringify({ phone_number_id: "phone-1" }),
+        method: "POST",
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "https://api.kapso.ai/platform/v1/whatsapp/phone_numbers/phone-1/health",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      4,
+      "https://api.kapso.ai/meta/whatsapp/v24.0/waba-1/message_templates",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      5,
+      "https://api.kapso.ai/meta/whatsapp/v24.0/waba-1/message_templates?after=cursor-2",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "https://api.kapso.ai/meta/whatsapp/v24.0/phone-1?fields=account_mode",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(JSON.stringify(fetchImpl.mock.results)).not.toContain(
+      "access_token",
+    );
+  });
+
+  it("no llama al sync para un número SANDBOX", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ account_mode: "SANDBOX" })),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.syncTemplates({
+        businessAccountId: "waba-1",
+        phoneNumberId: "phone-1",
+      }),
+    ).resolves.toMatchObject({
+      numberEnvironment: "sandbox",
+      templates: [],
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("mantiene fuera de readiness un número productivo con salud UNHEALTHY", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ account_mode: "LIVE" })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { status: "unhealthy" } })),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.syncTemplates({
+        businessAccountId: "waba-1",
+        phoneNumberId: "phone-1",
+      }),
+    ).resolves.toMatchObject({
+      numberEnvironment: "production",
+      numberHealth: "unhealthy",
+      templates: [],
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("mantiene pendiente un ambiente que Kapso no pudo identificar", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({})));
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    const result = await provider.syncTemplates({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+
+    expect(result.numberEnvironment).toBe("unknown");
+    expect(result.templates).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("lee billing operativo sin traer credenciales y ejecuta la prueba del webhook", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              alert_threshold_usd: "1.00",
+              charges_separated: true,
+              attributed_consumption_usd: "2.50",
+              credit_balance_usd: "10.00",
+              meta_charges_usd: "1.50",
+              meta_billing_mode: "partner_managed",
+              platform_charges_usd: "1.00",
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { success: true } })),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.getBilling({
+        businessAccountId: "waba-1",
+        phoneNumberId: "phone-1",
+      }),
+    ).resolves.toEqual({
+      alertThresholdCents: 100,
+      chargesSeparated: true,
+      consumedCents: 250,
+      creditCents: 1_000,
+      metaChargesCents: 150,
+      mode: "partner_managed",
+      platformChargesCents: 100,
+      status: "ready",
+    });
+    const e2eResult = await provider.runE2ETest({
+      phoneNumberId: "phone-1",
+      projectWebhookId: "project-webhook-1",
+    });
+    expect(e2eResult.evidence).toContain("success");
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "https://api.kapso.ai/platform/v1/whatsapp/phone_numbers/phone-1/billing?waba_id=waba-1",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "https://api.kapso.ai/platform/v1/whatsapp/webhooks/project-webhook-1/test",
+      expect.objectContaining({
+        body: "{}",
+        method: "POST",
+      }),
+    );
+  });
+
+  it("convierte la respuesta HTTP y el tiempo de espera en un error de proveedor sin payload crudo", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new Error("down"));
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.getBilling({
+        businessAccountId: "waba-1",
+        phoneNumberId: "phone-1",
+      }),
+    ).rejects.toBeInstanceOf(KapsoReadinessProviderError);
+  });
+
+  it("mantiene billing pendiente si Kapso no devuelve umbral de alerta", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            charges_separated: true,
+            attributed_consumption_usd: "2.50",
+            credit_balance_usd: "10.00",
+            meta_billing_mode: "partner_managed",
+          },
+        }),
+      ),
+    );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.getBilling({
+        businessAccountId: "waba-1",
+        phoneNumberId: "phone-1",
+      }),
+    ).resolves.toMatchObject({ status: "pending" });
+  });
+});

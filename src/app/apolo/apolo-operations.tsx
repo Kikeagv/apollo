@@ -33,6 +33,10 @@ export function ApoloOperations() {
     { clinicId },
     { enabled: Boolean(clinicId) },
   );
+  const readiness = api.apolo.getWhatsAppReadiness.useQuery(
+    { clinicId },
+    { enabled: Boolean(clinicId) },
+  );
   const [clinicName, setClinicName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -65,6 +69,10 @@ export function ApoloOperations() {
     });
   const manageSetupLink = api.apolo.manageKapsoWhatsAppSetupLink.useMutation({
     onSuccess: () => onboarding.refetch(),
+  });
+  const retryReadiness = api.apolo.retryWhatsAppReadiness.useMutation({
+    onSuccess: () => void readiness.refetch(),
+    onError: () => void readiness.refetch(),
   });
   const recordPayment = api.apolo.recordTransferPayment.useMutation();
   const setSubscription = api.apolo.changeSubscriptionStatus.useMutation({
@@ -340,6 +348,205 @@ export function ApoloOperations() {
             Todavía no hay un preflight ejecutado para esta Clínica.
           </p>
         ) : null}
+      </section>
+      <section
+        aria-labelledby="whatsapp-readiness-title"
+        className="space-y-4 rounded-xl border border-violet-500/70 p-5"
+        data-whatsapp-readiness-operations="true"
+      >
+        <div>
+          <h2 className="text-xl font-semibold" id="whatsapp-readiness-title">
+            Readiness técnico de WhatsApp
+          </h2>
+          <p className="mt-1 text-sm text-slate-300">
+            Solo una Conexión con número, webhooks, plantillas, billing y E2E
+            correctos pasa a <code>ready</code>. Estos gates no autorizan datos
+            reales ni sustituyen Consentimiento, privacidad o el gate legal.
+          </p>
+        </div>
+        {!clinicId ? (
+          <p className="text-sm text-slate-400">
+            Seleccione una Clínica para consultar sus gates.
+          </p>
+        ) : readiness.isLoading ? (
+          <p className="text-sm text-slate-300" role="status">
+            Consultando readiness…
+          </p>
+        ) : readiness.error ? (
+          <p className="text-sm text-amber-200" role="alert">
+            {readiness.error.message}
+          </p>
+        ) : readiness.data?.connection === null ? (
+          <p className="text-sm text-slate-300">
+            La Clínica todavía no tiene una Conexión de WhatsApp. Complete el
+            enlace de configuración antes de reintentar readiness.
+          </p>
+        ) : readiness.data ? (
+          <>
+            <dl className="grid gap-3 text-sm sm:grid-cols-4">
+              <DiagnosticValue
+                label="Estado técnico"
+                value={apoloReadinessStatusLabel(
+                  readiness.data.readiness.status,
+                )}
+              />
+              <DiagnosticValue
+                label="Entorno del número"
+                value={readiness.data.numberEnvironment}
+              />
+              <DiagnosticValue
+                label="Salud del número"
+                value={readiness.data.numberHealth}
+              />
+              <DiagnosticValue
+                label="Última prueba E2E"
+                value={
+                  readiness.data.e2e.lastTestAt === null
+                    ? "Sin evidencia"
+                    : formatDateTime(readiness.data.e2e.lastTestAt)
+                }
+              />
+            </dl>
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+                <p className="font-medium">Billing atribuido</p>
+                <dl className="mt-2 space-y-1 text-slate-300">
+                  <div>
+                    <dt className="inline">Modo: </dt>
+                    <dd className="inline">{readiness.data.billing.mode}</dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Crédito: </dt>
+                    <dd className="inline">
+                      {formatCents(readiness.data.billing.creditCents)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Consumo: </dt>
+                    <dd className="inline">
+                      {formatCents(readiness.data.billing.consumedCents)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Umbral de alerta: </dt>
+                    <dd className="inline">
+                      {readiness.data.billing.alertThresholdCents === null
+                        ? "No registrado"
+                        : formatCents(
+                            readiness.data.billing.alertThresholdCents,
+                          )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Cargos separados: </dt>
+                    <dd className="inline">
+                      {readiness.data.billing.chargesSeparated ? "Sí" : "No"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Cargos de Meta: </dt>
+                    <dd className="inline">
+                      {readiness.data.billing.metaChargesCents == null
+                        ? "No registrados"
+                        : formatCents(readiness.data.billing.metaChargesCents)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Cargos de plataforma: </dt>
+                    <dd className="inline">
+                      {readiness.data.billing.platformChargesCents == null
+                        ? "No registrados"
+                        : formatCents(
+                            readiness.data.billing.platformChargesCents,
+                          )}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+                <p className="font-medium">Plantillas críticas</p>
+                <ul className="mt-2 space-y-1 text-slate-300">
+                  {readiness.data.templates.map((template) => (
+                    <li key={template.kind}>
+                      {template.name} · {template.locale || "sin locale"} ·{" "}
+                      {template.category ?? "sin categoría"} · {template.status}
+                      {template.rejectionReason
+                        ? ` · ${template.rejectionReason}`
+                        : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <ul className="space-y-3" data-whatsapp-readiness-gates="true">
+              {readiness.data.readiness.gates.map((gate) => (
+                <li
+                  className="rounded-lg border border-slate-700 bg-slate-900/60 p-3"
+                  key={gate.code}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">
+                      {apoloReadinessGateLabel(gate.code)}
+                    </span>
+                    <span className="text-xs tracking-wide text-slate-300 uppercase">
+                      {gate.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-300">{gate.message}</p>
+                  {gate.code === "templates" ||
+                  gate.code === "billing" ||
+                  gate.code === "e2e" ||
+                  (gate.code === "number" &&
+                    (readiness.data.connection?.status === "blocked" ||
+                      readiness.data.connection?.status === "degraded")) ||
+                  gate.action ===
+                    "Reactivar manualmente la Conexión de WhatsApp" ? (
+                    <button
+                      className="mt-3 rounded border border-violet-300 px-3 py-2 text-sm text-violet-100 disabled:opacity-50"
+                      disabled={retryReadiness.isPending}
+                      onClick={() =>
+                        retryReadiness.mutate({
+                          action:
+                            gate.code === "templates"
+                              ? "templates"
+                              : gate.code === "billing"
+                                ? "billing"
+                                : gate.code === "e2e"
+                                  ? "e2e"
+                                  : "reactivate",
+                          clinicId,
+                        })
+                      }
+                      type="button"
+                    >
+                      {apoloReadinessActionLabel(
+                        gate.code === "templates"
+                          ? "templates"
+                          : gate.code === "billing"
+                            ? "billing"
+                            : gate.code === "e2e"
+                              ? "e2e"
+                              : "reactivate",
+                      )}
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            <p className="rounded-lg border border-amber-500/60 bg-amber-950/30 p-3 text-sm text-amber-100">
+              {readiness.data.readiness.legalAuthorization.message}
+            </p>
+            {retryReadiness.error ? (
+              <p className="text-sm text-amber-200" role="alert">
+                {retryReadiness.error.message}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <p className="text-sm text-slate-300">
+            La Clínica todavía no tiene una Conexión de WhatsApp.
+          </p>
+        )}
       </section>
       <section className="space-y-3 rounded-xl border border-slate-700 p-5">
         <h2 className="text-xl font-semibold">Pago por transferencia</h2>
@@ -759,6 +966,44 @@ function preflightStatusLabel(status: string) {
     unavailable: "Kapso no disponible",
   };
   return labels[status] ?? "Estado no disponible";
+}
+
+function apoloReadinessStatusLabel(
+  status: "pending" | "ready" | "degraded" | "blocked",
+) {
+  return {
+    blocked: "Bloqueado",
+    degraded: "Degradado",
+    pending: "Pendiente",
+    ready: "Listo técnicamente",
+  }[status];
+}
+
+function apoloReadinessGateLabel(
+  code: "number" | "webhooks" | "templates" | "billing" | "e2e",
+) {
+  return {
+    billing: "Billing y crédito",
+    e2e: "Prueba extremo a extremo",
+    number: "Número y WABA",
+    templates: "Plantillas críticas",
+    webhooks: "Webhooks",
+  }[code];
+}
+
+function apoloReadinessActionLabel(
+  action: "templates" | "billing" | "e2e" | "reactivate",
+) {
+  return {
+    billing: "Reintentar billing",
+    e2e: "Ejecutar prueba E2E",
+    reactivate: "Reactivar conexión",
+    templates: "Sincronizar plantillas",
+  }[action];
+}
+
+function formatCents(cents: number) {
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
 function DiagnosticValue({ label, value }: { label: string; value: string }) {

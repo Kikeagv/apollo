@@ -39,6 +39,13 @@ import type {
   WhatsAppConnectionType,
 } from "~/domain/whatsapp-connection";
 import type { KapsoWebhookEventPayload } from "~/domain/whatsapp-kapso-provisioning";
+import type {
+  WhatsAppCriticalTemplateKind,
+  WhatsAppE2EEvidenceScope,
+  WhatsAppTemplateCategory,
+  WhatsAppTemplateStatus,
+  WhatsAppTechnicalReadinessStatus,
+} from "~/domain/whatsapp-readiness";
 import type { WhatsAppSetupLinkStatus } from "~/domain/whatsapp-setup-link";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 
@@ -248,6 +255,7 @@ export const whatsappProvisioningSteps = createTable(
       .notNull()
       .references(() => clinics.id, { onDelete: "cascade" }),
     phoneNumberId: text("phone_number_id").notNull(),
+    projectId: text("project_id"),
     step: text("step")
       .$type<"project-webhook" | "phone-number-webhook">()
       .notNull(),
@@ -269,6 +277,12 @@ export const whatsappProvisioningSteps = createTable(
       table.clinicId,
       table.updatedAt,
     ),
+    index("whatsapp_provisioning_step_generation_idx").on(
+      table.clinicId,
+      table.phoneNumberId,
+      table.projectId,
+      table.updatedAt,
+    ),
     check(
       "whatsapp_provisioning_step_name",
       sql`${table.step} IN ('project-webhook', 'phone-number-webhook')`,
@@ -276,6 +290,236 @@ export const whatsappProvisioningSteps = createTable(
     check(
       "whatsapp_provisioning_step_status",
       sql`${table.status} IN ('succeeded', 'failed')`,
+    ),
+  ],
+);
+
+/** Estado durable de los gates técnicos de una Conexión Kapso. */
+export const whatsappReadiness = createTable(
+  "whatsapp_readiness",
+  {
+    clinicId: uuid("clinic_id")
+      .primaryKey()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    phoneNumberId: text("phone_number_id"),
+    businessAccountId: text("business_account_id"),
+    projectId: text("project_id"),
+    provisioningEventId: uuid("provisioning_event_id"),
+    revision: integer("revision").default(0).notNull(),
+    numberEnvironment: text("number_environment")
+      .$type<"production" | "sandbox" | "unknown">()
+      .default("unknown")
+      .notNull(),
+    numberHealth: text("number_health")
+      .$type<"healthy" | "degraded" | "unhealthy" | "error" | "unknown">()
+      .default("unknown")
+      .notNull(),
+    numberHealthCheckedAt: timestamp("number_health_checked_at", {
+      withTimezone: true,
+    }),
+    projectWebhookStatus: text("project_webhook_status")
+      .$type<"ready" | "pending" | "failed">()
+      .default("pending")
+      .notNull(),
+    projectWebhookId: text("project_webhook_id"),
+    projectWebhookLastAttemptAt: timestamp("project_webhook_last_attempt_at", {
+      withTimezone: true,
+    }),
+    projectWebhookLastError: text("project_webhook_last_error"),
+    phoneNumberWebhookStatus: text("phone_number_webhook_status")
+      .$type<"ready" | "pending" | "failed">()
+      .default("pending")
+      .notNull(),
+    phoneNumberWebhookId: text("phone_number_webhook_id"),
+    phoneNumberWebhookLastAttemptAt: timestamp(
+      "phone_number_webhook_last_attempt_at",
+      { withTimezone: true },
+    ),
+    phoneNumberWebhookLastError: text("phone_number_webhook_last_error"),
+    templatesSyncStatus: text("templates_sync_status")
+      .$type<"ready" | "pending" | "failed">()
+      .default("pending")
+      .notNull(),
+    templatesSyncLastSyncedAt: timestamp("templates_sync_last_synced_at", {
+      withTimezone: true,
+    }),
+    templatesSyncLastError: text("templates_sync_last_error"),
+    billingSyncStatus: text("billing_sync_status")
+      .$type<"ready" | "pending" | "failed">()
+      .default("pending")
+      .notNull(),
+    billingSyncLastSyncedAt: timestamp("billing_sync_last_synced_at", {
+      withTimezone: true,
+    }),
+    billingSyncLastError: text("billing_sync_last_error"),
+    e2eStatus: text("e2e_status")
+      .$type<"passed" | "pending" | "failed">()
+      .default("pending")
+      .notNull(),
+    e2eEvidenceScope: text(
+      "e2e_evidence_scope",
+    ).$type<WhatsAppE2EEvidenceScope | null>(),
+    e2eEvidence: text("e2e_evidence"),
+    e2eLastTestAt: timestamp("e2e_last_test_at", { withTimezone: true }),
+    e2eLastError: text("e2e_last_error"),
+    technicalStatus: text("technical_status")
+      .$type<WhatsAppTechnicalReadinessStatus>()
+      .default("pending")
+      .notNull(),
+    nextAction: text("next_action"),
+    statusReason: text("status_reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "whatsapp_readiness_number_environment",
+      sql`${table.numberEnvironment} IN ('production', 'sandbox', 'unknown')`,
+    ),
+    check(
+      "whatsapp_readiness_number_health",
+      sql`${table.numberHealth} IN ('healthy', 'degraded', 'unhealthy', 'error', 'unknown')`,
+    ),
+    check(
+      "whatsapp_readiness_project_webhook_status",
+      sql`${table.projectWebhookStatus} IN ('ready', 'pending', 'failed')`,
+    ),
+    check(
+      "whatsapp_readiness_phone_webhook_status",
+      sql`${table.phoneNumberWebhookStatus} IN ('ready', 'pending', 'failed')`,
+    ),
+    check(
+      "whatsapp_readiness_templates_sync_status",
+      sql`${table.templatesSyncStatus} IN ('ready', 'pending', 'failed')`,
+    ),
+    check(
+      "whatsapp_readiness_billing_sync_status",
+      sql`${table.billingSyncStatus} IN ('ready', 'pending', 'failed')`,
+    ),
+    check(
+      "whatsapp_readiness_e2e_status",
+      sql`${table.e2eStatus} IN ('passed', 'pending', 'failed')`,
+    ),
+    check(
+      "whatsapp_readiness_e2e_evidence_scope",
+      sql`${table.e2eEvidenceScope} IS NULL OR ${table.e2eEvidenceScope} IN ('message-roundtrip', 'webhook-preflight')`,
+    ),
+    check(
+      "whatsapp_readiness_technical_status",
+      sql`${table.technicalStatus} IN ('pending', 'ready', 'degraded', 'blocked')`,
+    ),
+    check(
+      "whatsapp_readiness_revision_non_negative",
+      sql`${table.revision} >= 0`,
+    ),
+    check(
+      "whatsapp_readiness_status_reason_not_blank",
+      sql`btrim(${table.statusReason}) <> ''`,
+    ),
+  ],
+);
+
+/** Catálogo sincronizado por Clínica, sin tokens ni contenido clínico. */
+export const whatsappCriticalTemplates = createTable(
+  "whatsapp_critical_template",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    projectId: text("project_id"),
+    provisioningEventId: uuid("provisioning_event_id"),
+    kind: text("kind").$type<WhatsAppCriticalTemplateKind>().notNull(),
+    category: text("category").$type<WhatsAppTemplateCategory | null>(),
+    providerTemplateId: text("provider_template_id"),
+    name: text("name").notNull(),
+    locale: text("locale").notNull(),
+    variables: jsonb("variables").$type<string[]>().default([]).notNull(),
+    status: text("status").$type<WhatsAppTemplateStatus>().notNull(),
+    rejectionReason: text("rejection_reason"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("whatsapp_critical_template_clinic_kind_unique").on(
+      table.clinicId,
+      table.kind,
+    ),
+    index("whatsapp_critical_template_clinic_idx").on(table.clinicId),
+    check(
+      "whatsapp_critical_template_kind",
+      sql`${table.kind} IN ('confirmation', 'reminder', 'cancellation', 'reschedule')`,
+    ),
+    check(
+      "whatsapp_critical_template_category",
+      sql`${table.category} IS NULL OR ${table.category} IN ('AUTHENTICATION', 'MARKETING', 'UTILITY')`,
+    ),
+    check(
+      "whatsapp_critical_template_status",
+      sql`${table.status} IN ('PENDING', 'APPROVED', 'REJECTED', 'DISABLED')`,
+    ),
+  ],
+);
+
+/** Billing partner-managed atribuido a una Clínica; solo valores monetarios. */
+export const whatsappBilling = createTable(
+  "whatsapp_billing",
+  {
+    clinicId: uuid("clinic_id")
+      .primaryKey()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    mode: text("mode")
+      .$type<"partner_managed" | "customer_managed" | "unknown">()
+      .default("unknown")
+      .notNull(),
+    creditCents: integer("credit_cents").default(0).notNull(),
+    consumedCents: integer("consumed_cents").default(0).notNull(),
+    alertThresholdCents: integer("alert_threshold_cents"),
+    metaChargesCents: integer("meta_charges_cents"),
+    platformChargesCents: integer("platform_charges_cents"),
+    chargesSeparated: boolean("charges_separated").default(false).notNull(),
+    status: text("status")
+      .$type<"ready" | "pending" | "failed">()
+      .default("pending")
+      .notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "whatsapp_billing_mode",
+      sql`${table.mode} IN ('partner_managed', 'customer_managed', 'unknown')`,
+    ),
+    check(
+      "whatsapp_billing_status",
+      sql`${table.status} IN ('ready', 'pending', 'failed')`,
+    ),
+    check(
+      "whatsapp_billing_non_negative",
+      sql`${table.creditCents} >= 0 AND ${table.consumedCents} >= 0`,
+    ),
+    check(
+      "whatsapp_billing_alert_threshold_non_negative",
+      sql`${table.alertThresholdCents} IS NULL OR ${table.alertThresholdCents} >= 0`,
+    ),
+    check(
+      "whatsapp_billing_charges_non_negative",
+      sql`(${table.metaChargesCents} IS NULL OR ${table.metaChargesCents} >= 0) AND (${table.platformChargesCents} IS NULL OR ${table.platformChargesCents} >= 0)`,
     ),
   ],
 );

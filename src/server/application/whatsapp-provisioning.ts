@@ -91,6 +91,7 @@ export type KapsoProvisioningStore = {
     eventId: string;
     leaseToken: string;
     phoneNumberId: string;
+    projectId: string;
     remoteId?: string | null;
     status: "failed" | "succeeded";
     step: "phone-number-webhook" | "project-webhook";
@@ -349,6 +350,7 @@ async function processDeletedEvent(
     leaseToken: requireLeaseToken(eventRecord),
     metadata: withOperationalMetadata(connection.metadata, {
       nextAction: "Reconectar WhatsApp desde Configuración",
+      provisioningEventId: eventRecord.id,
       statusReason: "Kapso notificó que el número de WhatsApp fue eliminado",
     }),
     phoneNumberE164: connection.phoneNumberE164,
@@ -375,7 +377,9 @@ async function processCreatedEvent(
   metadata = withOperationalMetadata(metadata, {
     nextAction: "Confirmar webhooks de WhatsApp",
     projectId: event.projectId,
+    provisioningEventId: eventRecord.id,
     statusReason: "Número recibido; iniciando la provisión de Kapso",
+    webhookStatus: "pending",
   });
 
   await store.updateConnection({
@@ -409,6 +413,7 @@ async function processCreatedEvent(
       displayPhoneE164,
       nextAction: "Confirmar webhooks de WhatsApp",
       projectId: event.projectId,
+      provisioningEventId: eventRecord.id,
       statusReason: "Número asociado; configurando webhooks de Kapso",
     });
     await store.updateConnection({
@@ -448,7 +453,9 @@ async function processCreatedEvent(
       displayPhoneE164,
       nextAction: "Sincronizar plantillas, billing y ejecutar una prueba E2E",
       projectId: event.projectId,
+      provisioningEventId: eventRecord.id,
       statusReason: "Webhooks de proyecto y número configurados",
+      webhookStatus: "ready",
     });
     await store.updateConnection({
       businessAccountId,
@@ -470,7 +477,9 @@ async function processCreatedEvent(
         metadata: withOperationalMetadata(metadata, {
           nextAction: "Revisar la asociación de Kapso",
           projectId: event.projectId,
+          provisioningEventId: eventRecord.id,
           statusReason: error.message,
+          webhookStatus: "failed",
         }),
         phoneNumberE164: event.displayPhoneE164 ?? connection.phoneNumberE164,
         phoneNumberId: event.phoneNumberId,
@@ -490,7 +499,9 @@ async function processCreatedEvent(
           ? "Reintentar la provisión de Kapso"
           : "Revisar la configuración de Kapso",
         projectId: event.projectId,
+        provisioningEventId: eventRecord.id,
         statusReason: toErrorMessage(error),
+        webhookStatus: "failed",
       }),
       phoneNumberE164: event.displayPhoneE164 ?? connection.phoneNumberE164,
       phoneNumberId: event.phoneNumberId,
@@ -534,6 +545,7 @@ async function ensureStep(input: {
       eventId: input.event.id,
       leaseToken: input.leaseToken,
       phoneNumberId: input.event.payload.phoneNumberId,
+      projectId: input.event.payload.projectId,
       remoteId: result.remoteId,
       status: "succeeded",
       step: input.step,
@@ -546,6 +558,7 @@ async function ensureStep(input: {
       eventId: input.event.id,
       leaseToken: input.leaseToken,
       phoneNumberId: input.event.payload.phoneNumberId,
+      projectId: input.event.payload.projectId,
       status: "failed",
       step: input.step,
       updatedAt: input.now,

@@ -27,6 +27,7 @@ const publicMetadataKeys = new Set([
   "mode",
   "nextAction",
   "projectId",
+  "provisioningEventId",
   "source",
   "statusReason",
   "templatesStatus",

@@ -230,6 +230,7 @@ describe("worker de provisión Kapso", () => {
       status: "provisioning",
     });
     expect(fake.getConnection().metadata.nextAction).toContain("plantillas");
+    expect(fake.getConnection().metadata.provisioningEventId).toBe("event-1");
     expect(fake.getConnection().metadata.statusReason).toContain("Webhooks");
     expect(fake.getStep("event-1", "project-webhook")).toMatchObject({
       remoteId: "project-webhook-1",

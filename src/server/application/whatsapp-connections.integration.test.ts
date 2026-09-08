@@ -17,7 +17,10 @@ import {
   clinicUsers,
   clinics,
   user as identities,
+  whatsappBilling,
+  whatsappCriticalTemplates,
   whatsappConnections,
+  whatsappReadiness,
 } from "../db/schema";
 
 const databaseTest =
@@ -114,6 +117,115 @@ describe("Conexiones de WhatsApp persistentes", () => {
             provider: "simulated",
           }),
         ).resolves.toMatchObject({ status: "ready" });
+
+        await updateConnection(fixture, fixture.primary.clinicId, {
+          businessAccountId: "waba-apo-86",
+          connectionType: "coexistence",
+          metadata: {
+            health: "healthy",
+            mode: "coexistence",
+            projectId: "project-1",
+            provisioningEventId: "00000000-0000-0000-0000-000000000001",
+            webhookStatus: "ready",
+          },
+          phoneNumberId: "phone-apo-86",
+          provider: "kapso",
+          status: "ready",
+        });
+        await expect(
+          requireWhatsAppConnectionReady({
+            clinicId: fixture.primary.clinicId,
+            provider: "kapso",
+          }),
+        ).rejects.toThrow("no tiene una Conexión de WhatsApp lista");
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.primary.clinicId}, true)`,
+            );
+            await transaction.insert(whatsappReadiness).values({
+              billingSyncStatus: "ready",
+              businessAccountId: "waba-apo-86",
+              clinicId: fixture.primary.clinicId,
+              e2eEvidence: "synthetic roundtrip completed",
+              e2eEvidenceScope: "message-roundtrip",
+              e2eLastTestAt: new Date(),
+              e2eStatus: "passed",
+              numberHealth: "healthy",
+              numberHealthCheckedAt: new Date(),
+              projectId: "project-1",
+              projectWebhookId: "project-webhook-1",
+              projectWebhookStatus: "ready",
+              phoneNumberId: "phone-apo-86",
+              phoneNumberWebhookId: "phone-webhook-1",
+              phoneNumberWebhookStatus: "ready",
+              provisioningEventId: "00000000-0000-0000-0000-000000000001",
+              statusReason: "Todos los gates técnicos están correctos",
+              technicalStatus: "ready",
+              templatesSyncStatus: "ready",
+            });
+            await transaction.insert(whatsappBilling).values({
+              alertThresholdCents: 100,
+              chargesSeparated: true,
+              clinicId: fixture.primary.clinicId,
+              consumedCents: 250,
+              creditCents: 1_000,
+              metaChargesCents: 150,
+              mode: "partner_managed",
+              platformChargesCents: 100,
+              status: "ready",
+            });
+            await transaction.insert(whatsappCriticalTemplates).values(
+              (
+                [
+                  ["confirmation", "appointment_confirmation"],
+                  ["reminder", "appointment_reminder"],
+                  ["cancellation", "appointment_cancellation"],
+                  ["reschedule", "appointment_reschedule"],
+                ] as const
+              ).map(([kind, name]) => ({
+                category: "UTILITY" as const,
+                clinicId: fixture.primary.clinicId,
+                kind,
+                locale: "es",
+                name,
+                projectId: "project-1",
+                provisioningEventId: "00000000-0000-0000-0000-000000000001",
+                providerTemplateId: `template-${kind}`,
+                status: "APPROVED" as const,
+                variables: [
+                  "patient_name",
+                  "clinic_name",
+                  "appointment_date",
+                  "appointment_time",
+                  "doctor_name",
+                ],
+              })),
+            );
+          },
+        );
+        await expect(
+          requireWhatsAppConnectionReady({
+            clinicId: fixture.primary.clinicId,
+            provider: "kapso",
+          }),
+        ).resolves.toMatchObject({ status: "ready" });
+        await updateConnection(fixture, fixture.primary.clinicId, {
+          metadata: {
+            health: "healthy",
+            mode: "coexistence",
+            projectId: "project-1",
+            provisioningEventId: "00000000-0000-0000-0000-000000000001",
+            webhookStatus: "failed",
+          },
+        });
+        await expect(
+          requireWhatsAppConnectionReady({
+            clinicId: fixture.primary.clinicId,
+            provider: "kapso",
+          }),
+        ).rejects.toThrow("no tiene una Conexión de WhatsApp lista");
 
         await inSuperadminTransaction(
           fixture.superadminIdentityId,

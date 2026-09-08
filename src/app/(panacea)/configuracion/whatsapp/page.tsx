@@ -3,6 +3,7 @@ import { EscalationNotificationSettingsSection } from "~/app/escalation-notifica
 import { NoShowPolicySection } from "~/app/no-show-policy-section";
 import {
   WhatsAppConnectionSection,
+  WhatsAppReadinessSection,
   WhatsAppSetupLinkSection,
 } from "~/app/whatsapp-connection-section";
 import { VoiceNoteTranscriptionSettingsSection } from "~/app/voice-note-transcription-settings-section";
@@ -30,6 +31,7 @@ export default async function WhatsAppSettingsPage() {
         </AlertDescription>
       </Alert>
       <WhatsAppConnectionSection />
+      <WhatsAppReadinessSection />
       <WhatsAppSetupLinkSection />
       <NoShowPolicySection />
       <EscalationNotificationSettingsSection />

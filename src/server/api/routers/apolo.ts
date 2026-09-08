@@ -12,6 +12,10 @@ import {
   drizzleWhatsAppRuntimeDiagnosticReader,
   getWhatsAppRuntimeDiagnostic,
 } from "~/server/application/whatsapp-runtime";
+import {
+  getWhatsAppReadiness,
+  retryWhatsAppReadiness,
+} from "~/server/application/whatsapp-readiness";
 import { protectedProcedure } from "~/server/api/trpc";
 import {
   drizzleSubscriptionSupportStore,
@@ -20,13 +24,18 @@ import {
 } from "~/server/db/subscription-support-store";
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
+import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import { clinicInvitationEmailSender } from "~/server/email/clinic-invitation-email";
 import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboarding";
+import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
 
 const subscriptionSupport = createSubscriptionSupport(
   drizzleSubscriptionSupportStore,
 );
 const kapsoOnboardingProvider = createKapsoOnboardingProvider({
+  apiKey: env.KAPSO_API_KEY,
+});
+const kapsoReadinessProvider = createKapsoReadinessProvider({
   apiKey: env.KAPSO_API_KEY,
 });
 
@@ -76,6 +85,36 @@ export const apoloRouter = {
         },
         drizzleKapsoOnboardingStore,
         kapsoOnboardingProvider,
+      ),
+    ),
+
+  getWhatsAppReadiness: protectedProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      getWhatsAppReadiness(
+        {
+          access: "superadmin",
+          actorIdentityId: ctx.session.user.id,
+          clinicId: input.clinicId,
+        },
+        drizzleWhatsAppReadinessStore,
+      ),
+    ),
+
+  retryWhatsAppReadiness: protectedProcedure
+    .input(
+      z.object({
+        action: z.enum(["templates", "billing", "e2e", "reactivate"]),
+        clinicId: z.string().uuid(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      retryWhatsAppReadiness(
+        { ...input, actorIdentityId: ctx.session.user.id },
+        {
+          provider: kapsoReadinessProvider,
+          store: drizzleWhatsAppReadinessStore,
+        },
       ),
     ),
 

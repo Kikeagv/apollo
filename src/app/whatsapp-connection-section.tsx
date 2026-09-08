@@ -45,6 +45,34 @@ function badgeVariant(status: WhatsAppConnection["status"]) {
   return "outline" as const;
 }
 
+function readinessBadgeVariant(
+  status: "pending" | "ready" | "degraded" | "blocked" | "failed",
+) {
+  if (status === "ready") return "success" as const;
+  if (status === "pending" || status === "failed") return "warning" as const;
+  return "outline" as const;
+}
+
+function readinessStatusLabel(
+  status: "pending" | "ready" | "degraded" | "blocked",
+) {
+  return {
+    blocked: "Bloqueado",
+    degraded: "Degradado",
+    pending: "Pendiente",
+    ready: "Listo técnicamente",
+  }[status];
+}
+
+function gateStatusLabel(status: "pending" | "ready" | "blocked" | "failed") {
+  return {
+    blocked: "Bloqueado",
+    failed: "Falló",
+    pending: "Pendiente",
+    ready: "Correcto",
+  }[status];
+}
+
 /** Estado operativo de la conexión; nunca muestra credenciales de proveedor. */
 export function WhatsAppConnectionSection() {
   const connection = api.panacea.getWhatsAppConnection.useQuery();
@@ -87,6 +115,126 @@ export function WhatsAppConnectionSection() {
       </Card>
     </section>
   );
+}
+
+/** Gates técnicos visibles al propietario; nunca equivalen al gate legal. */
+export function WhatsAppReadinessSection() {
+  const readiness = api.panacea.getWhatsAppReadiness.useQuery();
+  const snapshot = readiness.data;
+
+  return (
+    <section
+      aria-labelledby="whatsapp-readiness-title"
+      className="space-y-5"
+      data-whatsapp-readiness="true"
+    >
+      <Card>
+        <CardHeader className="border-border border-b">
+          <h2 className="text-xl font-semibold" id="whatsapp-readiness-title">
+            Readiness técnico de WhatsApp
+          </h2>
+          <p className="text-muted-foreground leading-6 text-pretty">
+            La Conexión solo puede enviar cuando los gates técnicos están
+            correctos. Esta señal no autoriza datos reales.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-5 pt-6">
+          {readiness.error ? (
+            <PanaceaQueryError
+              error={readiness.error}
+              onRetry={() => void readiness.refetch()}
+              title="el readiness de WhatsApp"
+            />
+          ) : readiness.isLoading ? (
+            <PanaceaQueryLoading label="Cargando el readiness de WhatsApp" />
+          ) : snapshot === undefined ? (
+            <PanaceaQueryEmpty
+              description="Complete la configuración de WhatsApp para consultar sus gates técnicos."
+              onRetry={() => void readiness.refetch()}
+              title="Readiness no disponible"
+            />
+          ) : snapshot.connection === null ? (
+            <PanaceaQueryEmpty
+              description="Esta Clínica todavía no tiene una Conexión de WhatsApp provisionada. Complete el enlace de configuración para habilitar el readiness técnico."
+              onRetry={() => void readiness.refetch()}
+              title="Conexión no registrada"
+            />
+          ) : snapshot.connection?.provider !== "kapso" ? (
+            <p className="text-muted-foreground text-sm leading-6">
+              El modo simulado no usa los gates productivos de Kapso. El gate
+              legal y el consentimiento siguen siendo independientes.
+            </p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-medium">Estado técnico</span>
+                <Badge
+                  variant={readinessBadgeVariant(snapshot.readiness.status)}
+                >
+                  {readinessStatusLabel(snapshot.readiness.status)}
+                </Badge>
+              </div>
+              <dl className="grid gap-4 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-muted-foreground">Siguiente acción</dt>
+                  <dd className="mt-1 font-medium">
+                    {snapshot.readiness.nextAction ?? "Ninguna"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Última prueba E2E</dt>
+                  <dd className="mt-1 font-medium">
+                    {snapshot.e2e.lastTestAt === null
+                      ? "Sin evidencia"
+                      : snapshot.e2e.evidenceScope === "webhook-preflight"
+                        ? `Preflight de webhook · ${formatDateTime(snapshot.e2e.lastTestAt)}`
+                        : formatDateTime(snapshot.e2e.lastTestAt)}
+                  </dd>
+                </div>
+              </dl>
+              <ul className="space-y-3" data-whatsapp-readiness-gates="true">
+                {snapshot.readiness.gates.map((gate) => (
+                  <li
+                    className="border-border rounded-lg border p-3"
+                    key={gate.code}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium">
+                        {readinessGateLabel(gate.code)}
+                      </span>
+                      <Badge variant={readinessBadgeVariant(gate.status)}>
+                        {gateStatusLabel(gate.status)}
+                      </Badge>
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      {gate.message}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              <p className="border-warning-border bg-warning-muted text-warning-foreground rounded-lg border p-4 text-sm leading-6">
+                Readiness técnico listo no significa autorización legal para
+                datos reales. Mantenga Consentimiento de WhatsApp, privacidad,
+                contrato y minimización cerrados antes de habilitar tráfico.
+              </p>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function readinessGateLabel(
+  code: "number" | "webhooks" | "templates" | "billing" | "e2e",
+) {
+  return {
+    billing: "Billing y crédito",
+    e2e: "Prueba extremo a extremo",
+    number: "Número y WABA",
+    templates: "Plantillas críticas",
+    webhooks: "Webhooks",
+  }[code];
 }
 
 /** Flujo de configuración iniciado por el Médico propietario desde la Clínica. */
