@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 
 import { CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
@@ -14,7 +14,12 @@ import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import { inSimulatedWhatsAppClinicTransaction } from "~/server/db/clinic-context";
 import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
 import type { db } from "~/server/db";
-import { appointmentEvents, appointments } from "~/server/db/schema";
+import {
+  appointmentEvents,
+  appointments,
+  contactPatientLinks,
+  patients,
+} from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -41,6 +46,15 @@ export const drizzleAgendaAppointmentRescheduler: AgendaAppointmentRescheduler =
             ),
           });
           if (current === undefined) return { kind: "unavailable" as const };
+          if (
+            !(await hasManageablePatientLink(transaction, {
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              patientId: input.patientId,
+            }))
+          ) {
+            return { kind: "unauthorized" as const };
+          }
           if (
             !canAuthorSelfManageAppointment(current, input.contactId, input.now)
           ) {
@@ -121,6 +135,15 @@ export const drizzleAgendaAppointmentCanceller: AgendaAppointmentCanceller = {
           ),
         });
         if (appointment === undefined) return { kind: "unavailable" as const };
+        if (
+          !(await hasManageablePatientLink(transaction, {
+            clinicId: input.clinicId,
+            contactId: input.contactId,
+            patientId: input.patientId,
+          }))
+        ) {
+          return { kind: "unauthorized" as const };
+        }
         if (
           !canAuthorSelfManageAppointment(
             appointment,
@@ -204,4 +227,39 @@ function lockDoctor(transaction: ClinicTransaction, doctorId: string) {
   return transaction.execute(
     sql`select pg_advisory_xact_lock(hashtext(${doctorId}))`,
   );
+}
+
+async function hasManageablePatientLink(
+  transaction: ClinicTransaction,
+  input: { clinicId: string; contactId: string; patientId: string },
+) {
+  const [link] = await transaction
+    .select({ id: contactPatientLinks.id })
+    .from(contactPatientLinks)
+    .innerJoin(
+      patients,
+      and(
+        eq(contactPatientLinks.clinicId, patients.clinicId),
+        eq(contactPatientLinks.patientId, patients.id),
+      ),
+    )
+    .where(
+      and(
+        eq(contactPatientLinks.clinicId, input.clinicId),
+        eq(contactPatientLinks.contactId, input.contactId),
+        eq(contactPatientLinks.patientId, input.patientId),
+        or(
+          and(
+            eq(contactPatientLinks.relationship, "contact"),
+            sql`${patients.birthDate} <= CURRENT_DATE - INTERVAL '18 years'`,
+          ),
+          and(
+            eq(contactPatientLinks.relationship, "tutor"),
+            eq(contactPatientLinks.guardianshipVerificationStatus, "verified"),
+          ),
+        ),
+      ),
+    )
+    .limit(1);
+  return link !== undefined;
 }

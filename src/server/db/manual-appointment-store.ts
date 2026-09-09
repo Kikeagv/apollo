@@ -21,6 +21,7 @@ import {
 import { type AppointmentReminderStore } from "~/server/application/appointment-reminders";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
+import { hasCurrentWhatsAppConsent } from "~/server/db/whatsapp-consent-query";
 import type { db } from "~/server/db";
 import {
   appointmentEvents,
@@ -232,6 +233,13 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         })
         .from(contactPatientLinks)
         .innerJoin(
+          patients,
+          and(
+            eq(contactPatientLinks.clinicId, patients.clinicId),
+            eq(contactPatientLinks.patientId, patients.id),
+          ),
+        )
+        .innerJoin(
           contacts,
           and(
             eq(contactPatientLinks.clinicId, contacts.clinicId),
@@ -242,6 +250,7 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
           and(
             eq(contactPatientLinks.clinicId, input.clinicId),
             eq(contactPatientLinks.patientId, appointment.patientId),
+            whatsappManagedPatientLinkCondition(),
             appointment.origin === "manual"
               ? undefined
               : or(
@@ -257,6 +266,16 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         );
       return recipients;
     });
+  },
+
+  async hasCurrentWhatsAppConsent(input) {
+    return inClinicTransaction(input, (transaction) =>
+      hasCurrentWhatsAppConsent(transaction, {
+        clinicId: input.clinicId,
+        contactId: input.contactId,
+        now: input.now,
+      }),
+    );
   },
 
   async recordReminderDelivery(input) {
@@ -928,6 +947,19 @@ function messageEventType(
 
 function addMinutes(date: Date, minutes: number) {
   return new Date(date.valueOf() + minutes * 60_000);
+}
+
+function whatsappManagedPatientLinkCondition() {
+  return or(
+    and(
+      eq(contactPatientLinks.relationship, "contact"),
+      sql`${patients.birthDate} <= CURRENT_DATE - INTERVAL '18 years'`,
+    ),
+    and(
+      eq(contactPatientLinks.relationship, "tutor"),
+      eq(contactPatientLinks.guardianshipVerificationStatus, "verified"),
+    ),
+  );
 }
 
 function clinicDate(value: Date) {

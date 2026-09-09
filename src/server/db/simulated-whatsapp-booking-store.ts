@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 
 import { CLINIC_UTC_OFFSET } from "~/clinic-timezone";
 import {
@@ -175,15 +175,45 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
-          const [escalation] = await transaction
+          const [createdEscalation] = await transaction
             .insert(conversationEscalations)
             .values({
               clinicId: input.clinicId,
               contactId: input.contactId,
               createdAt: input.now,
+              sourceMessageId: input.messageId ?? null,
               trigger: input.trigger,
             })
-            .returning({ id: conversationEscalations.id });
+            .onConflictDoNothing()
+            .returning({
+              contactId: conversationEscalations.contactId,
+              id: conversationEscalations.id,
+              notificationSentAt: conversationEscalations.notificationSentAt,
+              trigger: conversationEscalations.trigger,
+            });
+          let escalation = createdEscalation;
+          const created = escalation !== undefined;
+          if (escalation === undefined && input.messageId !== undefined) {
+            escalation =
+              await transaction.query.conversationEscalations.findFirst({
+                columns: {
+                  contactId: true,
+                  id: true,
+                  notificationSentAt: true,
+                  trigger: true,
+                },
+                where: and(
+                  eq(conversationEscalations.clinicId, input.clinicId),
+                  eq(conversationEscalations.sourceMessageId, input.messageId),
+                ),
+              });
+            if (
+              escalation?.contactId !== input.contactId ||
+              escalation?.trigger !== input.trigger
+            ) {
+              throw new Error("La interacción ya inició otro Escalamiento");
+            }
+          }
           if (escalation === undefined) {
             throw new Error("No se pudo crear el Escalamiento de conversación");
           }
@@ -195,13 +225,34 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
             where: eq(clinics.id, input.clinicId),
           });
           return {
-            ...escalation,
+            created,
+            id: escalation.id,
+            notificationSent: escalation.notificationSentAt !== null,
             secretaryPhoneE164:
               clinic?.escalationNotificationsEnabled === true
                 ? clinic.escalationSecretaryPhoneE164
                 : null,
           };
         },
+      );
+    },
+
+    async markConversationEscalationNotificationSent({
+      clinicId,
+      escalationId,
+      sentAt,
+    }) {
+      await inSimulatedWhatsAppClinicTransaction(clinicId, (transaction) =>
+        transaction
+          .update(conversationEscalations)
+          .set({ notificationSentAt: sentAt })
+          .where(
+            and(
+              eq(conversationEscalations.clinicId, clinicId),
+              eq(conversationEscalations.id, escalationId),
+              isNull(conversationEscalations.notificationSentAt),
+            ),
+          ),
       );
     },
 
@@ -221,13 +272,32 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
     async recordUrgencyEvent(input) {
       await inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
-        (transaction) =>
-          transaction.insert(conversationEvents).values({
-            clinicId: input.clinicId,
-            contactId: input.contactId,
-            occurredAt: input.now,
-            type: "urgency-protocol",
-          }),
+        async (transaction) => {
+          const [created] = await transaction
+            .insert(conversationEvents)
+            .values({
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              occurredAt: input.now,
+              sourceMessageId: input.messageId ?? null,
+              type: "urgency-protocol",
+            })
+            .onConflictDoNothing()
+            .returning({ id: conversationEvents.id });
+          if (created !== undefined || input.messageId === undefined) return;
+          const existing = await transaction.query.conversationEvents.findFirst(
+            {
+              columns: { contactId: true, id: true },
+              where: and(
+                eq(conversationEvents.clinicId, input.clinicId),
+                eq(conversationEvents.sourceMessageId, input.messageId),
+              ),
+            },
+          );
+          if (existing?.contactId !== input.contactId) {
+            throw new Error("No se pudo recuperar el Protocolo de urgencia");
+          }
+        },
       );
     },
 
@@ -292,6 +362,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               and(
                 eq(contactPatientLinks.clinicId, input.clinicId),
                 eq(contactPatientLinks.contactId, input.contactId),
+                whatsappManagedPatientLinkCondition(),
               ),
             )
             .then((rows) =>
@@ -374,28 +445,92 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
-          const [patient] = await transaction
+          const [createdPatient] = await transaction
             .insert(patients)
             .values({
               birthDate: input.birthDate,
               clinicId: input.clinicId,
               dui: input.dui,
               name: input.name,
+              registrationMessageId: input.messageId,
             })
+            .onConflictDoNothing()
             .returning({
               birthDate: patients.birthDate,
+              dui: patients.dui,
               id: patients.id,
               name: patients.name,
             });
+          const patient =
+            createdPatient ??
+            (await transaction.query.patients.findFirst({
+              columns: {
+                birthDate: true,
+                dui: true,
+                id: true,
+                name: true,
+              },
+              where: and(
+                eq(patients.clinicId, input.clinicId),
+                eq(patients.registrationMessageId, input.messageId),
+              ),
+            }));
           if (patient?.birthDate == null) {
             throw new Error("No se pudo registrar el Paciente adulto");
           }
-          await transaction.insert(contactPatientLinks).values({
-            clinicId: input.clinicId,
-            contactId: input.contactId,
-            patientId: patient.id,
-            relationship: "contact",
-          });
+          if (createdPatient === undefined) {
+            const originalLink =
+              await transaction.query.contactPatientLinks.findFirst({
+                columns: { contactId: true },
+                where: and(
+                  eq(contactPatientLinks.clinicId, input.clinicId),
+                  eq(contactPatientLinks.patientId, patient.id),
+                ),
+              });
+            if (
+              originalLink !== undefined &&
+              originalLink.contactId !== input.contactId
+            ) {
+              throw new Error(
+                "La interacción de registro pertenece a otro Contacto",
+              );
+            }
+          }
+          if (
+            patient.name !== input.name ||
+            patient.birthDate !== input.birthDate ||
+            patient.dui !== input.dui
+          ) {
+            throw new Error(
+              "La interacción de registro ya pertenece a otro Paciente",
+            );
+          }
+          const [createdLink] = await transaction
+            .insert(contactPatientLinks)
+            .values({
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              patientId: patient.id,
+              relationship: "contact",
+            })
+            .onConflictDoNothing()
+            .returning({ id: contactPatientLinks.id });
+          if (createdLink === undefined) {
+            const existingLink =
+              await transaction.query.contactPatientLinks.findFirst({
+                columns: { relationship: true },
+                where: and(
+                  eq(contactPatientLinks.clinicId, input.clinicId),
+                  eq(contactPatientLinks.contactId, input.contactId),
+                  eq(contactPatientLinks.patientId, patient.id),
+                ),
+              });
+            if (existingLink?.relationship !== "contact") {
+              throw new Error(
+                "La interacción de registro ya tiene otro vínculo",
+              );
+            }
+          }
           return {
             birthDate: patient.birthDate,
             id: patient.id,
@@ -409,29 +544,97 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
-          const [patient] = await transaction
+          const [createdPatient] = await transaction
             .insert(patients)
             .values({
               birthDate: input.birthDate,
               clinicId: input.clinicId,
               name: input.name,
+              registrationMessageId: input.messageId,
             })
+            .onConflictDoNothing()
             .returning({
               birthDate: patients.birthDate,
               id: patients.id,
               name: patients.name,
             });
+          const patient =
+            createdPatient ??
+            (await transaction.query.patients.findFirst({
+              columns: { birthDate: true, id: true, name: true },
+              where: and(
+                eq(patients.clinicId, input.clinicId),
+                eq(patients.registrationMessageId, input.messageId),
+              ),
+            }));
           if (patient?.birthDate == null) {
             throw new Error("No se pudo registrar el Paciente menor");
           }
-          await transaction.insert(contactPatientLinks).values({
-            clinicId: input.clinicId,
-            contactId: input.contactId,
-            guardianDui: input.guardianDui,
-            guardianshipVerificationStatus: "pending",
-            patientId: patient.id,
-            relationship: "tutor",
-          });
+          if (createdPatient === undefined) {
+            const originalLink =
+              await transaction.query.contactPatientLinks.findFirst({
+                columns: { contactId: true },
+                where: and(
+                  eq(contactPatientLinks.clinicId, input.clinicId),
+                  eq(contactPatientLinks.patientId, patient.id),
+                ),
+              });
+            if (
+              originalLink !== undefined &&
+              originalLink.contactId !== input.contactId
+            ) {
+              throw new Error(
+                "La interacción de registro pertenece a otro Contacto",
+              );
+            }
+          }
+          if (
+            patient.name !== input.name ||
+            patient.birthDate !== input.birthDate
+          ) {
+            throw new Error(
+              "La interacción de registro ya pertenece a otro Paciente",
+            );
+          }
+          const [createdLink] = await transaction
+            .insert(contactPatientLinks)
+            .values({
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              guardianDeclaration: input.declaration,
+              guardianDui: input.guardianDui,
+              guardianshipVerificationStatus: "pending",
+              patientId: patient.id,
+              relationship: "tutor",
+            })
+            .onConflictDoNothing()
+            .returning({ id: contactPatientLinks.id });
+          if (createdLink === undefined) {
+            const existingLink =
+              await transaction.query.contactPatientLinks.findFirst({
+                columns: {
+                  guardianDeclaration: true,
+                  guardianDui: true,
+                  guardianshipVerificationStatus: true,
+                  relationship: true,
+                },
+                where: and(
+                  eq(contactPatientLinks.clinicId, input.clinicId),
+                  eq(contactPatientLinks.contactId, input.contactId),
+                  eq(contactPatientLinks.patientId, patient.id),
+                ),
+              });
+            if (
+              existingLink?.relationship !== "tutor" ||
+              existingLink.guardianDeclaration !== input.declaration ||
+              existingLink.guardianDui !== input.guardianDui ||
+              existingLink.guardianshipVerificationStatus !== "pending"
+            ) {
+              throw new Error(
+                "La interacción de registro ya tiene otro vínculo de tutela",
+              );
+            }
+          }
           return {
             birthDate: patient.birthDate,
             id: patient.id,
@@ -572,6 +775,16 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               ),
             });
           if (initialReservation === undefined) return undefined;
+          if (
+            initialReservation.patientId === null ||
+            !(await linkedPatientExists(transaction, {
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              patientId: initialReservation.patientId,
+            }))
+          ) {
+            return undefined;
+          }
           await lockDoctor(transaction, initialReservation.doctorId);
           const [reservation] = await transaction
             .delete(temporaryReservations)
@@ -1128,14 +1341,39 @@ async function linkedPatientExists(
   input: { clinicId: string; contactId: string; patientId: string },
 ) {
   return (
-    (await transaction.query.contactPatientLinks.findFirst({
-      columns: { id: true },
-      where: and(
-        eq(contactPatientLinks.clinicId, input.clinicId),
-        eq(contactPatientLinks.contactId, input.contactId),
-        eq(contactPatientLinks.patientId, input.patientId),
-      ),
-    })) !== undefined
+    (await transaction
+      .select({ id: contactPatientLinks.id })
+      .from(contactPatientLinks)
+      .innerJoin(
+        patients,
+        and(
+          eq(contactPatientLinks.clinicId, patients.clinicId),
+          eq(contactPatientLinks.patientId, patients.id),
+        ),
+      )
+      .where(
+        and(
+          eq(contactPatientLinks.clinicId, input.clinicId),
+          eq(contactPatientLinks.contactId, input.contactId),
+          eq(contactPatientLinks.patientId, input.patientId),
+          whatsappManagedPatientLinkCondition(),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0])) !== undefined
+  );
+}
+
+function whatsappManagedPatientLinkCondition() {
+  return or(
+    and(
+      eq(contactPatientLinks.relationship, "contact"),
+      sql`${patients.birthDate} <= CURRENT_DATE - INTERVAL '18 years'`,
+    ),
+    and(
+      eq(contactPatientLinks.relationship, "tutor"),
+      eq(contactPatientLinks.guardianshipVerificationStatus, "verified"),
+    ),
   );
 }
 

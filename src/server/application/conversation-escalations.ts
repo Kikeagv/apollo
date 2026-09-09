@@ -3,6 +3,7 @@ import { normalizeSecretaryPhoneE164 } from "~/domain/whatsapp-operational-polic
 export type ConversationEscalationTrigger =
   | "human-request"
   | "frustration"
+  | "guardianship-pending"
   | "misunderstanding"
   | "voice-transcription-disabled"
   | "voice-transcription-failed";

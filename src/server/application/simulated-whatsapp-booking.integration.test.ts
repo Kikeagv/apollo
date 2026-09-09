@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { buildWhatsAppConsentPolicy } from "~/domain/whatsapp-consent";
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import { processSimulatedWhatsAppMessage } from "./simulated-whatsapp-booking";
 import { listPendingGuardianshipVerifications } from "./administrative-records";
@@ -20,6 +21,7 @@ import {
   inAppointmentSchedulerTransaction,
   inSimulatedWhatsAppClinicTransaction,
   inSuperadminTransaction,
+  inWhatsAppInboundWorkerTransaction,
 } from "../db/clinic-context";
 import {
   drizzleAppointmentSelfManagementStore,
@@ -43,6 +45,7 @@ import {
   appointments,
   appointmentSelfManagementEscalations,
   apoloSuperadmins,
+  clinicTermsContract,
   clinicUsers,
   clinics,
   conversationEscalations,
@@ -60,7 +63,9 @@ import {
   transactionalDeliveryAttempts,
   transactionalDeliveries,
   user as identities,
+  whatsappContactConsents,
   whatsappConnections,
+  whatsappIdentities,
 } from "../db/schema";
 
 const databaseTest =
@@ -454,7 +459,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
               clinicId: fixture.clinicId,
               contactId: createdTutor.id,
               guardianDui: "01234567-8",
-              guardianshipVerificationStatus: "pending",
+              guardianshipVerificationStatus: "verified",
               patientId: fixture.patientId,
               relationship: "tutor",
             });
@@ -704,12 +709,12 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           message(
             fixture,
             "minor-1",
-            "registrar menor|Lucía Pérez|01234567-8|2018-04-02",
+            "registrar menor|Lucía Pérez|01234567-8|2018-04-02|DECLARO REPRESENTACIÓN AUTORIZADA",
           ),
           drizzleSimulatedWhatsAppBookingStore,
           now,
         );
-        if (registered.kind !== "patient-registered") {
+        if (registered.kind !== "guardianship-pending") {
           throw new Error("No se registró el menor");
         }
         const tasks = await listPendingGuardianshipVerifications(
@@ -718,7 +723,10 @@ describe("Reserva simulada de WhatsApp persistente", () => {
         );
         expect(tasks).toHaveLength(1);
         expect(tasks[0]?.guardianDui).toBe("01234567-8");
-        expect(tasks[0]?.patient.id).toBe(registered.patientId);
+        const registeredPatientId = tasks[0]?.patient.id;
+        if (registeredPatientId === undefined) {
+          throw new Error("No se conservó el menor para verificación");
+        }
         await expect(
           listPendingGuardianshipVerifications(
             fixture.other,
@@ -745,7 +753,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             now,
           );
         await expect(
-          privateMessage("minor-privacy", registered.patientId),
+          privateMessage("minor-privacy", registeredPatientId),
         ).resolves.toEqual(
           await privateMessage(
             "missing-privacy",
@@ -906,6 +914,49 @@ async function createFixture() {
     });
     return { contactId: contact.id, offerId: offer.id, patientId: patient.id };
   });
+  await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+    await transaction.execute(
+      sql`select set_config('app.clinic_id', ${primary.clinicId}, true)`,
+    );
+    const termsContract = await transaction.query.clinicTermsContract.findFirst(
+      {
+        columns: { currentVersion: true },
+        where: eq(clinicTermsContract.id, true),
+      },
+    );
+    if (termsContract === undefined) {
+      throw new Error("Falta el Contrato de términos de prueba");
+    }
+    const policy = buildWhatsAppConsentPolicy(termsContract.currentVersion);
+    const [whatsappIdentity] = await transaction
+      .insert(whatsappIdentities)
+      .values({
+        clinicId: primary.clinicId,
+        contactId: records.contactId,
+        phoneE164: contactPhone,
+        phoneNumberId: `simulated-${primary.clinicId}`,
+        status: "active",
+      })
+      .returning({ id: whatsappIdentities.id });
+    if (whatsappIdentity === undefined) {
+      throw new Error("Falta la Identidad de WhatsApp de prueba");
+    }
+    await transaction.insert(whatsappContactConsents).values({
+      acceptedAt: new Date("2026-08-12T12:00:00.000Z"),
+      acceptedRole: "contact",
+      clinicId: primary.clinicId,
+      contactId: records.contactId,
+      identityId: whatsappIdentity.id,
+      interactionId: `fixture-consent-${primary.clinicId}`,
+      patientId: null,
+      phoneE164: contactPhone,
+      privacyVersion: policy.privacyVersion,
+      provider: "kapso",
+      scope: "channel",
+      termsVersion: policy.termsVersion,
+      textReference: policy.immutableTextReference,
+    });
+  });
   return {
     ...primary,
     ...records,
@@ -941,6 +992,12 @@ async function createFixture() {
                 primary.clinicId,
               ),
             );
+          await transaction
+            .delete(whatsappContactConsents)
+            .where(eq(whatsappContactConsents.clinicId, primary.clinicId));
+          await transaction
+            .delete(whatsappIdentities)
+            .where(eq(whatsappIdentities.clinicId, primary.clinicId));
           await transaction
             .delete(clinics)
             .where(eq(clinics.id, primary.clinicId));

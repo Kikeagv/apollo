@@ -1,4 +1,14 @@
 import type { KapsoInboundMessage } from "~/domain/whatsapp-inbound";
+import {
+  classifyWhatsAppConsentSafeRoute,
+  type WhatsAppConsentSafeRoute,
+} from "~/domain/whatsapp-consent";
+import type { WhatsAppConsentGate } from "./whatsapp-consent";
+
+export type {
+  WhatsAppConsentDecision as WhatsAppInboundConsentDecision,
+  WhatsAppConsentGate as WhatsAppInboundConsentGate,
+} from "./whatsapp-consent";
 
 const SERVICE_WINDOW_MS = 24 * 60 * 60_000;
 
@@ -67,7 +77,7 @@ export type WhatsAppInboundStore = {
     reason: string;
   }): Promise<void>;
   markProcessed(input: {
-    consentReference: string;
+    consentReference: string | null;
     eventId: string;
     leaseToken: string;
     processedAt: Date;
@@ -99,30 +109,23 @@ export type WhatsAppInboundStore = {
   }): Promise<T>;
 };
 
-export type WhatsAppInboundConsentDecision =
-  | { kind: "accepted"; reference: string }
-  | {
-      kind: "pending";
-      prompt?: { buttonLabel?: string; text?: string };
-    }
-  | { kind: "blocked"; reason: string };
-
-export type WhatsAppInboundConsentGate = {
-  check(input: {
-    clinicId: string;
-    contactId: string;
-    identityId: string;
-    messageId: string;
-    now: Date;
-  }): Promise<WhatsAppInboundConsentDecision>;
-};
-
 export type WhatsAppInboundAssistant = {
   processText(input: {
     clinicId: string;
     contactId: string;
     messageId: string;
     now: Date;
+    text: string;
+  }): Promise<{ text: string }>;
+};
+
+export type WhatsAppInboundSafeRoute = {
+  process(input: {
+    clinicId: string;
+    contactId: string;
+    messageId: string;
+    now: Date;
+    route: WhatsAppConsentSafeRoute;
     text: string;
   }): Promise<{ text: string }>;
 };
@@ -148,20 +151,14 @@ export type KapsoInboundWorkerResult = {
   retried: number;
 };
 
-/** Gate seguro hasta que APO-93 conecte el consentimiento vigente y su evidencia. */
-export const pendingWhatsAppConsentGate: WhatsAppInboundConsentGate = {
-  async check() {
-    return { kind: "pending" };
-  },
-};
-
 /** Consume eventos ya autenticados, sin abrir una segunda ruta para el agente. */
 export async function runKapsoInboundWorker(
   input: { limit?: number; now: Date },
   store: WhatsAppInboundStore,
   assistant: WhatsAppInboundAssistant,
-  consentGate: WhatsAppInboundConsentGate,
+  consentGate: WhatsAppConsentGate,
   replySender: WhatsAppInboundReplySender,
+  safeRoute?: WhatsAppInboundSafeRoute,
 ): Promise<KapsoInboundWorkerResult> {
   const events = await store.claimDueMessages({
     limit: input.limit ?? 20,
@@ -186,6 +183,7 @@ export async function runKapsoInboundWorker(
         assistant,
         consentGate,
         replySender,
+        safeRoute,
       });
       result[outcome] += 1;
     } catch (error) {
@@ -206,16 +204,17 @@ export async function runKapsoInboundWorker(
 
 async function processInboundEvent(input: {
   assistant: WhatsAppInboundAssistant;
-  consentGate: WhatsAppInboundConsentGate;
+  consentGate: WhatsAppConsentGate;
   event: WhatsAppInboundEvent;
   now: Date;
   replySender: WhatsAppInboundReplySender;
+  safeRoute?: WhatsAppInboundSafeRoute;
   store: WhatsAppInboundStore;
 }): Promise<"awaitingConsent" | "conflicts" | "ignored" | "processed"> {
   const { event, now, store } = input;
   const leaseToken = requireLeaseToken(event);
 
-  if (!isAssistantEligibleMessage(event)) {
+  if (!isInboundConsentEligibleMessage(event)) {
     await store.markIgnored({
       eventId: event.eventId,
       leaseToken,
@@ -258,93 +257,168 @@ async function processInboundEvent(input: {
     return "ignored";
   }
 
-  const consent = await input.consentGate.check({
+  return store.withConversationLock({
     clinicId: resolved.clinicId,
-    contactId: resolved.contactId,
-    identityId: resolved.identityId,
-    messageId: event.id,
-    now,
-  });
-  if (consent.kind === "blocked") {
-    await store.markIgnored({
-      eventId: event.eventId,
-      leaseToken,
-      processedAt: now,
-      reason: consent.reason,
-    });
-    return "ignored";
-  }
-
-  if (consent.kind === "pending") {
-    await input.replySender.send({
-      buttonLabel: consent.prompt?.buttonLabel ?? "CONTINUAR",
-      clinicId: resolved.clinicId,
-      idempotencyKey: event.id,
-      recipientBusinessScopedUserId: resolved.recipientBusinessScopedUserId,
-      recipientPhoneE164: resolved.recipientPhoneE164,
-      text:
-        consent.prompt?.text ??
-        "Para continuar, revisa el Aviso de privacidad y las condiciones de la Clínica. Pulsa CONTINUAR para aceptar.",
-    });
-    await store.markAwaitingConsent({
-      consentReference: null,
-      eventId: event.eventId,
-      leaseToken,
-      processedAt: now,
-    });
-    return "awaitingConsent";
-  }
-
-  const response = await store.withConversationLock({
-    clinicId: resolved.clinicId,
-    conversationId: event.conversationId,
+    conversationId: `whatsapp-contact:${resolved.contactId}`,
     operation: async () => {
+      const consent = await input.consentGate.check({
+        clinicId: resolved.clinicId,
+        contactId: resolved.contactId,
+        identityId: resolved.identityId,
+        interactiveAction: event.interactiveAction ?? null,
+        messageId: event.id,
+        now,
+        phoneE164: resolved.recipientPhoneE164,
+        text: event.text,
+      });
+      if (consent.kind === "blocked") {
+        await store.markIgnored({
+          eventId: event.eventId,
+          leaseToken,
+          processedAt: now,
+          reason: consent.reason,
+        });
+        return "ignored";
+      }
+
+      if (consent.kind === "pending") {
+        const safeRouteKind = classifyWhatsAppConsentSafeRoute(event.text);
+        if (safeRouteKind !== null) {
+          if (input.safeRoute === undefined) {
+            await store.markIgnored({
+              eventId: event.eventId,
+              leaseToken,
+              processedAt: now,
+              reason: "La ruta segura de consentimiento no está disponible",
+            });
+            return "ignored";
+          }
+          const persistedResponse = await store.getAssistantResponse({
+            eventId: event.eventId,
+            leaseToken,
+          });
+          const response =
+            persistedResponse === null
+              ? await input.safeRoute.process({
+                  clinicId: resolved.clinicId,
+                  contactId: resolved.contactId,
+                  messageId: event.id,
+                  now,
+                  route: safeRouteKind,
+                  text: event.text ?? "",
+                })
+              : { text: persistedResponse };
+          if (persistedResponse === null) {
+            await store.saveAssistantResponse({
+              eventId: event.eventId,
+              leaseToken,
+              responseText: response.text,
+            });
+          }
+          if (response.text.trim() !== "") {
+            await input.replySender.send({
+              clinicId: resolved.clinicId,
+              idempotencyKey: event.id,
+              recipientBusinessScopedUserId:
+                resolved.recipientBusinessScopedUserId,
+              recipientPhoneE164: resolved.recipientPhoneE164,
+              text: response.text,
+            });
+          }
+          await store.markProcessed({
+            consentReference: null,
+            eventId: event.eventId,
+            leaseToken,
+            processedAt: now,
+          });
+          return "processed";
+        }
+        await input.replySender.send({
+          buttonLabel: consent.prompt?.buttonLabel ?? "CONTINUAR",
+          clinicId: resolved.clinicId,
+          idempotencyKey: event.id,
+          recipientBusinessScopedUserId: resolved.recipientBusinessScopedUserId,
+          recipientPhoneE164: resolved.recipientPhoneE164,
+          text:
+            consent.prompt?.text ??
+            "Para continuar, revisa el Aviso de privacidad y las condiciones de la Clínica. Pulsa CONTINUAR para aceptar.",
+        });
+        await store.markAwaitingConsent({
+          consentReference: null,
+          eventId: event.eventId,
+          leaseToken,
+          processedAt: now,
+        });
+        return "awaitingConsent";
+      }
+
+      if (consent.consume) {
+        await store.markProcessed({
+          consentReference: consent.reference,
+          eventId: event.eventId,
+          leaseToken,
+          processedAt: now,
+        });
+        return "processed";
+      }
+
+      if (event.text === null) {
+        await store.markIgnored({
+          eventId: event.eventId,
+          leaseToken,
+          processedAt: now,
+          reason: "El mensaje interactivo no es una acción de consentimiento",
+        });
+        return "ignored";
+      }
+      const text = event.text;
       const persistedResponse = await store.getAssistantResponse({
         eventId: event.eventId,
         leaseToken,
       });
-      if (persistedResponse !== null) return { text: persistedResponse };
-      const generated = await input.assistant.processText({
-        clinicId: resolved.clinicId,
-        contactId: resolved.contactId,
-        messageId: event.id,
-        now,
-        text: event.text,
-      });
-      await store.saveAssistantResponse({
+      const response =
+        persistedResponse === null
+          ? await input.assistant.processText({
+              clinicId: resolved.clinicId,
+              contactId: resolved.contactId,
+              messageId: event.id,
+              now,
+              text,
+            })
+          : { text: persistedResponse };
+      if (persistedResponse === null) {
+        await store.saveAssistantResponse({
+          eventId: event.eventId,
+          leaseToken,
+          responseText: response.text,
+        });
+      }
+      if (response.text.trim() !== "") {
+        await input.replySender.send({
+          clinicId: resolved.clinicId,
+          idempotencyKey: event.id,
+          recipientBusinessScopedUserId: resolved.recipientBusinessScopedUserId,
+          recipientPhoneE164: resolved.recipientPhoneE164,
+          text: response.text,
+        });
+      }
+      await store.markProcessed({
+        consentReference: consent.reference,
         eventId: event.eventId,
         leaseToken,
-        responseText: generated.text,
+        processedAt: now,
       });
-      return generated;
+      return "processed";
     },
   });
-  if (response.text.trim() !== "") {
-    await input.replySender.send({
-      clinicId: resolved.clinicId,
-      idempotencyKey: event.id,
-      recipientBusinessScopedUserId: resolved.recipientBusinessScopedUserId,
-      recipientPhoneE164: resolved.recipientPhoneE164,
-      text: response.text,
-    });
-  }
-  await store.markProcessed({
-    consentReference: consent.reference,
-    eventId: event.eventId,
-    leaseToken,
-    processedAt: now,
-  });
-  return "processed";
 }
 
-function isAssistantEligibleMessage(
-  event: WhatsAppInboundEvent,
-): event is WhatsAppInboundEvent & { text: string } {
+function isInboundConsentEligibleMessage(event: WhatsAppInboundEvent): boolean {
   return (
     event.direction === "inbound" &&
     event.origin === "cloud_api" &&
-    event.type === "text" &&
-    event.text !== null
+    ((event.type === "text" && event.text !== null) ||
+      event.type === "interactive")
   );
 }
 
@@ -352,7 +426,7 @@ function ineligibilityReason(event: WhatsAppInboundEvent) {
   if (event.direction !== "inbound") return "El evento Kapso es saliente";
   if (event.origin !== "cloud_api")
     return `El origen Kapso ${event.origin} no despierta al asistente`;
-  return `El tipo Kapso ${event.type} no es texto procesable`;
+  return `El tipo Kapso ${event.type} no es un mensaje procesable por el gate`;
 }
 
 function requireLeaseToken(event: WhatsAppInboundEvent) {

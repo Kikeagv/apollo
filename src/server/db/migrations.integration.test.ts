@@ -903,8 +903,8 @@ describe("migraciones de PostgreSQL", () => {
             where conrelid = 'pg-drizzle_whatsapp_critical_template'::regclass
               and conname = 'whatsapp_critical_template_status'
           `;
-          expect(templateStatuses[0]?.definition).toContain(
-            "'PENDING', 'APPROVED', 'REJECTED', 'DISABLED'",
+          expect(templateStatuses[0]?.definition).toMatch(
+            /PENDING.*APPROVED.*REJECTED.*DISABLED/,
           );
           const templateCategories = await migrated<
             Array<{ definition: string }>
@@ -965,6 +965,174 @@ describe("migraciones de PostgreSQL", () => {
             { relforcerowsecurity: true, relrowsecurity: true },
             { relforcerowsecurity: true, relrowsecurity: true },
             { relforcerowsecurity: true, relrowsecurity: true },
+          ]);
+
+          const consentTable = await migrated<
+            Array<{ relforcerowsecurity: boolean; relrowsecurity: boolean }>
+          >`
+            select c.relrowsecurity, c.relforcerowsecurity
+            from pg_class c
+            inner join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relname = 'pg-drizzle_whatsapp_contact_consent'
+          `;
+          expect(consentTable).toEqual([
+            { relforcerowsecurity: true, relrowsecurity: true },
+          ]);
+
+          const consentPolicies = await migrated<
+            Array<{ command: "INSERT" | "SELECT"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_contact_consent'
+            order by cmd, policyname
+          `;
+          expect(consentPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "INSERT",
+                name: "whatsapp_contact_consent_worker_append",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_contact_consent_worker_read",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_contact_consent_clinic_owner_read",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_contact_consent_superadmin_read",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_contact_consent_delivery_read",
+              },
+            ]),
+          );
+
+          const consentColumns = await migrated<Array<{ column_name: string }>>`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_contact_consent'
+              and column_name in (
+                'clinic_id',
+                'contact_id',
+                'identity_id',
+                'patient_id',
+                'accepted_role',
+                'privacy_version',
+                'terms_version',
+                'text_reference',
+                'accepted_at',
+                'provider',
+                'interaction_id'
+              )
+            order by column_name
+          `;
+          expect(consentColumns).toEqual([
+            { column_name: "accepted_at" },
+            { column_name: "accepted_role" },
+            { column_name: "clinic_id" },
+            { column_name: "contact_id" },
+            { column_name: "identity_id" },
+            { column_name: "interaction_id" },
+            { column_name: "patient_id" },
+            { column_name: "privacy_version" },
+            { column_name: "provider" },
+            { column_name: "terms_version" },
+            { column_name: "text_reference" },
+          ]);
+
+          const consentIndexes = await migrated<Array<{ indexName: string }>>`
+            select indexname as "indexName"
+            from pg_indexes
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_contact_consent'
+              and indexname in (
+                'whatsapp_contact_consent_channel_version_unique',
+                'whatsapp_contact_consent_current_idx',
+                'whatsapp_contact_consent_interaction_unique'
+              )
+            order by indexname
+          `;
+          expect(consentIndexes).toEqual([
+            { indexName: "whatsapp_contact_consent_channel_version_unique" },
+            { indexName: "whatsapp_contact_consent_current_idx" },
+            { indexName: "whatsapp_contact_consent_interaction_unique" },
+          ]);
+
+          const consentForeignKeys = await migrated<
+            Array<{ constraintName: string }>
+          >`
+            select conname as "constraintName"
+            from pg_constraint
+            where conrelid = 'pg-drizzle_whatsapp_contact_consent'::regclass
+              and conname = 'whatsapp_contact_consent_identity_contact_same_clinic_fk'
+          `;
+          expect(consentForeignKeys).toEqual([
+            {
+              constraintName:
+                "whatsapp_contact_consent_identity_contact_same_clinic_fk",
+            },
+          ]);
+
+          const consentGateIdempotencyIndexes = await migrated<
+            Array<{ indexName: string }>
+          >`
+            select indexname as "indexName"
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname in (
+                'patient_clinic_registration_message_unique',
+                'conversation_escalation_source_message_unique',
+                'conversation_event_source_message_unique'
+              )
+            order by indexname
+          `;
+          expect(consentGateIdempotencyIndexes).toEqual([
+            { indexName: "conversation_escalation_source_message_unique" },
+            { indexName: "conversation_event_source_message_unique" },
+            { indexName: "patient_clinic_registration_message_unique" },
+          ]);
+
+          const consentGateColumns = await migrated<
+            Array<{ table_name: string; column_name: string }>
+          >`
+            select table_name, column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and (
+                (table_name = 'pg-drizzle_patient'
+                  and column_name = 'registration_message_id')
+                or (table_name = 'pg-drizzle_conversation_escalation'
+                  and column_name in ('source_message_id', 'notification_sent_at'))
+                or (table_name = 'pg-drizzle_conversation_event'
+                  and column_name = 'source_message_id')
+              )
+            order by table_name, column_name
+          `;
+          expect(consentGateColumns).toEqual([
+            {
+              column_name: "notification_sent_at",
+              table_name: "pg-drizzle_conversation_escalation",
+            },
+            {
+              column_name: "source_message_id",
+              table_name: "pg-drizzle_conversation_escalation",
+            },
+            {
+              column_name: "source_message_id",
+              table_name: "pg-drizzle_conversation_event",
+            },
+            {
+              column_name: "registration_message_id",
+              table_name: "pg-drizzle_patient",
+            },
           ]);
 
           const inboundPolicies = await migrated<

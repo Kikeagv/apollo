@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import {
   hasWhatsAppIdentityChanged,
@@ -9,15 +9,23 @@ import {
 } from "~/domain/whatsapp-identity";
 import type { KapsoInboundMessage } from "~/domain/whatsapp-inbound";
 import {
+  buildWhatsAppConsentPolicy,
+  WHATSAPP_CONSENT_PROVIDER,
+  type WhatsAppConsentEvidence,
+} from "~/domain/whatsapp-consent";
+import type { WhatsAppConsentStore } from "~/server/application/whatsapp-consent";
+import {
   inWhatsAppInboundWorkerTransaction,
   inWhatsAppWebhookIngressTransaction,
 } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import {
   clinics,
+  clinicTermsContract,
   contacts,
   whatsappConnections,
   whatsappConversationLocks,
+  whatsappContactConsents,
   whatsappIdentities,
   whatsappInboundMessages,
   whatsappInboundReplies,
@@ -37,15 +45,16 @@ const MAX_INBOUND_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 10_000;
 const CONVERSATION_LOCK_WAIT_MS = 30_000;
 
-export type WhatsAppInboundPersistenceStore = WhatsAppInboundStore & {
-  enqueueInbound(input: {
-    idempotencyKey: string;
-    message: KapsoInboundMessage;
-  }): Promise<{ accepted: boolean; eventId: string }>;
-  enqueueReply(
-    input: Parameters<WhatsAppInboundReplySender["send"]>[0],
-  ): Promise<void>;
-};
+export type WhatsAppInboundPersistenceStore = WhatsAppInboundStore &
+  WhatsAppConsentStore & {
+    enqueueInbound(input: {
+      idempotencyKey: string;
+      message: KapsoInboundMessage;
+    }): Promise<{ accepted: boolean; eventId: string }>;
+    enqueueReply(
+      input: Parameters<WhatsAppInboundReplySender["send"]>[0],
+    ): Promise<void>;
+  };
 
 /** Persistencia del webhook y del worker inbound con contextos RLS separados. */
 export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
@@ -69,6 +78,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           phoneE164: message.phoneE164,
           phoneNumberId: message.phoneNumberId,
           rawPayload: message.rawPayload,
+          interactiveAction: message.interactiveAction,
           status: "pending",
           text: message.text,
           type: message.type,
@@ -97,6 +107,130 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         accepted: false,
         eventId: existing[0]?.id ?? "duplicate",
       };
+    });
+  },
+
+  async readCurrentWhatsAppConsentPolicy({ clinicId }) {
+    return inWhatsAppInboundWorkerTransaction(async (transaction) => {
+      await configureWorkerClinic(transaction, clinicId);
+      const contract = await transaction.query.clinicTermsContract.findFirst({
+        columns: { currentVersion: true },
+        where: eq(clinicTermsContract.id, true),
+      });
+      return contract === undefined
+        ? undefined
+        : buildWhatsAppConsentPolicy(contract.currentVersion);
+    });
+  },
+
+  async findLatestWhatsAppConsent({ clinicId, contactId, patientId, scope }) {
+    return inWhatsAppInboundWorkerTransaction(async (transaction) => {
+      await configureWorkerClinic(transaction, clinicId);
+      const [consent] = await transaction
+        .select()
+        .from(whatsappContactConsents)
+        .where(
+          and(
+            eq(whatsappContactConsents.clinicId, clinicId),
+            eq(whatsappContactConsents.contactId, contactId),
+            eq(whatsappContactConsents.scope, scope),
+            patientId === null
+              ? isNull(whatsappContactConsents.patientId)
+              : eq(whatsappContactConsents.patientId, patientId),
+          ),
+        )
+        .orderBy(
+          desc(whatsappContactConsents.acceptedAt),
+          desc(whatsappContactConsents.createdAt),
+          desc(whatsappContactConsents.id),
+        )
+        .limit(1);
+      return consent === undefined ? null : toWhatsAppConsentEvidence(consent);
+    });
+  },
+
+  async recordWhatsAppConsent(input) {
+    return inWhatsAppInboundWorkerTransaction(async (transaction) => {
+      await configureWorkerClinic(transaction, input.clinicId);
+      const contact = await transaction.query.contacts.findFirst({
+        columns: { phoneE164: true },
+        where: and(
+          eq(contacts.clinicId, input.clinicId),
+          eq(contacts.id, input.contactId),
+        ),
+      });
+      if (contact === undefined) {
+        throw new Error("El Contacto de consentimiento no existe");
+      }
+      const [created] = await transaction
+        .insert(whatsappContactConsents)
+        .values({
+          acceptedAt: input.acceptedAt,
+          acceptedRole: input.acceptedRole,
+          clinicId: input.clinicId,
+          contactId: input.contactId,
+          identityId: input.identityId,
+          interactionId: input.interactionId,
+          patientId: input.patientId,
+          phoneE164: input.phoneE164 ?? contact.phoneE164,
+          privacyVersion: input.policy.privacyVersion,
+          provider: WHATSAPP_CONSENT_PROVIDER,
+          scope: input.scope,
+          termsVersion: input.policy.termsVersion,
+          textReference: input.policy.immutableTextReference,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (created !== undefined) return toWhatsAppConsentEvidence(created);
+
+      const [existing] = await transaction
+        .select()
+        .from(whatsappContactConsents)
+        .where(
+          and(
+            eq(whatsappContactConsents.clinicId, input.clinicId),
+            eq(whatsappContactConsents.provider, WHATSAPP_CONSENT_PROVIDER),
+            eq(whatsappContactConsents.interactionId, input.interactionId),
+          ),
+        )
+        .limit(1);
+      if (existing !== undefined) {
+        const evidence = toWhatsAppConsentEvidence(existing);
+        if (!matchesWhatsAppConsentInput(evidence, input)) {
+          throw new Error(
+            "La interacción de consentimiento ya pertenece a otra Identidad o Contacto",
+          );
+        }
+        return evidence;
+      }
+
+      const [current] = await transaction
+        .select()
+        .from(whatsappContactConsents)
+        .where(
+          and(
+            eq(whatsappContactConsents.clinicId, input.clinicId),
+            eq(whatsappContactConsents.contactId, input.contactId),
+            eq(whatsappContactConsents.provider, WHATSAPP_CONSENT_PROVIDER),
+            eq(whatsappContactConsents.scope, input.scope),
+            input.patientId === null
+              ? isNull(whatsappContactConsents.patientId)
+              : eq(whatsappContactConsents.patientId, input.patientId),
+            eq(
+              whatsappContactConsents.privacyVersion,
+              input.policy.privacyVersion,
+            ),
+            eq(whatsappContactConsents.termsVersion, input.policy.termsVersion),
+            eq(
+              whatsappContactConsents.textReference,
+              input.policy.immutableTextReference,
+            ),
+          ),
+        )
+        .orderBy(desc(whatsappContactConsents.acceptedAt))
+        .limit(1);
+      if (current !== undefined) return toWhatsAppConsentEvidence(current);
+      throw new Error("No se pudo recuperar la evidencia de consentimiento");
     });
   },
 
@@ -750,6 +884,7 @@ function toInboundEvent(
     fromWaId: row.fromWaId,
     id: row.messageId,
     idempotencyKey: row.idempotencyKey,
+    interactiveAction: row.interactiveAction,
     leaseToken: row.leaseToken,
     messageTimestamp: row.messageTimestamp,
     origin: row.origin,
@@ -763,4 +898,44 @@ function toInboundEvent(
     type: row.type,
     username: row.username,
   };
+}
+
+function toWhatsAppConsentEvidence(
+  row: typeof whatsappContactConsents.$inferSelect,
+): WhatsAppConsentEvidence {
+  return {
+    acceptedAt: row.acceptedAt,
+    acceptedRole: row.acceptedRole,
+    clinicId: row.clinicId,
+    contactId: row.contactId,
+    id: row.id,
+    identityId: row.identityId,
+    interactionId: row.interactionId,
+    patientId: row.patientId,
+    phoneE164: row.phoneE164,
+    privacyVersion: row.privacyVersion,
+    provider: row.provider,
+    scope: row.scope,
+    termsVersion: row.termsVersion,
+    textReference: row.textReference,
+  };
+}
+
+function matchesWhatsAppConsentInput(
+  evidence: WhatsAppConsentEvidence,
+  input: Parameters<WhatsAppConsentStore["recordWhatsAppConsent"]>[0],
+) {
+  return (
+    evidence.clinicId === input.clinicId &&
+    evidence.contactId === input.contactId &&
+    evidence.identityId === input.identityId &&
+    evidence.patientId === input.patientId &&
+    evidence.scope === input.scope &&
+    evidence.acceptedRole === input.acceptedRole &&
+    (input.phoneE164 === null || evidence.phoneE164 === input.phoneE164) &&
+    evidence.privacyVersion === input.policy.privacyVersion &&
+    evidence.termsVersion === input.policy.termsVersion &&
+    evidence.textReference === input.policy.immutableTextReference &&
+    evidence.provider === WHATSAPP_CONSENT_PROVIDER
+  );
 }

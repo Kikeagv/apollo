@@ -69,6 +69,13 @@ export async function sendSimulatedConversationEscalationNotification(input: {
   recipientPhoneE164: string;
   trigger: ConversationEscalationTrigger;
 }) {
+  if (
+    sentConversationEscalationNotifications.some(
+      (notification) => notification.escalationId === input.escalationId,
+    )
+  ) {
+    return;
+  }
   sentConversationEscalationNotifications.push(input);
 }
 

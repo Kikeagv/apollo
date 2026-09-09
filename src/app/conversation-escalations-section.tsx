@@ -75,6 +75,8 @@ function triggerLabel(trigger: ConversationEscalationTrigger) {
       return "solicitó atención humana";
     case "frustration":
       return "expresó frustración";
+    case "guardianship-pending":
+      return "requiere verificación de representación de Tutor";
     case "misunderstanding":
       return "tuvo dos fallos consecutivos de comprensión";
   }

@@ -12,6 +12,7 @@ export type PendingPriority = "urgent" | "high" | "normal" | "low";
 export type PendingConversationTrigger =
   | "human-request"
   | "frustration"
+  | "guardianship-pending"
   | "misunderstanding"
   | "voice-transcription-disabled"
   | "voice-transcription-failed";

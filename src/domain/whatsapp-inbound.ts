@@ -18,6 +18,7 @@ export type KapsoInboundMessage = {
   eventName: "whatsapp.message.received";
   fromWaId: string | null;
   id: string;
+  interactiveAction?: "continue" | null;
   messageTimestamp: Date | null;
   origin: KapsoInboundMessageOrigin;
   parentBusinessScopedUserId: string | null;
@@ -123,6 +124,7 @@ function parseInboundMessage(
     eventName: "whatsapp.message.received",
     fromWaId,
     id,
+    interactiveAction: parseInteractiveAction(message, type),
     messageTimestamp: parseEpochTimestamp(message.timestamp),
     origin: parseOrigin(readString(kapso.origin)),
     parentBusinessScopedUserId: firstString(
@@ -145,6 +147,36 @@ function parseInboundMessage(
       conversation.username,
     ),
   };
+}
+
+function parseInteractiveAction(
+  message: Record<string, unknown>,
+  type: string,
+): "continue" | null {
+  if (type !== "interactive") return null;
+  const interactive = asRecord(message.interactive);
+  if (readString(interactive.type) !== "button_reply") return null;
+  const buttonReply = asRecord(interactive.button_reply);
+  const button = asRecord(interactive.button);
+  const buttonIds = [
+    buttonReply.id,
+    buttonReply.payload,
+    button.id,
+    button.payload,
+  ]
+    .map(readString)
+    .filter((value): value is string => value !== null);
+  if (
+    buttonIds.some((value) => value === "CONTINUAR" || value === "continue")
+  ) {
+    return "continue";
+  }
+  const buttonTitles = [buttonReply.title, button.title]
+    .map(readString)
+    .filter((value): value is string => value !== null);
+  return buttonIds.length === 0 && buttonTitles.includes("CONTINUAR")
+    ? "continue"
+    : null;
 }
 
 function asRecord(

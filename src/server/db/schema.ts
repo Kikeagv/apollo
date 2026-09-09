@@ -27,6 +27,10 @@ import type {
 import type { PendingPriority } from "~/domain/pending";
 import type { DemoRequestRateLimitScope } from "~/server/application/demo-request";
 import type { WhatsAppIdentityStatus } from "~/domain/whatsapp-identity";
+import type {
+  WhatsAppConsentAcceptedRole,
+  WhatsAppConsentScope,
+} from "~/domain/whatsapp-consent";
 import type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
 import type { ClinicReadinessStatus } from "~/domain/clinic-setup";
 import type {
@@ -1339,6 +1343,11 @@ export const whatsappIdentities = createTable(
   },
   (table) => [
     unique("whatsapp_identity_clinic_id_unique").on(table.clinicId, table.id),
+    uniqueIndex("whatsapp_identity_clinic_contact_id_unique").on(
+      table.clinicId,
+      table.contactId,
+      table.id,
+    ),
     index("whatsapp_identity_clinic_contact_idx").on(
       table.clinicId,
       table.contactId,
@@ -1391,6 +1400,7 @@ export const whatsappInboundMessages = createTable(
       .notNull(),
     type: text("type").notNull(),
     text: text("text"),
+    interactiveAction: text("interactive_action").$type<"continue">(),
     fromWaId: text("from_wa_id"),
     phoneE164: text("phone_e164"),
     businessScopedUserId: text("business_scoped_user_id"),
@@ -1481,6 +1491,10 @@ export const whatsappInboundMessages = createTable(
     check(
       "whatsapp_inbound_message_origin",
       sql`${table.origin} IN ('cloud_api', 'business_app', 'history_sync', 'unknown')`,
+    ),
+    check(
+      "whatsapp_inbound_message_interactive_action",
+      sql`${table.interactiveAction} IS NULL OR ${table.interactiveAction} = 'continue'`,
     ),
   ],
 );
@@ -1584,12 +1598,16 @@ export const patients = createTable(
     /** Las fichas previas a APO-38 no tenían fecha; al editarlas se completa. */
     birthDate: date("birth_date", { mode: "string" }),
     dui: text("dui"),
+    registrationMessageId: text("registration_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
   (table) => [
     unique("patient_clinic_id_unique").on(table.clinicId, table.id),
+    uniqueIndex("patient_clinic_registration_message_unique")
+      .on(table.clinicId, table.registrationMessageId)
+      .where(sql`${table.registrationMessageId} IS NOT NULL`),
     index("patient_clinic_idx").on(table.clinicId),
     index("patient_clinic_name_idx").on(table.clinicId, table.name),
   ],
@@ -1605,6 +1623,7 @@ export const contactPatientLinks = createTable(
     patientId: uuid("patient_id").notNull(),
     relationship: text("relationship").notNull().default("contact"),
     guardianDui: text("guardian_dui"),
+    guardianDeclaration: text("guardian_declaration"),
     guardianshipVerificationStatus: text("guardianship_verification_status"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -1632,6 +1651,96 @@ export const contactPatientLinks = createTable(
       foreignColumns: [patients.clinicId, patients.id],
       name: "contact_patient_link_patient_same_clinic_fk",
     }).onDelete("cascade"),
+  ],
+);
+
+/** Evidencia append-only de aceptación explícita del canal de WhatsApp. */
+export const whatsappContactConsents = createTable(
+  "whatsapp_contact_consent",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id").notNull(),
+    contactId: uuid("contact_id").notNull(),
+    identityId: uuid("identity_id").notNull(),
+    patientId: uuid("patient_id"),
+    phoneE164: text("phone_e164"),
+    scope: text("scope").$type<WhatsAppConsentScope>().notNull(),
+    acceptedRole: text("accepted_role")
+      .$type<WhatsAppConsentAcceptedRole>()
+      .notNull(),
+    privacyVersion: text("privacy_version").notNull(),
+    termsVersion: text("terms_version").notNull(),
+    textReference: text("text_reference").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    provider: text("provider").$type<"kapso">().notNull(),
+    interactionId: text("interaction_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_contact_consent_interaction_unique").on(
+      table.clinicId,
+      table.provider,
+      table.interactionId,
+    ),
+    uniqueIndex("whatsapp_contact_consent_channel_version_unique")
+      .on(
+        table.clinicId,
+        table.contactId,
+        table.privacyVersion,
+        table.termsVersion,
+        table.textReference,
+      )
+      .where(sql`${table.scope} = 'channel'`),
+    index("whatsapp_contact_consent_current_idx").on(
+      table.clinicId,
+      table.contactId,
+      table.scope,
+      table.acceptedAt,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.contactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "whatsapp_contact_consent_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.contactId, table.identityId],
+      foreignColumns: [
+        whatsappIdentities.clinicId,
+        whatsappIdentities.contactId,
+        whatsappIdentities.id,
+      ],
+      name: "whatsapp_contact_consent_identity_contact_same_clinic_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.patientId],
+      foreignColumns: [patients.clinicId, patients.id],
+      name: "whatsapp_contact_consent_patient_same_clinic_fk",
+    }).onDelete("restrict"),
+    check(
+      "whatsapp_contact_consent_scope",
+      sql`(
+        (${table.scope} = 'channel' AND ${table.patientId} IS NULL)
+        OR (${table.scope} = 'patient' AND ${table.patientId} IS NOT NULL)
+      )`,
+    ),
+    check(
+      "whatsapp_contact_consent_role",
+      sql`${table.acceptedRole} IN ('adult-patient', 'contact', 'tutor')`,
+    ),
+    check(
+      "whatsapp_contact_consent_provider",
+      sql`${table.provider} = 'kapso'`,
+    ),
+    check(
+      "whatsapp_contact_consent_reference",
+      sql`btrim(${table.textReference}) <> ''`,
+    ),
+    check(
+      "whatsapp_contact_consent_interaction",
+      sql`btrim(${table.interactionId}) <> ''`,
+    ),
   ],
 );
 
@@ -1668,6 +1777,10 @@ export const conversationEscalations = createTable(
     clinicId: uuid("clinic_id").notNull(),
     contactId: uuid("contact_id").notNull(),
     trigger: text("trigger").$type<ConversationEscalationTrigger>().notNull(),
+    sourceMessageId: text("source_message_id"),
+    notificationSentAt: timestamp("notification_sent_at", {
+      withTimezone: true,
+    }),
     priority: text("priority")
       .$type<PendingPriority>()
       .default("high")
@@ -1683,6 +1796,9 @@ export const conversationEscalations = createTable(
       table.clinicId,
       table.createdAt,
     ),
+    uniqueIndex("conversation_escalation_source_message_unique")
+      .on(table.clinicId, table.sourceMessageId)
+      .where(sql`${table.sourceMessageId} IS NOT NULL`),
     foreignKey({
       columns: [table.clinicId, table.contactId],
       foreignColumns: [contacts.clinicId, contacts.id],
@@ -1704,12 +1820,16 @@ export const conversationEvents = createTable(
     clinicId: uuid("clinic_id").notNull(),
     contactId: uuid("contact_id").notNull(),
     type: text("type").$type<"urgency-protocol">().notNull(),
+    sourceMessageId: text("source_message_id"),
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
   (table) => [
     index("conversation_event_clinic_idx").on(table.clinicId, table.occurredAt),
+    uniqueIndex("conversation_event_source_message_unique")
+      .on(table.clinicId, table.sourceMessageId)
+      .where(sql`${table.sourceMessageId} IS NOT NULL`),
     foreignKey({
       columns: [table.clinicId, table.contactId],
       foreignColumns: [contacts.clinicId, contacts.id],

@@ -463,6 +463,13 @@
       "when": 1788904800000,
       "tag": "0066_apo87_whatsapp_inbound_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1788969600000,
+      "tag": "0067_apo93_whatsapp_consent_gate",
+      "breakpoints": true
     }
   ]
 }

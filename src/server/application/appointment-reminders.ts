@@ -20,6 +20,12 @@ export type AppointmentReminderCheckpoint =
   (typeof appointmentReminderCheckpoints)[number];
 
 export type AppointmentReminderStore = {
+  hasCurrentWhatsAppConsent(input: {
+    clinicId: string;
+    contactId: string;
+    identityId: string;
+    now: Date;
+  }): Promise<boolean>;
   listReminderRecipients(input: {
     appointmentId: string;
     checkpoint: AppointmentReminderCheckpoint;
@@ -94,11 +100,24 @@ export async function sendAppointmentReminder(
   store: AppointmentReminderStore,
   sender: AppointmentReminderSender | WhatsAppProvider,
 ) {
-  const recipients = await store.listReminderRecipients(input);
-  if (recipients === undefined) {
+  const candidates = await store.listReminderRecipients(input);
+  if (candidates === undefined) {
     throw new Error(
       "La Cita no existe o no está disponible para recordatorios",
     );
+  }
+  const recipients = [];
+  for (const candidate of candidates) {
+    if (
+      await store.hasCurrentWhatsAppConsent({
+        clinicId: input.clinicId,
+        contactId: candidate.id,
+        identityId: input.identityId,
+        now: input.now,
+      })
+    ) {
+      recipients.push(candidate);
+    }
   }
   for (const recipient of recipients) {
     let result: "sent" | "failed" = "sent";

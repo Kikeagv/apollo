@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createInMemorySimulatedWhatsAppBookingStore,
+  processWhatsAppConsentSafeRoute,
   processSimulatedWhatsAppVoiceNote,
   processSimulatedWhatsAppMessage,
 } from "./simulated-whatsapp-booking";
@@ -635,7 +636,7 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
     expect(store.reservations).toHaveLength(1);
   });
 
-  it("registra un menor con el DUI de su Tutor y permite reservarlo", async () => {
+  it("requiere declaración y verificación de tutela antes de revelar o reservar un menor", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
       contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
@@ -658,37 +659,29 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
       {
         from: "+50370000002",
         id: "message-minor-1",
-        text: "registrar menor|Lucía Pérez|01234567-8|2018-04-02",
+        text: "registrar menor|Lucía Pérez|01234567-8|2018-04-02|DECLARO REPRESENTACIÓN AUTORIZADA",
         to: "+50370000001",
       },
       store,
       now,
     );
 
-    expect(registration).toMatchObject({ kind: "patient-registered" });
-    const patientId =
-      registration.kind === "patient-registered" ? registration.patientId : "";
+    expect(registration).toMatchObject({ kind: "guardianship-pending" });
+    expect(registration.text).not.toContain("Lucía");
+    expect(registration.text).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}/i);
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "guardianship-pending" },
+    ]);
     await processSimulatedWhatsAppMessage(
       {
         from: "+50370000002",
         id: "message-minor-2",
-        text: `paciente ${patientId}`,
+        text: "info",
         to: "+50370000001",
       },
       store,
       now,
     );
-    await processSimulatedWhatsAppMessage(
-      {
-        from: "+50370000002",
-        id: "message-minor-3",
-        text: "opciones offer-1 2026-08-17",
-        to: "+50370000001",
-      },
-      store,
-      now,
-    );
-
     await expect(
       processSimulatedWhatsAppMessage(
         {
@@ -700,7 +693,269 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
         store,
         now,
       ),
-    ).resolves.toMatchObject({ kind: "reservation-held" });
+    ).resolves.toMatchObject({ kind: "conversation-silenced" });
+    expect(store.reservations).toHaveLength(0);
+  });
+
+  it("permite al Tutor verificado gestionar al menor, pero una tutela pendiente queda fuera de la Agenda", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      offers: [
+        {
+          doctorId: "doctor-1",
+          doctorName: "Dra. Sol",
+          id: "offer-1",
+          priceUsd: "25.00",
+          serviceName: "Consulta",
+        },
+      ],
+      options: [new Date("2026-08-17T14:00:00.000Z")],
+      patients: [
+        { birthDate: "2018-04-02", id: "minor-1", name: "Lucía Pérez" },
+      ],
+      links: [
+        {
+          contactId: "contact-1",
+          guardianDui: "01234567-8",
+          guardianshipVerificationStatus: "verified",
+          patientId: "minor-1",
+          relationship: "tutor",
+        },
+      ],
+    });
+    const now = new Date("2026-08-12T14:00:00.000Z");
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "verified-minor-1",
+          text: "paciente minor-1",
+          to: "+50370000001",
+        },
+        store,
+        now,
+      ),
+    ).resolves.toMatchObject({ kind: "patient-selected" });
+  });
+
+  it("procesa la salida urgente pendiente sin habilitar la Agenda", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      offers: [],
+      options: [],
+      patients: [],
+      links: [],
+    });
+
+    await expect(
+      processWhatsAppConsentSafeRoute(
+        {
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+          messageId: "safe-urgency-existing",
+          route: "urgency",
+          text: "Tengo una urgencia",
+        },
+        store,
+        new Date("2026-08-12T14:00:00.000Z"),
+      ),
+    ).resolves.toEqual({
+      kind: "urgent-protocol",
+      text: "Si es una emergencia médica, llame al 911 ahora.",
+    });
+    expect(store.conversationEvents).toEqual([
+      { contactId: "contact-1", type: "urgency-protocol" },
+    ]);
+    expect(store.reservations).toHaveLength(0);
+  });
+
+  it("no duplica el Protocolo de urgencia si falla guardar la conversación y llega el mismo mensaje", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      offers: [],
+      options: [],
+      patients: [],
+      links: [],
+    });
+    const saveConversation = store.saveConversation.bind(store);
+    let failOnce = true;
+    store.saveConversation = async (input) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("fallo transitorio");
+      }
+      await saveConversation(input);
+    };
+    const input = {
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      messageId: "safe-urgency-1",
+      route: "urgency" as const,
+      text: "Tengo una urgencia",
+    };
+
+    await expect(processWhatsAppConsentSafeRoute(input, store)).rejects.toThrow(
+      "fallo transitorio",
+    );
+    await expect(
+      processWhatsAppConsentSafeRoute(input, store),
+    ).resolves.toEqual({
+      kind: "urgent-protocol",
+      text: "Si es una emergencia médica, llame al 911 ahora.",
+    });
+    expect(store.conversationEvents).toHaveLength(1);
+  });
+
+  it("no duplica un registro de menor si falla el Escalamiento y llega el mismo mensaje", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      offers: [],
+      options: [],
+      patients: [],
+      links: [],
+    });
+    const createEscalation = store.createConversationEscalation.bind(store);
+    let failOnce = true;
+    store.createConversationEscalation = async (input) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("fallo transitorio");
+      }
+      return createEscalation(input);
+    };
+    const input = {
+      from: "+50370000002",
+      id: "minor-registration-1",
+      text: "registrar menor|Lucía Pérez|01234567-8|2018-04-02|DECLARO REPRESENTACIÓN AUTORIZADA",
+      to: "+50370000001",
+    };
+
+    await expect(processSimulatedWhatsAppMessage(input, store)).rejects.toThrow(
+      "fallo transitorio",
+    );
+    await expect(
+      processSimulatedWhatsAppMessage(input, store),
+    ).resolves.toMatchObject({
+      kind: "guardianship-pending",
+    });
+    expect(store.patients).toHaveLength(1);
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "guardianship-pending" },
+    ]);
+  });
+
+  it("reintenta el aviso de atención humana si el proveedor falla antes de guardar la conversación", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        escalationNotificationsEnabled: true,
+        escalationSecretaryPhoneE164: "+50370000003",
+        id: "clinic-1",
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      offers: [],
+      options: [],
+      patients: [],
+      links: [],
+    });
+    let attempts = 0;
+    store.notifySecretaryOfConversationEscalation = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("proveedor no disponible");
+    };
+    const input = {
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      messageId: "safe-human-retry-1",
+      route: "human-request" as const,
+      text: "Quiero hablar con una persona",
+    };
+
+    await expect(processWhatsAppConsentSafeRoute(input, store)).rejects.toThrow(
+      "proveedor no disponible",
+    );
+    await expect(
+      processWhatsAppConsentSafeRoute(input, store),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+    expect(attempts).toBe(2);
+  });
+
+  it("no duplica el aviso humano si la conversación falla después de notificar", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        escalationNotificationsEnabled: true,
+        escalationSecretaryPhoneE164: "+50370000003",
+        id: "clinic-1",
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      offers: [],
+      options: [],
+      patients: [],
+      links: [],
+    });
+    const saveConversation = store.saveConversation.bind(store);
+    const attempts: string[] = [];
+    let failOnce = true;
+    store.notifySecretaryOfConversationEscalation = async (input) => {
+      attempts.push(input.escalationId);
+    };
+    store.saveConversation = async (input) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("fallo transitorio");
+      }
+      await saveConversation(input);
+    };
+    const input = {
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      messageId: "safe-human-once-1",
+      route: "human-request" as const,
+      text: "Quiero hablar con una persona",
+    };
+
+    await expect(processWhatsAppConsentSafeRoute(input, store)).rejects.toThrow(
+      "fallo transitorio",
+    );
+    await expect(
+      processWhatsAppConsentSafeRoute(input, store),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+    expect(attempts).toHaveLength(1);
+  });
+
+  it("deriva una solicitud de atención humana pendiente sin entregar datos al diálogo administrativo", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      offers: [],
+      options: [],
+      patients: [],
+      links: [],
+    });
+
+    await expect(
+      processWhatsAppConsentSafeRoute(
+        {
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+          messageId: "safe-human-existing",
+          route: "human-request",
+          text: "Quiero hablar con una persona",
+        },
+        store,
+        new Date("2026-08-12T14:00:00.000Z"),
+      ),
+    ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "human-request" },
+    ]);
+    expect(store.reservations).toHaveLength(0);
   });
 
   it("no revela a un Contacto no vinculado si un menor existe", async () => {
@@ -741,6 +996,41 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
     await expect(message("message-privacy-1", "minor-1")).resolves.toEqual(
       await message("message-privacy-2", "patient-that-does-not-exist"),
     );
+  });
+
+  it("no permite gestionar a un menor con un vínculo de Contacto sin tutela verificada", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [
+        {
+          contactId: "contact-1",
+          patientId: "minor-1",
+          relationship: "contact",
+        },
+      ],
+      offers: [],
+      options: [],
+      patients: [
+        { birthDate: "2018-04-02", id: "minor-1", name: "Lucía Pérez" },
+      ],
+    });
+
+    await expect(
+      processSimulatedWhatsAppMessage(
+        {
+          from: "+50370000002",
+          id: "minor-contact-link",
+          text: "paciente minor-1",
+          to: "+50370000001",
+        },
+        store,
+        new Date("2026-08-12T14:00:00.000Z"),
+      ),
+    ).resolves.toMatchObject({
+      kind: "patient-selection-required",
+      patients: [],
+    });
   });
 
   it("solo acepta el registro de menor cuando la fecha prueba que aún es menor", async () => {

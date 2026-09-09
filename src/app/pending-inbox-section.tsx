@@ -563,6 +563,8 @@ function conversationTriggerLabel(trigger: PendingConversationTrigger) {
       return "La persona solicitó atención humana.";
     case "frustration":
       return "La persona expresó frustración.";
+    case "guardianship-pending":
+      return "La representación autorizada de un Tutor requiere verificación.";
     case "misunderstanding":
       return "Se produjeron dos fallos consecutivos de comprensión.";
     case "voice-transcription-disabled":

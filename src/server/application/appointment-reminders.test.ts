@@ -23,6 +23,9 @@ describe("recordatorios de Citas con Tutor", () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const recordDelivery = vi.fn().mockResolvedValue(undefined);
     const store = {
+      async hasCurrentWhatsAppConsent() {
+        return true;
+      },
       async listReminderRecipients() {
         return [author, tutor];
       },
@@ -51,6 +54,39 @@ describe("recordatorios de Citas con Tutor", () => {
         result: "sent",
       }),
     );
+  });
+
+  it("no envía a un Contacto que no tiene consentimiento vigente", async () => {
+    const recipient = {
+      id: "contact-without-consent",
+      name: "Ana",
+      phoneE164: "+50370000002",
+    };
+    const send = vi.fn().mockResolvedValue(undefined);
+    const store = {
+      async hasCurrentWhatsAppConsent() {
+        return false;
+      },
+      async listReminderRecipients() {
+        return [recipient];
+      },
+      recordReminderDelivery: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(
+      sendAppointmentReminder(
+        {
+          appointmentId: "appointment-1",
+          checkpoint: "24h",
+          clinicId: "clinic-1",
+          identityId: "operator-1",
+          now: new Date("2026-08-16T14:00:00.000Z"),
+        },
+        store,
+        { send },
+      ),
+    ).resolves.toEqual({ recipients: [] });
+    expect(send).not.toHaveBeenCalled();
   });
 });
 
@@ -82,6 +118,9 @@ describe("planificador de Citas", () => {
       async listReminderRecipients() {
         calls.push("reminder");
         return [{ id: "contact-1", name: "Ana", phoneE164: "+50370000001" }];
+      },
+      async hasCurrentWhatsAppConsent() {
+        return true;
       },
       recordReminderDelivery: vi.fn().mockResolvedValue(undefined),
     };

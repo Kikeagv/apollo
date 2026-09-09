@@ -14,6 +14,7 @@ import {
   inAppointmentSchedulerTransaction,
   inClinicTransaction,
 } from "~/server/db/clinic-context";
+import { hasCurrentWhatsAppConsent } from "~/server/db/whatsapp-consent-query";
 import type { db } from "~/server/db";
 import {
   appointmentEvents,
@@ -37,6 +38,17 @@ const LEASE_MS = 10 * 60_000;
 const RETAIN_MS = 365 * 24 * HOUR_MS;
 const REMINDER_CATCH_UP_MS = 15 * 60_000;
 
+export function shouldSuppressWhatsAppReminder(input: {
+  hasCurrentConsent: boolean;
+  kind: TransactionalDelivery["kind"];
+  recipientContactId: string | null;
+}) {
+  return (
+    input.kind === "appointment-reminder" &&
+    (input.recipientContactId === null || !input.hasCurrentConsent)
+  );
+}
+
 /** Persistencia del outbox y sus concesiones, siempre bajo RLS del worker. */
 export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
   async claimReadyDeliveries({ now }) {
@@ -58,6 +70,46 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
         );
       const claimed: TransactionalDelivery[] = [];
       for (const candidate of candidates) {
+        const hasCurrentConsent =
+          candidate.kind !== "appointment-reminder" ||
+          (candidate.recipientContactId !== null &&
+            (await hasCurrentWhatsAppConsent(transaction, {
+              clinicId: candidate.clinicId,
+              contactId: candidate.recipientContactId,
+              now,
+            })));
+        if (
+          shouldSuppressWhatsAppReminder({
+            hasCurrentConsent,
+            kind: candidate.kind,
+            recipientContactId: candidate.recipientContactId,
+          })
+        ) {
+          await transaction
+            .update(transactionalDeliveries)
+            .set({
+              lastError: "Consentimiento de WhatsApp no vigente",
+              leaseExpiresAt: null,
+              status: "suppressed",
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(transactionalDeliveries.id, candidate.id),
+                or(
+                  and(
+                    eq(transactionalDeliveries.status, "pending"),
+                    lte(transactionalDeliveries.nextAttemptAt, now),
+                  ),
+                  and(
+                    eq(transactionalDeliveries.status, "processing"),
+                    lte(transactionalDeliveries.leaseExpiresAt, now),
+                  ),
+                ),
+              ),
+            );
+          continue;
+        }
         const [delivery] = await transaction
           .update(transactionalDeliveries)
           .set({
@@ -250,6 +302,15 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
         if (!dueNow && !preparingFutureCheckpoint) continue;
         const recipients = await reminderRecipients(transaction, appointment);
         for (const recipient of recipients) {
+          if (
+            !(await hasCurrentWhatsAppConsent(transaction, {
+              clinicId: appointment.clinicId,
+              contactId: recipient.id,
+              now: input.now,
+            }))
+          ) {
+            continue;
+          }
           const [inserted] = await transaction
             .insert(transactionalDeliveries)
             .values({
@@ -461,6 +522,13 @@ async function reminderRecipients(
     })
     .from(contactPatientLinks)
     .innerJoin(
+      patients,
+      and(
+        eq(contactPatientLinks.clinicId, patients.clinicId),
+        eq(contactPatientLinks.patientId, patients.id),
+      ),
+    )
+    .innerJoin(
       contacts,
       and(
         eq(contactPatientLinks.clinicId, contacts.clinicId),
@@ -471,6 +539,7 @@ async function reminderRecipients(
       and(
         eq(contactPatientLinks.clinicId, appointment.clinicId),
         eq(contactPatientLinks.patientId, appointment.patientId!),
+        whatsAppManagedPatientLinkCondition(),
         appointment.origin === "manual"
           ? undefined
           : or(
@@ -484,6 +553,19 @@ async function reminderRecipients(
             ),
       ),
     );
+}
+
+function whatsAppManagedPatientLinkCondition() {
+  return or(
+    and(
+      eq(contactPatientLinks.relationship, "contact"),
+      sql`${patients.birthDate} <= CURRENT_DATE - INTERVAL '18 years'`,
+    ),
+    and(
+      eq(contactPatientLinks.relationship, "tutor"),
+      eq(contactPatientLinks.guardianshipVerificationStatus, "verified"),
+    ),
+  );
 }
 
 async function enqueueDailyAgendas(

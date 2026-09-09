@@ -131,4 +131,96 @@ describe("payloads entrantes de Kapso", () => {
     expect(parsed[0]).toMatchObject({ direction: "outbound" });
     expect(parsed[0]?.text).toBe("info");
   });
+
+  it("normaliza el botón interactivo aprobado sin tratar otros botones como consentimiento", () => {
+    const approved = parseKapsoInboundMessagePayload(
+      message({
+        message: {
+          ...message().message,
+          id: "wamid.continue",
+          type: "interactive",
+          text: undefined,
+          interactive: {
+            type: "button_reply",
+            button_reply: { id: "continue", title: "CONTINUAR" },
+          },
+        },
+      }),
+    );
+    expect(approved[0]).toMatchObject({
+      interactiveAction: "continue",
+      text: null,
+      type: "interactive",
+    });
+
+    const other = parseKapsoInboundMessagePayload(
+      message({
+        message: {
+          ...message().message,
+          id: "wamid.other-button",
+          type: "interactive",
+          text: undefined,
+          interactive: {
+            type: "button_reply",
+            button_reply: { id: "CANCELAR", title: "CANCELAR" },
+          },
+        },
+      }),
+    );
+    expect(other[0]?.interactiveAction).toBeNull();
+  });
+
+  it("ignora campos de botón fuera de un mensaje interactivo y no mezcla título con id", () => {
+    const textWithResidualButton = parseKapsoInboundMessagePayload(
+      message({
+        message: {
+          ...message().message,
+          button_id: "CONTINUAR",
+        },
+      }),
+    );
+    expect(textWithResidualButton[0]?.interactiveAction).toBeNull();
+
+    const missingInteractiveSubtype = parseKapsoInboundMessagePayload(
+      message({
+        message: {
+          ...message().message,
+          type: "interactive",
+          text: undefined,
+          button_id: "CONTINUAR",
+        },
+      }),
+    );
+    expect(missingInteractiveSubtype[0]?.interactiveAction).toBeNull();
+
+    const mismatchedInteractive = parseKapsoInboundMessagePayload(
+      message({
+        message: {
+          ...message().message,
+          type: "interactive",
+          text: undefined,
+          interactive: {
+            type: "button_reply",
+            button_reply: { id: "CANCELAR", title: "CONTINUAR" },
+          },
+        },
+      }),
+    );
+    expect(mismatchedInteractive[0]?.interactiveAction).toBeNull();
+
+    const listReply = parseKapsoInboundMessagePayload(
+      message({
+        message: {
+          ...message().message,
+          type: "interactive",
+          text: undefined,
+          interactive: {
+            list_reply: { id: "continue", title: "CONTINUAR" },
+            type: "list_reply",
+          },
+        },
+      }),
+    );
+    expect(listReply[0]?.interactiveAction).toBeNull();
+  });
 });

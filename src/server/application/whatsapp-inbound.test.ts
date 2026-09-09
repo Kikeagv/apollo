@@ -27,6 +27,7 @@ function event(
     eventId: "queue-1",
     id: "message-1",
     idempotencyKey: "request-1",
+    interactiveAction: null,
     leaseToken: "lease-1",
     messageTimestamp: new Date("2026-09-08T11:59:00.000Z"),
     origin: "cloud_api",
@@ -85,8 +86,12 @@ function fakeStore(events: WhatsAppInboundEvent[]) {
   const scheduleRetry = vi.fn<WhatsAppInboundStore["scheduleRetry"]>();
   const saveAssistantResponse =
     vi.fn<WhatsAppInboundStore["saveAssistantResponse"]>();
+  const conversationLockKeys: Array<string | null> = [];
   const withConversationLock: WhatsAppInboundStore["withConversationLock"] =
-    async ({ operation }) => operation();
+    async ({ conversationId, operation }) => {
+      conversationLockKeys.push(conversationId);
+      return operation();
+    };
   const store: WhatsAppInboundStore = {
     claimDueMessages,
     getAssistantResponse,
@@ -105,6 +110,7 @@ function fakeStore(events: WhatsAppInboundEvent[]) {
     markConflict,
     markIgnored,
     markProcessed,
+    conversationLockKeys,
     outcomes,
     resolveMessage,
     saveAssistantResponse,
@@ -277,6 +283,111 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
     const awaitingCall = markAwaitingConsent.mock.calls[0]?.[0];
     if (awaitingCall === undefined) throw new Error("Falta cerrar el evento");
     expect(awaitingCall.eventId).toBe("queue-1");
+  });
+
+  it("mantiene pendiente un botón interactivo distinto de CONTINUAR", async () => {
+    const fake = fakeStore([
+      event({ id: "other-button-1", text: null, type: "interactive" }),
+    ]);
+    const acceptedAssistant = assistant();
+    const check = vi
+      .fn<WhatsAppInboundConsentGate["check"]>()
+      .mockResolvedValue({ kind: "pending" });
+    const send = vi.fn<WhatsAppInboundReplySender["send"]>();
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        acceptedAssistant,
+        { check },
+        { send },
+      ),
+    ).resolves.toMatchObject({ awaitingConsent: 1 });
+
+    expect(check).toHaveBeenCalled();
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ buttonLabel: "CONTINUAR" }),
+    );
+  });
+
+  it("consume CONTINUAR sin entregar la respuesta al asistente", async () => {
+    const fake = fakeStore([event({ id: "continue-1", text: "CONTINUAR" })]);
+    const acceptedAssistant = assistant();
+    const send = vi.fn<WhatsAppInboundReplySender["send"]>();
+    const consentGate: WhatsAppInboundConsentGate = {
+      check: vi.fn().mockResolvedValue({
+        consume: true,
+        kind: "accepted",
+        reference: "consent-1",
+      }),
+    };
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        acceptedAssistant,
+        consentGate,
+        { send },
+      ),
+    ).resolves.toMatchObject({ processed: 1 });
+
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(fake.markProcessed).toHaveBeenCalledWith({
+      consentReference: "consent-1",
+      eventId: "queue-1",
+      leaseToken: "lease-1",
+      processedAt: NOW,
+    });
+    expect(fake.conversationLockKeys).toEqual(["whatsapp-contact:contact-1"]);
+  });
+
+  it("mantiene urgencia y atención humana en una ruta segura sin llamar al asistente mientras el gate está pendiente", async () => {
+    const fake = fakeStore([
+      event({ id: "urgent-1", text: "Tengo una urgencia" }),
+    ]);
+    const acceptedAssistant = assistant();
+    const safeRoute = {
+      process: vi.fn().mockResolvedValue({
+        text: "Si es una emergencia médica, llame al 911 ahora.",
+      }),
+    };
+    const consentGate: WhatsAppInboundConsentGate = {
+      check: vi.fn().mockResolvedValue({ kind: "pending" }),
+    };
+    const send = vi.fn<WhatsAppInboundReplySender["send"]>();
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        acceptedAssistant,
+        consentGate,
+        { send },
+        safeRoute,
+      ),
+    ).resolves.toMatchObject({ processed: 1 });
+
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+    expect(safeRoute.process).toHaveBeenCalledWith(
+      expect.objectContaining({ route: "urgency", text: "Tengo una urgencia" }),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Si es una emergencia médica, llame al 911 ahora.",
+      }),
+    );
+    expect(fake.saveAssistantResponse).toHaveBeenCalledWith({
+      eventId: "queue-1",
+      leaseToken: "lease-1",
+      responseText: "Si es una emergencia médica, llame al 911 ahora.",
+    });
+    expect(fake.markProcessed).toHaveBeenCalledWith(
+      expect.objectContaining({ consentReference: null }),
+    );
   });
 
   it.each([

@@ -1,9 +1,10 @@
 import { env } from "~/env";
+import { runKapsoInboundWorker } from "~/server/application/whatsapp-inbound";
 import {
-  pendingWhatsAppConsentGate,
-  runKapsoInboundWorker,
-} from "~/server/application/whatsapp-inbound";
-import { processWhatsAppTextForContact } from "~/server/application/simulated-whatsapp-booking";
+  processWhatsAppConsentSafeRoute,
+  processWhatsAppTextForContact,
+} from "~/server/application/simulated-whatsapp-booking";
+import { createWhatsAppConsentGate } from "~/server/application/whatsapp-consent";
 import { drizzleSimulatedWhatsAppBookingStore } from "~/server/db/simulated-whatsapp-booking-store";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
 import { requireWhatsAppConnectionReady } from "~/server/db/whatsapp-connection-store";
@@ -35,8 +36,22 @@ export async function POST(request: Request) {
         return { text: response.text };
       },
     },
-    pendingWhatsAppConsentGate,
+    createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
     createKapsoInboundReplySender(),
+    {
+      process: async (input) => {
+        await requireWhatsAppConnectionReady({
+          clinicId: input.clinicId,
+          provider: "kapso",
+        });
+        const response = await processWhatsAppConsentSafeRoute(
+          input,
+          drizzleSimulatedWhatsAppBookingStore,
+          input.now,
+        );
+        return { text: response.text };
+      },
+    },
   );
   return Response.json(result);
 }
