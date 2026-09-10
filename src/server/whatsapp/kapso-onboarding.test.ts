@@ -91,6 +91,31 @@ describe("adaptador de onboarding de Kapso", () => {
     );
   });
 
+  it("rechaza un customer que Kapso devuelve con otro identificador externo", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              external_customer_id: "praxia-clinic-other",
+              id: "kapso-customer-other",
+              name: "Otra Clínica",
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.findCustomerByExternalId("praxia-clinic-clinic-1"),
+    ).rejects.toThrow("customer distinto");
+  });
+
   it("lee asociaciones de números sin traer tokens ni credenciales", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
@@ -315,6 +340,88 @@ describe("adaptador de onboarding de Kapso", () => {
     );
   });
 
+  it("envía el mismo número al reconectar una configuración productiva", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            created_at: "2026-09-07T12:00:00.000Z",
+            expires_at: "2026-10-07T12:00:00.000Z",
+            id: "setup-link-reconnect",
+            status: "active",
+            url: "https://app.kapso.ai/whatsapp/setup/reconnect",
+            whatsapp_setup_error: null,
+            whatsapp_setup_status: "pending",
+          },
+        }),
+        { status: 201 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await provider.createSetupLink({
+      allowedOrigin: "https://app.usepraxia.com",
+      customerId: "kapso-customer-1",
+      failureRedirectUrl: "https://app.usepraxia.com/configuracion/whatsapp",
+      reconnectPhoneNumber: "+50370000000",
+      successRedirectUrl: "https://app.usepraxia.com/configuracion/whatsapp",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.kapso.ai/platform/v1/customers/kapso-customer-1/setup_links",
+      expect.objectContaining({
+        body: JSON.stringify({
+          setup_link: {
+            allowed_connection_types: ["coexistence"],
+            allowed_origins: ["https://app.usepraxia.com"],
+            failure_redirect_url:
+              "https://app.usepraxia.com/configuracion/whatsapp",
+            language: "es",
+            meta_billing_mode: "partner_managed",
+            provision_phone_number: false,
+            reconnect_phone_number: "+50370000000",
+            success_redirect_url:
+              "https://app.usepraxia.com/configuracion/whatsapp",
+          },
+        }),
+        method: "POST",
+      }),
+    );
+  });
+
+  it("normaliza processing como estado pendiente de provisión", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              created_at: "2026-09-07T12:00:00.000Z",
+              expires_at: "2026-10-07T12:00:00.000Z",
+              id: "setup-link-processing",
+              status: "used",
+              url: "https://app.kapso.ai/whatsapp/setup/processing",
+              whatsapp_setup_error: null,
+              whatsapp_setup_status: "processing",
+            },
+          ],
+          meta: { page: 1, total_pages: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.listSetupLinks("kapso-customer-1"),
+    ).resolves.toMatchObject([{ whatsappSetupStatus: "pending" }]);
+  });
+
   it("rechaza una expiración de Kapso distinta a 30 días", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
@@ -381,6 +488,30 @@ describe("adaptador de onboarding de Kapso", () => {
         body: JSON.stringify({ setup_link: { status: "revoked" } }),
         method: "PATCH",
       }),
+    );
+  });
+
+  it("falla cerrado si una asociación de número no trae un número visible", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              customer_id: "kapso-customer-1",
+              phone_number_id: "phone-without-display-number",
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(provider.listPhoneNumbers()).rejects.toThrow(
+      "Kapso devolvió una respuesta inválida",
     );
   });
 });

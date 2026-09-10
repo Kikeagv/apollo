@@ -11,6 +11,7 @@ const validInput = (
   clinicName: "Clínica Aurora",
   metaAuthority: "confirmed",
   numberAssociation: "available",
+  numberConnectionType: "unknown",
   numberOwnedByClinic: true,
   ownerConfirmed: true,
   ownerName: "Dra. Ana Reyes",
@@ -83,5 +84,60 @@ describe("preflight de WhatsApp con Kapso", () => {
       "phone-number-invalid",
       "phone-number-not-owned",
     ]);
+  });
+
+  it("bloquea reconectar un número existente que no está en coexistence", () => {
+    const result = evaluateKapsoWhatsAppPreflight(
+      validInput({
+        numberAssociation: "same-customer",
+        numberConnectionType: "dedicated",
+      }),
+    );
+
+    expect(result).toMatchObject({
+      nextAction:
+        "Mantén el número existente en modo coexistence antes de continuar.",
+      status: "blocked",
+    });
+    expect(result.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "number-connection-type-not-supported",
+        }),
+      ]),
+    );
+  });
+
+  it("bloquea una asociación de número que Kapso no puede resolver de forma única", () => {
+    const result = evaluateKapsoWhatsAppPreflight(
+      validInput({ numberAssociation: "ambiguous" }),
+    );
+
+    expect(result).toMatchObject({
+      nextAction:
+        "Confirma en Kapso una sola configuración productiva para el número antes de continuar.",
+      status: "blocked",
+    });
+    expect(result.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "number-association-ambiguous" }),
+      ]),
+    );
+  });
+
+  it("bloquea elegir otro número cuando el customer ya tiene uno asociado", () => {
+    const result = evaluateKapsoWhatsAppPreflight(
+      validInput({ numberAssociation: "same-customer-other-number" }),
+    );
+
+    expect(result).toMatchObject({
+      nextAction: "Usa el número de WhatsApp ya configurado para esta Clínica.",
+      status: "blocked",
+    });
+    expect(result.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "customer-number-already-configured" }),
+      ]),
+    );
   });
 });

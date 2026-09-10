@@ -7,6 +7,8 @@ import { whatsappSetupLinkStatus } from "~/domain/whatsapp-setup-link";
 import {
   evaluateKapsoWhatsAppPreflight,
   isValidE164PhoneNumber,
+  normalizePhoneNumber,
+  phoneNumbersMatch,
   type KapsoWhatsAppPreflightInput,
   type MetaAuthorityStatus,
   type WhatsAppBusinessAppStatus,
@@ -265,11 +267,11 @@ export async function prepareKapsoWhatsAppOnboarding(
     clinicId: input.clinicId,
   });
   const externalCustomerId = `praxia-clinic:${input.clinicId}`;
-  const localPreflightInput = createPreflightInput(
-    input,
-    current,
-    "not-checked",
-  );
+  const localPreflightInput = createPreflightInput(input, current, {
+    association: "not-checked",
+    numberConnectionType: "unknown",
+    phoneNumberId: null,
+  });
   const localEvaluation = evaluateKapsoWhatsAppPreflight(localPreflightInput);
 
   let customer: KapsoCustomer | undefined;
@@ -283,7 +285,7 @@ export async function prepareKapsoWhatsAppOnboarding(
     customer = customerResult.customer;
     customerAction = customerResult.action;
 
-    const phone = await findPhoneAssociation(
+    const phoneResolution = await findPhoneAssociation(
       dependencies.provider,
       input.phoneNumberE164,
       input.numberOwnedByClinic,
@@ -292,19 +294,30 @@ export async function prepareKapsoWhatsAppOnboarding(
     const preflightInput = createPreflightInput(
       input,
       current,
-      phone.association,
+      phoneResolution,
     );
     const evaluation = evaluateKapsoWhatsAppPreflight(preflightInput);
     const checkedAt = now();
-    const readyConnection =
-      current.connection?.provider === "kapso" &&
-      current.connection.status === "ready"
-        ? current.connection
+    const canPersistPhoneNumber =
+      phoneResolution.association === "same-customer" ||
+      (evaluation.status === "passed" &&
+        phoneResolution.association === "available");
+    const persistedPhoneNumber =
+      canPersistPhoneNumber &&
+      isValidE164PhoneNumber(input.phoneNumberE164) &&
+      input.numberOwnedByClinic
+        ? input.phoneNumberE164
         : null;
-    if (readyConnection !== null && readyConnection.customer !== customer.id) {
-      throw new Error(
-        "La Conexión de WhatsApp lista pertenece a otro customer de Kapso",
-      );
+    const kapsoConnection =
+      current.connection?.provider === "kapso" ? current.connection : null;
+    if (kapsoConnection !== null) {
+      if (kapsoConnection.customer !== customer.id) {
+        throw new Error(
+          "La Conexión de WhatsApp Kapso pertenece a otro customer de Kapso",
+        );
+      }
+      assertSameConfiguredPhone(kapsoConnection, input.phoneNumberE164);
+      assertSameConfiguredPhoneAssociation(kapsoConnection, phoneResolution);
     }
 
     await dependencies.store.save({
@@ -330,7 +343,7 @@ export async function prepareKapsoWhatsAppOnboarding(
         },
       ],
       clinicId: input.clinicId,
-      ...(readyConnection !== null
+      ...(kapsoConnection?.status === "ready"
         ? {}
         : {
             connection: {
@@ -338,24 +351,12 @@ export async function prepareKapsoWhatsAppOnboarding(
               metadata: {
                 mode: "coexistence",
                 source: "kapso-onboarding",
-                displayPhoneE164:
-                  phone.association === "other-customer"
-                    ? null
-                    : isValidE164PhoneNumber(input.phoneNumberE164) &&
-                        input.numberOwnedByClinic
-                      ? input.phoneNumberE164
-                      : null,
+                displayPhoneE164: persistedPhoneNumber,
               },
-              phoneNumberE164:
-                phone.association === "other-customer"
-                  ? null
-                  : isValidE164PhoneNumber(input.phoneNumberE164) &&
-                      input.numberOwnedByClinic
-                    ? input.phoneNumberE164
-                    : null,
+              phoneNumberE164: persistedPhoneNumber,
               phoneNumberId:
-                phone.association === "same-customer"
-                  ? phone.phoneNumberId
+                phoneResolution.association === "same-customer"
+                  ? phoneResolution.phoneNumberId
                   : null,
               provider: "kapso" as const,
               status: evaluation.status === "passed" ? "pending" : "blocked",
@@ -409,7 +410,7 @@ export async function prepareKapsoWhatsAppOnboarding(
 function createPreflightInput(
   input: PrepareKapsoWhatsAppOnboardingInput,
   current: KapsoWhatsAppOnboardingSnapshot,
-  numberAssociation: KapsoWhatsAppPreflightInput["numberAssociation"],
+  phoneResolution: PhoneAssociationResult,
 ): KapsoWhatsAppPreflightInput {
   const persistedOwnerName = current.ownerName?.trim();
   const ownerMatchesClinic =
@@ -420,7 +421,8 @@ function createPreflightInput(
   return {
     clinicName: current.clinicName,
     metaAuthority: input.metaAuthority,
-    numberAssociation,
+    numberAssociation: phoneResolution.association,
+    numberConnectionType: phoneResolution.numberConnectionType,
     numberOwnedByClinic: input.numberOwnedByClinic,
     ownerConfirmed: input.ownerConfirmed && ownerMatchesClinic,
     ownerName: persistedOwnerName ?? "",
@@ -441,19 +443,23 @@ async function findOrCreateCustomer(
 ) {
   const existing = await provider.findCustomerByExternalId(externalCustomerId);
   if (existing !== undefined) {
+    assertCustomerIdentity(existing, externalCustomerId);
     return { action: "customer-confirmed" as const, customer: existing };
   }
 
   try {
+    const created = await provider.createCustomer({ externalCustomerId, name });
+    assertCustomerIdentity(created, externalCustomerId);
     return {
       action: "customer-created" as const,
-      customer: await provider.createCustomer({ externalCustomerId, name }),
+      customer: created,
     };
   } catch (error) {
     if (!isConflict(error)) throw error;
     const createdByAnotherAttempt =
       await provider.findCustomerByExternalId(externalCustomerId);
     if (createdByAnotherAttempt === undefined) throw error;
+    assertCustomerIdentity(createdByAnotherAttempt, externalCustomerId);
     return {
       action: "customer-confirmed" as const,
       customer: createdByAnotherAttempt,
@@ -461,39 +467,107 @@ async function findOrCreateCustomer(
   }
 }
 
+type PhoneAssociationResult = {
+  association: KapsoWhatsAppPreflightInput["numberAssociation"];
+  numberConnectionType: KapsoWhatsAppPreflightInput["numberConnectionType"];
+  phoneNumberId: string | null;
+};
+
 async function findPhoneAssociation(
   provider: KapsoOnboardingProvider,
   phoneNumberE164: string,
   numberOwnedByClinic: boolean,
   customerId: string,
-) {
+): Promise<PhoneAssociationResult> {
   if (!numberOwnedByClinic || !isValidE164PhoneNumber(phoneNumberE164)) {
-    return { association: "not-checked" as const, phoneNumberId: null };
+    return {
+      association: "not-checked" as const,
+      numberConnectionType: "unknown" as const,
+      phoneNumberId: null,
+    };
   }
 
   const normalizedInput = normalizePhoneNumber(phoneNumberE164);
-  const matchingPhone = (await provider.listPhoneNumbers()).find(
+  const phoneNumbers = await provider.listPhoneNumbers();
+  if (
+    phoneNumbers.some(
+      (phoneNumber) =>
+        normalizePhoneNumber(phoneNumberForComparison(phoneNumber)) === "",
+    )
+  ) {
+    return {
+      association: "ambiguous" as const,
+      numberConnectionType: "unknown" as const,
+      phoneNumberId: null,
+    };
+  }
+  const matchingPhones = phoneNumbers.filter(
     (phoneNumber) =>
-      normalizePhoneNumber(
-        phoneNumber.displayPhoneNumberNormalized ??
-          phoneNumber.displayPhoneNumber ??
-          "",
-      ) === normalizedInput,
+      normalizePhoneNumber(phoneNumberForComparison(phoneNumber)) ===
+      normalizedInput,
   );
-  if (matchingPhone === undefined) {
-    return { association: "available" as const, phoneNumberId: null };
+  if (matchingPhones.length === 0) {
+    if (
+      phoneNumbers.some((phoneNumber) => phoneNumber.customerId === customerId)
+    ) {
+      return {
+        association: "same-customer-other-number" as const,
+        numberConnectionType: "unknown" as const,
+        phoneNumberId: null,
+      };
+    }
+    return {
+      association: "available" as const,
+      numberConnectionType: "unknown" as const,
+      phoneNumberId: null,
+    };
+  }
+  if (matchingPhones.length > 1) {
+    return {
+      association: matchingPhones.some(
+        (phoneNumber) => phoneNumber.customerId !== customerId,
+      )
+        ? ("other-customer" as const)
+        : ("ambiguous" as const),
+      numberConnectionType: "unknown" as const,
+      phoneNumberId: null,
+    };
+  }
+  const matchingPhone = matchingPhones[0]!;
+  if (
+    matchingPhone.customerId === customerId &&
+    phoneNumbers.filter((phoneNumber) => phoneNumber.customerId === customerId)
+      .length > 1
+  ) {
+    return {
+      association: "same-customer-other-number" as const,
+      numberConnectionType: "unknown" as const,
+      phoneNumberId: null,
+    };
   }
   return {
     association:
       matchingPhone.customerId === customerId
         ? ("same-customer" as const)
         : ("other-customer" as const),
+    numberConnectionType:
+      matchingPhone.isCoexistence === true
+        ? ("coexistence" as const)
+        : matchingPhone.isCoexistence === false
+          ? ("dedicated" as const)
+          : ("unknown" as const),
     phoneNumberId: matchingPhone.phoneNumberId,
   };
 }
 
-function normalizePhoneNumber(phoneNumber: string) {
-  return phoneNumber.replace(/\D/g, "");
+function phoneNumberForComparison(input: {
+  displayPhoneNumber: string | null;
+  displayPhoneNumberNormalized: string | null;
+}) {
+  const normalized = input.displayPhoneNumberNormalized?.trim();
+  return normalized === undefined || normalized === ""
+    ? (input.displayPhoneNumber ?? "")
+    : normalized;
 }
 
 function toPersistedChecks(
@@ -502,12 +576,73 @@ function toPersistedChecks(
   return {
     metaAuthority: input.metaAuthority,
     numberAssociation: input.numberAssociation,
+    numberConnectionType: input.numberConnectionType,
     numberOwnedByClinic: input.numberOwnedByClinic,
     ownerConfirmed: input.ownerConfirmed,
     phoneNumberE164: input.phoneNumberE164,
     qrDeviceAvailable: input.qrDeviceAvailable,
     whatsappBusinessApp: input.whatsappBusinessApp,
   };
+}
+
+function assertCustomerIdentity(
+  customer: KapsoCustomer,
+  externalCustomerId: string,
+) {
+  if (customer.externalCustomerId !== externalCustomerId) {
+    throw new Error("Kapso devolvió un customer distinto al solicitado");
+  }
+}
+
+function assertSameConfiguredPhone(
+  connection: WhatsAppConnection,
+  phoneNumberE164: string,
+) {
+  if (!isExistingKapsoConfiguration(connection)) return;
+  if (connection.phoneNumberId === null) {
+    throw new Error(
+      "La reconexión de WhatsApp requiere conservar el phone number ID productivo",
+    );
+  }
+  if (
+    connection.phoneNumberE164 === null ||
+    !phoneNumbersMatch(connection.phoneNumberE164, phoneNumberE164)
+  ) {
+    throw new Error(
+      "La reconexión de WhatsApp debe usar el mismo número productivo ya configurado",
+    );
+  }
+}
+
+function assertSameConfiguredPhoneAssociation(
+  connection: WhatsAppConnection,
+  phone: PhoneAssociationResult,
+) {
+  if (!isExistingKapsoConfiguration(connection)) return;
+  if (phone.association !== "same-customer") {
+    throw new Error(
+      "Kapso no confirmó la asociación del mismo número productivo para reconectar WhatsApp",
+    );
+  }
+  if (
+    connection.phoneNumberId !== null &&
+    phone.phoneNumberId !== connection.phoneNumberId
+  ) {
+    throw new Error(
+      "La reconexión de WhatsApp debe conservar la misma configuración productiva",
+    );
+  }
+}
+
+export function isExistingKapsoConfiguration(connection: WhatsAppConnection) {
+  return (
+    connection.provider === "kapso" &&
+    (connection.phoneNumberId !== null ||
+      (connection.phoneNumberE164 !== null &&
+        ["degraded", "disconnected", "provisioning", "ready"].includes(
+          connection.status,
+        )))
+  );
 }
 
 function toSetupLinkUpdate(

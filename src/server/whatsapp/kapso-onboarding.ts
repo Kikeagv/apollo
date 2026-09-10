@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { isValidE164PhoneNumber } from "~/domain/whatsapp-preflight";
 import {
   hasWhatsAppSetupLinkPolicyExpiry,
   setupLinkExpiresAt,
@@ -14,13 +15,20 @@ const customerSchema = z.object({
   name: z.string(),
 });
 
-const phoneNumberSchema = z.object({
-  customer_id: z.string(),
-  display_phone_number: z.string().nullable().optional(),
-  display_phone_number_normalized: z.string().nullable().optional(),
-  is_coexistence: z.boolean().optional(),
-  phone_number_id: z.string(),
-});
+const phoneNumberSchema = z
+  .object({
+    customer_id: z.string(),
+    display_phone_number: z.string().nullable().optional(),
+    display_phone_number_normalized: z.string().nullable().optional(),
+    is_coexistence: z.boolean().nullable().optional(),
+    phone_number_id: z.string(),
+  })
+  .refine(
+    (phoneNumber) =>
+      (phoneNumber.display_phone_number?.trim() ?? "") !== "" ||
+      (phoneNumber.display_phone_number_normalized?.trim() ?? "") !== "",
+    "Kapso no devolvió un número visible para la asociación",
+  );
 
 const phoneNumbersPageSchema = z.object({
   data: z.array(phoneNumberSchema),
@@ -80,7 +88,7 @@ export type KapsoPhoneNumber = {
   customerId: string;
   displayPhoneNumber: string | null;
   displayPhoneNumberNormalized: string | null;
-  isCoexistence: boolean;
+  isCoexistence: boolean | null;
   phoneNumberId: string;
 };
 
@@ -124,6 +132,7 @@ export type KapsoOnboardingProvider = {
     allowedOrigin: string;
     customerId: string;
     failureRedirectUrl: string;
+    reconnectPhoneNumber?: string;
     successRedirectUrl: string;
   }) => Promise<KapsoSetupLink>;
   listSetupLinks: (customerId: string) => Promise<KapsoSetupLink[]>;
@@ -160,7 +169,11 @@ export function createKapsoOnboardingProvider(
           method: "POST",
         },
       );
-      return toCustomer(parseKapsoPayload(customerSchema, payload.data));
+      const customer = toCustomer(
+        parseKapsoPayload(customerSchema, payload.data),
+      );
+      assertCustomerMatchesExternalId(customer, input.externalCustomerId);
+      return customer;
     },
 
     async findCustomerByExternalId(externalCustomerId) {
@@ -184,7 +197,10 @@ export function createKapsoOnboardingProvider(
         );
       }
       const customer = customers[0];
-      return customer === undefined ? undefined : toCustomer(customer);
+      if (customer === undefined) return undefined;
+      const parsedCustomer = toCustomer(customer);
+      assertCustomerMatchesExternalId(parsedCustomer, externalCustomerId);
+      return parsedCustomer;
     },
 
     async listPhoneNumbers() {
@@ -208,7 +224,7 @@ export function createKapsoOnboardingProvider(
             displayPhoneNumber: phoneNumber.display_phone_number ?? null,
             displayPhoneNumberNormalized:
               phoneNumber.display_phone_number_normalized ?? null,
-            isCoexistence: phoneNumber.is_coexistence ?? false,
+            isCoexistence: phoneNumber.is_coexistence ?? null,
             phoneNumberId: phoneNumber.phone_number_id,
           })),
         );
@@ -221,21 +237,33 @@ export function createKapsoOnboardingProvider(
 
     async createSetupLink(input) {
       const allowedOrigin = requireHttpsOrigin(input.allowedOrigin);
+      if (
+        input.reconnectPhoneNumber !== undefined &&
+        !isValidE164PhoneNumber(input.reconnectPhoneNumber)
+      ) {
+        throw new Error(
+          "Kapso requiere un número E.164 válido para reconectar la configuración",
+        );
+      }
+      const setupLink = {
+        allowed_connection_types: ["coexistence"],
+        allowed_origins: [allowedOrigin],
+        failure_redirect_url: input.failureRedirectUrl,
+        language: "es",
+        meta_billing_mode: "partner_managed",
+        provision_phone_number: false,
+        ...(input.reconnectPhoneNumber === undefined
+          ? {}
+          : { reconnect_phone_number: input.reconnectPhoneNumber }),
+        success_redirect_url: input.successRedirectUrl,
+      };
       const payload = await requestJson(
         fetchImpl,
         options.apiKey,
         `/customers/${encodeURIComponent(input.customerId)}/setup_links`,
         {
           body: JSON.stringify({
-            setup_link: {
-              allowed_connection_types: ["coexistence"],
-              allowed_origins: [allowedOrigin],
-              failure_redirect_url: input.failureRedirectUrl,
-              language: "es",
-              meta_billing_mode: "partner_managed",
-              provision_phone_number: false,
-              success_redirect_url: input.successRedirectUrl,
-            },
+            setup_link: setupLink,
           }),
           headers: { "Content-Type": "application/json" },
           method: "POST",
@@ -339,6 +367,18 @@ function toCustomer(customer: z.infer<typeof customerSchema>): KapsoCustomer {
   };
 }
 
+function assertCustomerMatchesExternalId(
+  customer: KapsoCustomer,
+  externalCustomerId: string,
+) {
+  if (customer.externalCustomerId !== externalCustomerId) {
+    throw new KapsoProviderError(
+      200,
+      "Kapso devolvió un customer distinto al solicitado",
+    );
+  }
+}
+
 function toSetupLink(
   setupLink: z.infer<typeof setupLinkSchema>,
 ): KapsoSetupLink {
@@ -400,7 +440,9 @@ function normalizeSetupProviderStatus(
   status: string | null | undefined,
 ): KapsoSetupLinkProviderStatus {
   const normalized = status?.trim().toLowerCase();
-  if (normalized === "pending") return "pending";
+  if (normalized === "pending" || normalized === "processing") {
+    return "pending";
+  }
   if (
     normalized === "completed" ||
     normalized === "complete" ||

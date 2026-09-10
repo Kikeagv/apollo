@@ -65,6 +65,7 @@ describe("persistencia y RLS del onboarding Kapso", () => {
             checks: {
               metaAuthority: "confirmed",
               numberAssociation: "available",
+              numberConnectionType: "unknown",
               numberOwnedByClinic: true,
               ownerConfirmed: true,
               phoneNumberE164: "+50370000000",

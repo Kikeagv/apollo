@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { WhatsAppConnection } from "~/domain/whatsapp-connection";
 import type { WhatsAppSetupLink } from "~/domain/whatsapp-setup-link";
 import type {
   KapsoWhatsAppOnboardingSnapshot,
@@ -48,6 +49,131 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
         result: "succeeded",
       }),
     );
+  });
+
+  it("limita la reconexión al número productivo ya asociado", async () => {
+    const store = storeFixture({ connection: kapsoConnectionFixture() });
+    const provider = providerFixture();
+
+    await manageKapsoWhatsAppSetupLink(
+      {
+        action: "generate",
+        actorIdentityId: "superadmin-1",
+        actorType: "superadmin",
+        clinicId: "clinic-1",
+      },
+      { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+    );
+
+    expect(provider.createSetupLink).toHaveBeenCalledWith({
+      allowedOrigin: "https://app.praxia.test",
+      customerId: "kapso-customer-1",
+      failureRedirectUrl: "https://app.praxia.test/configuracion/whatsapp",
+      reconnectPhoneNumber: "+50370000000",
+      successRedirectUrl: "https://app.praxia.test/configuracion/whatsapp",
+    });
+  });
+
+  it("no reutiliza un enlace activo sin volver a limitarlo al número productivo", async () => {
+    const existing = setupLinkFixture({
+      kapsoSetupLinkId: "kapso-link-existing",
+      url: "https://app.kapso.ai/whatsapp/setup/existing",
+    });
+    const store = storeFixture({
+      connection: kapsoConnectionFixture(),
+      setupLink: existing,
+    });
+    const provider = providerFixture({
+      remoteLinks: [kapsoLinkFixture(existing)],
+    });
+
+    const result = await manageKapsoWhatsAppSetupLink(
+      {
+        action: "generate",
+        actorIdentityId: "superadmin-1",
+        actorType: "superadmin",
+        clinicId: "clinic-1",
+      },
+      { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+    );
+
+    expect(provider.revokeSetupLink).toHaveBeenCalledWith({
+      customerId: "kapso-customer-1",
+      setupLinkId: "kapso-link-existing",
+    });
+    expect(provider.createSetupLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reconnectPhoneNumber: "+50370000000",
+      }),
+    );
+    expect(result.setupLinkProviderId).toBe("kapso-link-new");
+  });
+
+  it("falla cerrado si la configuración existente no tiene phone number ID", async () => {
+    const store = storeFixture({
+      connection: {
+        ...kapsoConnectionFixture(),
+        phoneNumberId: null,
+      },
+    });
+    const provider = providerFixture();
+
+    await expect(
+      manageKapsoWhatsAppSetupLink(
+        {
+          action: "generate",
+          actorIdentityId: "superadmin-1",
+          actorType: "superadmin",
+          clinicId: "clinic-1",
+        },
+        { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+      ),
+    ).rejects.toThrow("phone number ID");
+    expect(provider.listSetupLinks).not.toHaveBeenCalled();
+  });
+
+  it("falla cerrado si la conexión Kapso pertenece a otro customer", async () => {
+    const store = storeFixture({
+      connection: {
+        ...kapsoConnectionFixture(),
+        customer: "kapso-customer-other",
+      },
+    });
+    const provider = providerFixture();
+
+    await expect(
+      manageKapsoWhatsAppSetupLink(
+        {
+          action: "generate",
+          actorIdentityId: "superadmin-1",
+          actorType: "superadmin",
+          clinicId: "clinic-1",
+        },
+        { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+      ),
+    ).rejects.toThrow("customer de Kapso");
+    expect(provider.listSetupLinks).not.toHaveBeenCalled();
+  });
+
+  it("rechaza una configuración persistida cuyo preflight cambió de número", async () => {
+    const store = storeFixture({
+      connection: kapsoConnectionFixture(),
+      preflightPhoneNumber: "+50370000001",
+    });
+    const provider = providerFixture();
+
+    await expect(
+      manageKapsoWhatsAppSetupLink(
+        {
+          action: "generate",
+          actorIdentityId: "superadmin-1",
+          actorType: "superadmin",
+          clinicId: "clinic-1",
+        },
+        { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+      ),
+    ).rejects.toThrow("mismo número");
+    expect(provider.listSetupLinks).not.toHaveBeenCalled();
   });
 
   it("reutiliza el único enlace activo al generar de nuevo sin regenerar", async () => {
@@ -381,6 +507,22 @@ function kapsoLinkFixture(link: TestSetupLink): KapsoSetupLink {
   };
 }
 
+function kapsoConnectionFixture(): WhatsAppConnection {
+  return {
+    clinicId: "clinic-1",
+    connectionType: "coexistence",
+    createdAt: now,
+    customer: "kapso-customer-1",
+    lastTestAt: null,
+    metadata: { mode: "coexistence" },
+    phoneNumberE164: "+50370000000",
+    phoneNumberId: "existing-phone",
+    provider: "kapso",
+    status: "ready",
+    updatedAt: now,
+  };
+}
+
 function providerFixture(
   options: {
     remoteLinks?: KapsoSetupLink[];
@@ -419,6 +561,8 @@ function providerFixture(
 
 function storeFixture(
   options: {
+    connection?: WhatsAppConnection;
+    preflightPhoneNumber?: string;
     preflightStatus?: "blocked" | "passed";
     simulateActiveConflict?: boolean;
     setupLink?: TestSetupLink;
@@ -433,7 +577,7 @@ function storeFixture(
   let snapshot: KapsoWhatsAppOnboardingSnapshot = {
     clinicId: "clinic-1",
     clinicName: "Clínica Aurora",
-    connection: null,
+    connection: options.connection ?? null,
     customerId: "kapso-customer-1",
     ownerName: "Dra. Ana Reyes",
     preflight: {
@@ -442,9 +586,10 @@ function storeFixture(
       checks: {
         metaAuthority: "confirmed",
         numberAssociation: "available",
+        numberConnectionType: "unknown",
         numberOwnedByClinic: true,
         ownerConfirmed: true,
-        phoneNumberE164: "+50370000000",
+        phoneNumberE164: options.preflightPhoneNumber ?? "+50370000000",
         qrDeviceAvailable: true,
         whatsappBusinessApp: "active",
       },

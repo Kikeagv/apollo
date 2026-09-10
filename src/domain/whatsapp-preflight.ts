@@ -25,13 +25,23 @@ export const phoneAssociations = [
   "available",
   "same-customer",
   "other-customer",
+  "ambiguous",
+  "same-customer-other-number",
 ] as const;
 export type PhoneAssociation = (typeof phoneAssociations)[number];
+
+export const phoneConnectionTypes = [
+  "unknown",
+  "coexistence",
+  "dedicated",
+] as const;
+export type PhoneConnectionType = (typeof phoneConnectionTypes)[number];
 
 export type KapsoWhatsAppPreflightInput = {
   clinicName: string;
   metaAuthority: MetaAuthorityStatus;
   numberAssociation: PhoneAssociation;
+  numberConnectionType: PhoneConnectionType;
   numberOwnedByClinic: boolean;
   ownerConfirmed: boolean;
   ownerName: string;
@@ -51,6 +61,9 @@ export type WhatsAppPreflightBlockerCode =
   | "meta-authority-required"
   | "messenger-not-supported"
   | "number-associated"
+  | "number-association-ambiguous"
+  | "number-connection-type-not-supported"
+  | "customer-number-already-configured"
   | "phone-number-invalid"
   | "phone-number-not-owned"
   | "qr-device-required"
@@ -80,6 +93,12 @@ const actions = {
     "Migra voluntariamente el número a WhatsApp Business App o aporta otra línea.",
   numberAssociated:
     "Resuelve la asociación del número con el otro customer; Praxia no desconecta terceros.",
+  numberAssociationAmbiguous:
+    "Confirma en Kapso una sola configuración productiva para el número antes de continuar.",
+  customerNumberAlreadyConfigured:
+    "Usa el número de WhatsApp ya configurado para esta Clínica.",
+  numberConnectionType:
+    "Mantén el número existente en modo coexistence antes de continuar.",
   numberNotOwned: "Registra un número propio de la Clínica antes de continuar.",
   phoneNumber: "Registra un número propio válido en formato internacional.",
   qrDevice:
@@ -173,6 +192,33 @@ export function evaluateKapsoWhatsAppPreflight(
       nextAction: actions.numberAssociated,
     });
   }
+  if (input.numberAssociation === "ambiguous") {
+    blockers.push({
+      code: "number-association-ambiguous",
+      message:
+        "Kapso devolvió más de una asociación para el número de la Clínica.",
+      nextAction: actions.numberAssociationAmbiguous,
+    });
+  }
+  if (input.numberAssociation === "same-customer-other-number") {
+    blockers.push({
+      code: "customer-number-already-configured",
+      message:
+        "La Clínica ya tiene otro número de WhatsApp asociado a su customer de Kapso.",
+      nextAction: actions.customerNumberAlreadyConfigured,
+    });
+  }
+  if (
+    input.numberAssociation === "same-customer" &&
+    input.numberConnectionType !== "coexistence"
+  ) {
+    blockers.push({
+      code: "number-connection-type-not-supported",
+      message:
+        "El número ya asociado no está confirmado como una conexión coexistence.",
+      nextAction: actions.numberConnectionType,
+    });
+  }
 
   return blockers.length === 0
     ? {
@@ -189,4 +235,12 @@ export function evaluateKapsoWhatsAppPreflight(
 
 export function isValidE164PhoneNumber(phoneNumberE164: string) {
   return e164Pattern.test(phoneNumberE164);
+}
+
+export function normalizePhoneNumber(phoneNumber: string) {
+  return phoneNumber.replace(/\D/g, "");
+}
+
+export function phoneNumbersMatch(left: string, right: string) {
+  return normalizePhoneNumber(left) === normalizePhoneNumber(right);
 }

@@ -79,7 +79,10 @@ describe("caso de uso de onboarding Kapso", () => {
   });
 
   it("no degrada una Conexión Kapso que ya está lista", async () => {
-    const provider = providerFixture({ customer: customerFixture() });
+    const provider = providerFixture({
+      customer: customerFixture(),
+      phoneNumberId: "existing-phone",
+    });
     const store = storeFixture({ readyKapso: true });
 
     const result = await prepareKapsoWhatsAppOnboarding(baseInput, {
@@ -182,6 +185,149 @@ describe("caso de uso de onboarding Kapso", () => {
     });
   });
 
+  it("bloquea un número de la misma Clínica si Kapso no confirma coexistence", async () => {
+    const provider = providerFixture({
+      customer: customerFixture(),
+      dedicatedPhone: true,
+    });
+    const store = storeFixture();
+
+    const result = await prepareKapsoWhatsAppOnboarding(baseInput, {
+      provider,
+      store,
+    });
+
+    expect(result.preflight?.status).toBe("blocked");
+    expect(result.preflight?.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "number-connection-type-not-supported",
+        }),
+      ]),
+    );
+  });
+
+  it("rechaza cambiar el número de una Conexión Kapso lista", async () => {
+    const provider = providerFixture({
+      customer: customerFixture(),
+      phoneNumberId: "existing-phone",
+    });
+    const store = storeFixture({ readyKapso: true });
+
+    await expect(
+      prepareKapsoWhatsAppOnboarding(
+        { ...baseInput, phoneNumberE164: "+50370000001" },
+        { provider, store },
+      ),
+    ).rejects.toThrow("mismo número");
+  });
+
+  it.each(["blocked", "disconnected"] as const)(
+    "rechaza cambiar el número de una Conexión Kapso %s",
+    async (status) => {
+      const provider = providerFixture({
+        customer: customerFixture(),
+        phoneNumberId: "existing-phone",
+      });
+      const store = storeFixture({
+        readyKapso: true,
+        connectionStatus: status,
+      });
+
+      await expect(
+        prepareKapsoWhatsAppOnboarding(
+          { ...baseInput, phoneNumberE164: "+50370000001" },
+          { provider, store },
+        ),
+      ).rejects.toThrow("mismo número");
+    },
+  );
+
+  it("bloquea asociaciones duplicadas del mismo número en Kapso", async () => {
+    const provider = providerFixture({
+      customer: customerFixture(),
+      duplicatePhone: true,
+    });
+    const store = storeFixture();
+
+    const result = await prepareKapsoWhatsAppOnboarding(baseInput, {
+      provider,
+      store,
+    });
+
+    expect(result.preflight?.status).toBe("blocked");
+    expect(result.preflight?.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "number-association-ambiguous" }),
+      ]),
+    );
+  });
+
+  it("bloquea un número de terceros aunque Kapso deje vacío el valor normalizado", async () => {
+    const provider = providerFixture({
+      blankNormalizedPhone: true,
+      customer: customerFixture(),
+      otherCustomerPhone: true,
+    });
+    const store = storeFixture();
+
+    const result = await prepareKapsoWhatsAppOnboarding(baseInput, {
+      provider,
+      store,
+    });
+
+    expect(result.preflight?.status).toBe("blocked");
+    expect(result.preflight?.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "number-associated" }),
+      ]),
+    );
+  });
+
+  it("bloquea un segundo número aunque el customer existente sea de la misma Clínica", async () => {
+    const provider = providerFixture({
+      customer: customerFixture(),
+      otherNumberForSameCustomer: true,
+    });
+    const store = storeFixture();
+
+    const result = await prepareKapsoWhatsAppOnboarding(baseInput, {
+      provider,
+      store,
+    });
+
+    expect(result.preflight?.status).toBe("blocked");
+    expect(result.preflight?.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "customer-number-already-configured",
+        }),
+      ]),
+    );
+  });
+
+  it("bloquea una configuración con el número solicitado y otra línea del mismo customer", async () => {
+    const provider = providerFixture({
+      additionalNumberForSameCustomer: true,
+      customer: customerFixture(),
+    });
+    const store = storeFixture();
+
+    const result = await prepareKapsoWhatsAppOnboarding(baseInput, {
+      provider,
+      store,
+    });
+
+    expect(result.preflight?.status).toBe("blocked");
+    expect(result.preflight?.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "customer-number-already-configured",
+        }),
+      ]),
+    );
+  });
+
   it("conserva el estado existente y deja el resultado indisponible si Kapso no responde", async () => {
     const provider = providerFixture({
       customer: customerFixture(),
@@ -225,7 +371,13 @@ function customerFixture(): KapsoCustomer {
 function providerFixture(options: {
   createConflict?: boolean;
   customer: KapsoCustomer;
+  dedicatedPhone?: boolean;
+  blankNormalizedPhone?: boolean;
+  duplicatePhone?: boolean;
+  additionalNumberForSameCustomer?: boolean;
+  otherNumberForSameCustomer?: boolean;
   otherCustomerPhone?: boolean;
+  phoneNumberId?: string;
   unavailable?: boolean;
 }): KapsoOnboardingProvider & {
   createCustomer: ReturnType<typeof vi.fn>;
@@ -254,17 +406,36 @@ function providerFixture(options: {
     }),
     listPhoneNumbers: vi.fn(async () => {
       if (options.unavailable) throw new KapsoProviderUnavailableError();
-      return [
-        {
-          customerId: options.otherCustomerPhone
-            ? "kapso-customer-other"
-            : options.customer.id,
-          displayPhoneNumber: "+50370000000",
-          displayPhoneNumberNormalized: "50370000000",
-          isCoexistence: true,
-          phoneNumberId: "phone-1",
-        },
-      ];
+      const phone = {
+        customerId: options.otherCustomerPhone
+          ? "kapso-customer-other"
+          : options.customer.id,
+        displayPhoneNumber: options.otherNumberForSameCustomer
+          ? "+50370000001"
+          : "+50370000000",
+        displayPhoneNumberNormalized: options.blankNormalizedPhone
+          ? ""
+          : options.otherNumberForSameCustomer
+            ? "50370000001"
+            : "50370000000",
+        isCoexistence: !options.dedicatedPhone,
+        phoneNumberId: options.phoneNumberId ?? "phone-1",
+      };
+      if (options.duplicatePhone) {
+        return [phone, { ...phone, phoneNumberId: "phone-duplicate" }];
+      }
+      if (options.additionalNumberForSameCustomer) {
+        return [
+          phone,
+          {
+            ...phone,
+            displayPhoneNumber: "+50370000001",
+            displayPhoneNumberNormalized: "50370000001",
+            phoneNumberId: "phone-other",
+          },
+        ];
+      }
+      return [phone];
     }),
     listSetupLinks: vi.fn(async () => []),
     revokeSetupLink: vi.fn(async () => {
@@ -274,7 +445,11 @@ function providerFixture(options: {
 }
 
 function storeFixture(
-  options: { readyKapso?: boolean; withoutOwner?: boolean } = {},
+  options: {
+    connectionStatus?: "blocked" | "disconnected" | "ready";
+    readyKapso?: boolean;
+    withoutOwner?: boolean;
+  } = {},
 ): KapsoWhatsAppOnboardingStore & {
   saved?: Parameters<KapsoWhatsAppOnboardingStore["save"]>[0];
 } {
@@ -285,13 +460,25 @@ function storeFixture(
       clinicId: "clinic-1",
       connectionType: "simulated",
       createdAt: new Date("2026-09-01T00:00:00.000Z"),
-      customer: options.readyKapso ? "kapso-customer-1" : "simulated:clinic-1",
+      customer:
+        options.readyKapso || options.connectionStatus !== undefined
+          ? "kapso-customer-1"
+          : "simulated:clinic-1",
       lastTestAt: new Date("2026-09-01T00:00:00.000Z"),
       metadata: { mode: "simulated" },
-      phoneNumberE164: options.readyKapso ? "+50370000000" : "+50370000001",
-      phoneNumberId: options.readyKapso ? "existing-phone" : null,
-      provider: options.readyKapso ? "kapso" : "simulated",
-      status: "ready",
+      phoneNumberE164:
+        options.readyKapso || options.connectionStatus !== undefined
+          ? "+50370000000"
+          : "+50370000001",
+      phoneNumberId:
+        options.readyKapso || options.connectionStatus !== undefined
+          ? "existing-phone"
+          : null,
+      provider:
+        options.readyKapso || options.connectionStatus !== undefined
+          ? "kapso"
+          : "simulated",
+      status: options.connectionStatus ?? "ready",
       updatedAt: new Date("2026-09-01T00:00:00.000Z"),
     },
     customerId: null,

@@ -2,6 +2,7 @@ import {
   isWhatsAppSetupLinkUsable,
   whatsappSetupLinkStatus,
 } from "~/domain/whatsapp-setup-link";
+import { phoneNumbersMatch } from "~/domain/whatsapp-preflight";
 import {
   KapsoProviderError,
   KapsoProviderUnavailableError,
@@ -10,6 +11,7 @@ import {
 } from "~/server/whatsapp/kapso-onboarding";
 
 import {
+  isExistingKapsoConfiguration,
   type KapsoWhatsAppOnboardingSnapshot,
   type KapsoWhatsAppOnboardingStore,
 } from "./kapso-onboarding";
@@ -54,6 +56,7 @@ export async function manageKapsoWhatsAppSetupLink(
   }
 
   const customerId = requireApprovedPreflight(current);
+  const reconnectPhoneNumber = resolveReconnectPhoneNumber(current);
 
   const currentStatus =
     current.setupLink === null
@@ -93,7 +96,7 @@ export async function manageKapsoWhatsAppSetupLink(
     const remoteLinks = await dependencies.provider.listSetupLinks(customerId);
     if (input.action === "generate") {
       const existingRemote = findActiveRemoteLink(remoteLinks, now());
-      if (existingRemote !== undefined) {
+      if (existingRemote !== undefined && reconnectPhoneNumber === undefined) {
         await reconcileCurrentLinkBeforeReuse(
           input,
           current,
@@ -131,17 +134,19 @@ export async function manageKapsoWhatsAppSetupLink(
         });
         return readAfterSave(input, dependencies.store);
       }
-      await reconcileCurrentLinkBeforeCreate(
-        input,
-        current,
-        remoteLinks,
-        dependencies,
-        now(),
-        customerId,
-      );
+      if (reconnectPhoneNumber === undefined) {
+        await reconcileCurrentLinkBeforeCreate(
+          input,
+          current,
+          remoteLinks,
+          dependencies,
+          now(),
+          customerId,
+        );
+      }
     }
 
-    if (input.action === "regenerate") {
+    if (input.action === "regenerate" || reconnectPhoneNumber !== undefined) {
       await revokeExistingRemoteLinks(
         input,
         current,
@@ -156,6 +161,7 @@ export async function manageKapsoWhatsAppSetupLink(
       customerId,
       allowedOrigin: new URL(dependencies.appUrl).origin,
       failureRedirectUrl: `${dependencies.appUrl}/configuracion/whatsapp`,
+      ...(reconnectPhoneNumber === undefined ? {} : { reconnectPhoneNumber }),
       successRedirectUrl: `${dependencies.appUrl}/configuracion/whatsapp`,
     });
     try {
@@ -220,6 +226,50 @@ function requireApprovedPreflight(
     );
   }
   return snapshot.customerId;
+}
+
+function resolveReconnectPhoneNumber(
+  snapshot: KapsoWhatsAppOnboardingSnapshot,
+) {
+  const connection = snapshot.connection;
+  if (
+    connection?.provider !== "kapso" ||
+    !isExistingKapsoConfiguration(connection)
+  ) {
+    return undefined;
+  }
+  if (
+    snapshot.customerId === null ||
+    connection.customer !== snapshot.customerId
+  ) {
+    throw new Error(
+      "La reconexión de WhatsApp debe conservar el customer de Kapso de la Clínica",
+    );
+  }
+  if (connection.phoneNumberId === null) {
+    throw new Error(
+      "La reconexión de WhatsApp requiere conservar el phone number ID productivo",
+    );
+  }
+  if (
+    connection.connectionType !== "coexistence" ||
+    connection.phoneNumberE164 === null
+  ) {
+    throw new Error(
+      "La reconexión de WhatsApp requiere conservar el número productivo y su configuración coexistence",
+    );
+  }
+
+  const preflightPhoneNumber = snapshot.preflight?.checks?.phoneNumberE164;
+  if (
+    preflightPhoneNumber === undefined ||
+    !phoneNumbersMatch(preflightPhoneNumber, connection.phoneNumberE164)
+  ) {
+    throw new Error(
+      "La reconexión de WhatsApp debe usar el mismo número productivo ya configurado",
+    );
+  }
+  return connection.phoneNumberE164;
 }
 
 async function revokeSetupLink(
