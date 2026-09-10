@@ -58,6 +58,10 @@ describe("migraciones de PostgreSQL", () => {
                 name: "appointment_event_scheduler_append",
               },
               {
+                command: "INSERT",
+                name: "appointment_event_outbound_delivery_append",
+              },
+              {
                 command: "SELECT",
                 name: "appointment_event_operating_read",
               },
@@ -81,6 +85,10 @@ describe("migraciones de PostgreSQL", () => {
               {
                 command: "SELECT",
                 name: "clinic_membership_configuration_owner_read",
+              },
+              {
+                command: "SELECT",
+                name: "appointment_event_outbound_clinic_user_read",
               },
             ]),
           );
@@ -127,6 +135,87 @@ describe("migraciones de PostgreSQL", () => {
               {
                 command: "SELECT",
                 name: "transactional_delivery_clinic_read",
+              },
+              {
+                command: "ALL",
+                name: "transactional_delivery_outbound_worker_access",
+              },
+            ]),
+          );
+          const deliveryColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_transactional_delivery'
+              and column_name in (
+                'provider_message_id',
+                'provider_status',
+                'consent_reference',
+                'consent_decision',
+                'consent_privacy_version',
+                'consent_terms_version',
+                'consent_text_reference',
+                'consent_accepted_at'
+              )
+            order by column_name
+          `;
+          expect(deliveryColumns).toEqual([
+            { column_name: "consent_accepted_at" },
+            { column_name: "consent_decision" },
+            { column_name: "consent_privacy_version" },
+            { column_name: "consent_reference" },
+            { column_name: "consent_terms_version" },
+            { column_name: "consent_text_reference" },
+            { column_name: "provider_message_id" },
+            { column_name: "provider_status" },
+          ]);
+          const deliveryAttemptPolicies = await migrated<
+            Array<{ command: "ALL" | "SELECT"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_transactional_delivery_attempt'
+          `;
+          expect(deliveryAttemptPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "ALL",
+                name: "transactional_delivery_attempt_outbound_worker_access",
+              },
+            ]),
+          );
+          const webhookEventPolicies = await migrated<
+            Array<{ command: "ALL" | "SELECT"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_webhook_event'
+          `;
+          expect(webhookEventPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "ALL",
+                name: "whatsapp_webhook_event_delivery_status_worker_manage",
+              },
+            ]),
+          );
+          const rateLimitPolicies = await migrated<
+            Array<{ command: "ALL"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_send_rate_limit_slot'
+          `;
+          expect(rateLimitPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "ALL",
+                name: "whatsapp_send_rate_limit_slot_provider_access",
               },
             ]),
           );

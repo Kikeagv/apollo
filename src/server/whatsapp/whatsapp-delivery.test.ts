@@ -83,6 +83,30 @@ describe("whatsAppSender", () => {
     );
   });
 
+  it("deduplica los Mensajes de Cita simulados con la misma clave estable", async () => {
+    const { simulated } = await importFresh({});
+    const message = {
+      appointmentId: "appointment-message-idempotent",
+      clinicId: "clinic-1",
+      idempotencyKey:
+        "appointment-message-idempotent:manual-confirmation:contact-1",
+      recipient: {
+        id: "contact-1",
+        name: "Ana",
+        phoneE164: "+50370000001",
+      },
+      type: "manual-confirmation" as const,
+    };
+    const initialCount = simulated.getSentSimulatedAppointmentMessages().length;
+
+    await simulated.simulatedAppointmentMessageSender.send(message);
+    await simulated.simulatedAppointmentMessageSender.send(message);
+
+    expect(simulated.getSentSimulatedAppointmentMessages()).toHaveLength(
+      initialCount + 1,
+    );
+  });
+
   it("no mezcla secretos entre dos cargas de entorno", async () => {
     const configured = await importFresh({
       KAPSO_API_KEY: "kapso-api-key-test",

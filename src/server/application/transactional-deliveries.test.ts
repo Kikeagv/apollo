@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   captureTransactionalDeliveryCallback,
@@ -96,14 +96,135 @@ describe("runTransactionalDeliveryWorker", () => {
     expect(JSON.stringify(delivered)).not.toContain("reason");
   });
 
+  it("conserva el ID externo en accepted y espera el webhook antes de marcar entregado", async () => {
+    const delivery: TransactionalDelivery = {
+      attempts: 0,
+      clinicId: "clinic-1",
+      id: "delivery-accepted",
+      idempotencyKey: "appointment-1:24h:contact-1",
+      kind: "appointment-reminder",
+      payload: {
+        appointmentId: "appointment-1",
+        appointmentStartsAt: new Date("2026-08-15T12:00:00.000Z"),
+        checkpoint: "24h",
+        clinicName: "Clínica Central",
+        recipient: { id: "contact-1", name: "Ana", phoneE164: "+50370000000" },
+      },
+    };
+    const store = new InMemoryDeliveryStore(delivery);
+    const markAccepted = vi
+      .fn<NonNullable<TransactionalDeliveryStore["markAccepted"]>>()
+      .mockResolvedValue(undefined);
+    store.markAccepted = markAccepted;
+
+    await expect(
+      runTransactionalDeliveryWorker({ now }, store, {
+        async send() {
+          return { providerMessageId: "wamid-accepted", status: "accepted" };
+        },
+      }),
+    ).resolves.toMatchObject({ accepted: 1, delivered: 0, unknown: 0 });
+
+    const acceptedCall = markAccepted.mock.calls[0]?.[0];
+    expect(acceptedCall?.delivery.id).toBe("delivery-accepted");
+    expect(acceptedCall?.delivery.attempts).toBe(1);
+    expect(acceptedCall?.now).toEqual(now);
+    expect(acceptedCall?.providerMessageId).toBe("wamid-accepted");
+    expect(store.sent).toBe(false);
+  });
+
+  it("no reenvía automáticamente un timeout ambiguo cuando el almacén ofrece reconciliación", async () => {
+    const delivery: TransactionalDelivery = {
+      attempts: 0,
+      clinicId: "clinic-1",
+      id: "delivery-unknown",
+      idempotencyKey: "appointment-1:24h:contact-1",
+      kind: "appointment-reminder",
+      payload: {
+        appointmentId: "appointment-1",
+        appointmentStartsAt: new Date("2026-08-15T12:00:00.000Z"),
+        checkpoint: "24h",
+        clinicName: "Clínica Central",
+        recipient: { id: "contact-1", name: "Ana", phoneE164: "+50370000000" },
+      },
+    };
+    const store = new InMemoryDeliveryStore(delivery);
+    const markUnknown = vi
+      .fn<NonNullable<TransactionalDeliveryStore["markUnknown"]>>()
+      .mockResolvedValue(undefined);
+    store.markUnknown = markUnknown;
+    const send = vi.fn().mockRejectedValue(
+      Object.assign(new Error("timeout"), {
+        ambiguous: true,
+        retryable: false,
+      }),
+    );
+
+    await expect(
+      runTransactionalDeliveryWorker({ now }, store, { send }),
+    ).resolves.toMatchObject({ retried: 0, unknown: 1 });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const unknownCall = markUnknown.mock.calls[0]?.[0];
+    expect(unknownCall?.delivery.id).toBe("delivery-unknown");
+    expect(unknownCall?.now).toEqual(now);
+    expect(store.retryCalls).toBe(0);
+  });
+
+  it("marca como desconocido un envío aceptado si falla su persistencia", async () => {
+    const delivery: TransactionalDelivery = {
+      attempts: 0,
+      clinicId: "clinic-1",
+      id: "delivery-persistence-error",
+      idempotencyKey: "appointment-1:24h:contact-1",
+      kind: "appointment-reminder",
+      payload: {
+        appointmentId: "appointment-1",
+        appointmentStartsAt: new Date("2026-08-15T12:00:00.000Z"),
+        checkpoint: "24h",
+        clinicName: "Clínica Central",
+        recipient: { id: "contact-1", name: "Ana", phoneE164: "+50370000000" },
+      },
+    };
+    const store = new InMemoryDeliveryStore(delivery);
+    const markAccepted = vi
+      .fn<NonNullable<TransactionalDeliveryStore["markAccepted"]>>()
+      .mockRejectedValue(new Error("base no disponible"));
+    const markUnknown = vi
+      .fn<NonNullable<TransactionalDeliveryStore["markUnknown"]>>()
+      .mockResolvedValue(undefined);
+    store.markAccepted = markAccepted;
+    store.markUnknown = markUnknown;
+
+    await expect(
+      runTransactionalDeliveryWorker({ now }, store, {
+        send: vi.fn().mockResolvedValue({
+          providerMessageId: "wamid-accepted",
+          status: "accepted",
+        }),
+      }),
+    ).resolves.toMatchObject({ retried: 0, unknown: 1 });
+
+    const unknownCall = markUnknown.mock.calls[0]?.[0];
+    expect(unknownCall?.delivery.id).toBe("delivery-persistence-error");
+    expect(unknownCall?.error.message).toContain("base");
+    expect(unknownCall?.now).toEqual(now);
+    expect(store.retryCalls).toBe(0);
+  });
+
   it("registra el callback una sola vez para una clave lógica", async () => {
     const callbacks = new Map<string, "delivered" | "failed">();
     const store = {
       async recordProviderCallback(input: {
         idempotencyKey: string;
-        status: "delivered" | "failed";
+        status: "accepted" | "sent" | "delivered" | "read" | "failed";
       }) {
-        if (!callbacks.has(input.idempotencyKey)) {
+        if (
+          !callbacks.has(input.idempotencyKey) &&
+          input.status !== "accepted" &&
+          input.status !== "sent" &&
+          input.status !== "read"
+        ) {
           callbacks.set(input.idempotencyKey, input.status);
         }
       },
@@ -125,7 +246,10 @@ describe("runTransactionalDeliveryWorker", () => {
 });
 
 class InMemoryDeliveryStore implements TransactionalDeliveryStore {
+  markAccepted?: TransactionalDeliveryStore["markAccepted"];
+  markUnknown?: TransactionalDeliveryStore["markUnknown"];
   sent = false;
+  retryCalls = 0;
   private leasedUntil: Date | undefined;
   private nextAttemptAt = now;
 
@@ -148,6 +272,7 @@ class InMemoryDeliveryStore implements TransactionalDeliveryStore {
   }
 
   async scheduleRetry(input: { now: Date }) {
+    this.retryCalls += 1;
     this.nextAttemptAt = new Date(input.now.valueOf() + 60_000);
   }
 }

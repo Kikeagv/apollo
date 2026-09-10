@@ -66,6 +66,35 @@ describe("webhook compartido de Kapso", () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it("rechaza un estado de entrega malformado antes de encolarlo", async () => {
+    const rawBody = JSON.stringify({ message: { id: "message-1" } });
+    const enqueueDeliveryStatus = vi.fn();
+    const response = await createKapsoWebhookHandler({
+      secret: "webhook-secret",
+      store: {
+        enqueue: vi.fn(),
+        enqueueIgnored: vi.fn(),
+        enqueueDeliveryStatus,
+      },
+    })(
+      new Request("https://app.usepraxia.com/api/webhooks/kapso", {
+        body: rawBody,
+        headers: {
+          "X-Idempotency-Key": "kapso-status-1",
+          "X-Webhook-Event": "whatsapp.message.delivered",
+          "X-Webhook-Signature": createKapsoWebhookSignature(
+            rawBody,
+            "webhook-secret",
+          ),
+        },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(enqueueDeliveryStatus).not.toHaveBeenCalled();
+  });
+
   it("marca duplicados sin volver a procesarlos", async () => {
     const rawBody = JSON.stringify({
       customer: { id: "customer-1" },

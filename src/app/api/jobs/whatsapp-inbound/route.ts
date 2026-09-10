@@ -7,6 +7,7 @@ import {
 import { createWhatsAppConsentGate } from "~/server/application/whatsapp-consent";
 import { drizzleSimulatedWhatsAppBookingStore } from "~/server/db/simulated-whatsapp-booking-store";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
+import { suppressPendingReminderDeliveries } from "~/server/db/transactional-delivery-store";
 import { requireWhatsAppConnectionReady } from "~/server/db/whatsapp-connection-store";
 import { createKapsoInboundReplySender } from "~/server/whatsapp/kapso-whatsapp";
 
@@ -21,7 +22,10 @@ export async function POST(request: Request) {
 
   const result = await runKapsoInboundWorker(
     { now: new Date() },
-    drizzleWhatsAppInboundStore,
+    {
+      ...drizzleWhatsAppInboundStore,
+      suppressPendingReminderDeliveries,
+    },
     {
       processText: async (input) => {
         await requireWhatsAppConnectionReady({

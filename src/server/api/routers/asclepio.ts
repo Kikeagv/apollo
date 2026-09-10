@@ -31,8 +31,9 @@ export const asclepioRouter = {
         input,
         {
           ...drizzleSimulatedWhatsAppBookingStore,
-          notifySecretaryOfConversationEscalation: (notification) =>
-            provider.sendConversationEscalationNotification(notification),
+          notifySecretaryOfConversationEscalation: async (notification) => {
+            await provider.sendConversationEscalationNotification(notification);
+          },
           suppressPendingReminderDeliveries,
         },
         undefined,
@@ -69,8 +70,9 @@ export const asclepioRouter = {
         },
         {
           ...drizzleSimulatedWhatsAppBookingStore,
-          notifySecretaryOfConversationEscalation: (notification) =>
-            provider.sendConversationEscalationNotification(notification),
+          notifySecretaryOfConversationEscalation: async (notification) => {
+            await provider.sendConversationEscalationNotification(notification);
+          },
           suppressPendingReminderDeliveries,
         },
         createSimulatedAudioTranscriber({
@@ -85,7 +87,10 @@ export const asclepioRouter = {
     .input(
       z.object({
         idempotencyKey: z.string().min(1).max(300),
-        status: z.enum(["delivered", "failed"]),
+        phoneNumberId: z.string().min(1).max(300).optional(),
+        providerEventId: z.string().min(1).max(300).optional(),
+        providerMessageId: z.string().min(1).max(300).optional(),
+        status: z.enum(["accepted", "sent", "delivered", "read", "failed"]),
       }),
     )
     .mutation(({ input }) =>

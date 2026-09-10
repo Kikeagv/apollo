@@ -14,6 +14,7 @@ import {
   inWhatsAppWebhookIngressTransaction,
 } from "~/server/db/clinic-context";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
+import { enqueueTransactionalDeliveryStatus } from "~/server/db/transactional-delivery-store";
 import {
   clinics,
   whatsappConnections,
@@ -25,6 +26,7 @@ const PROVISIONING_LEASE_MS = 10 * 60_000;
 
 export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
   enqueueInbound: (input) => drizzleWhatsAppInboundStore.enqueueInbound(input),
+  enqueueDeliveryStatus: (input) => enqueueTransactionalDeliveryStatus(input),
 
   async claimDueEvents({ limit, now }) {
     return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
@@ -32,17 +34,23 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
         .select()
         .from(whatsappWebhookEvents)
         .where(
-          or(
-            and(
-              eq(whatsappWebhookEvents.status, "pending"),
-              or(
-                isNull(whatsappWebhookEvents.nextAttemptAt),
-                lte(whatsappWebhookEvents.nextAttemptAt, now),
+          and(
+            inArray(whatsappWebhookEvents.eventName, [
+              "whatsapp.phone_number.created",
+              "whatsapp.phone_number.deleted",
+            ]),
+            or(
+              and(
+                eq(whatsappWebhookEvents.status, "pending"),
+                or(
+                  isNull(whatsappWebhookEvents.nextAttemptAt),
+                  lte(whatsappWebhookEvents.nextAttemptAt, now),
+                ),
               ),
-            ),
-            and(
-              eq(whatsappWebhookEvents.status, "processing"),
-              lte(whatsappWebhookEvents.leaseExpiresAt, now),
+              and(
+                eq(whatsappWebhookEvents.status, "processing"),
+                lte(whatsappWebhookEvents.leaseExpiresAt, now),
+              ),
             ),
           ),
         )
@@ -61,6 +69,10 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
           .where(
             and(
               eq(whatsappWebhookEvents.id, candidate.id),
+              inArray(whatsappWebhookEvents.eventName, [
+                "whatsapp.phone_number.created",
+                "whatsapp.phone_number.deleted",
+              ]),
               or(
                 and(
                   eq(whatsappWebhookEvents.status, "pending"),

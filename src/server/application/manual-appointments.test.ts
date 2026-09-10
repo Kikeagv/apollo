@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { ManualAppointmentTransactionalDeliveryEnqueuer } from "./manual-appointments";
 import {
   cancelManualAppointment,
   createManualAppointment,
@@ -13,6 +14,48 @@ import {
 } from "./manual-appointments";
 
 describe("crear una Cita manual", () => {
+  it("persiste el aviso en el outbox cuando el almacén ofrece la ruta durable", async () => {
+    const enqueueTransactionalMessage = vi
+      .fn<
+        ManualAppointmentTransactionalDeliveryEnqueuer["enqueueTransactionalMessage"]
+      >()
+      .mockResolvedValue(undefined);
+    const create = vi.fn().mockResolvedValue({
+      id: "appointment-1",
+      startsAt: new Date("2026-08-10T14:00:00.000Z"),
+      transactionalMessage: {
+        appointmentId: "appointment-1",
+        clinicId: "clinic-1",
+        recipient: {
+          id: "contact-1",
+          name: "Ana Martínez",
+          phoneE164: "+50371234567",
+        },
+        type: "manual-confirmation" as const,
+      },
+    });
+
+    await createManualAppointment(
+      {
+        clinicId: "clinic-1",
+        doctorId: "doctor-1",
+        identityId: "operator-1",
+        notificationRecipientContactId: "contact-1",
+        patientId: "patient-1",
+        serviceOfferId: "offer-1",
+        startsAt: new Date("2026-08-10T14:00:00.000Z"),
+      },
+      { create, enqueueTransactionalMessage },
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
+
+    const call = enqueueTransactionalMessage.mock.calls[0]?.[0];
+    expect(call?.actorIdentityId).toBe("operator-1");
+    expect(call?.message.appointmentId).toBe("appointment-1");
+    expect(call?.message.type).toBe("manual-confirmation");
+    expect(call?.now).toEqual(new Date("2026-08-01T00:00:00.000Z"));
+  });
+
   it("solicita y registra una confirmación inmediata para el Contacto vinculado elegido", async () => {
     const startsAt = new Date("2026-08-10T14:00:00.000Z");
     const send = vi.fn().mockResolvedValue(undefined);

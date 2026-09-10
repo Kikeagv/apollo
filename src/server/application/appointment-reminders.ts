@@ -1,9 +1,11 @@
 import type { WhatsAppProvider } from "./whatsapp-provider";
+import type { WhatsAppSendResult } from "./whatsapp-provider";
+import type { TransactionalWhatsAppRoute } from "~/domain/whatsapp-delivery";
 
 export type AppointmentReminderRecipient = {
   id: string;
   name: string;
-  phoneE164: string;
+  phoneE164: string | null;
 };
 
 export type AppointmentReminderSender = {
@@ -11,8 +13,10 @@ export type AppointmentReminderSender = {
     appointmentId: string;
     clinicId: string;
     idempotencyKey: string;
+    recipientBusinessScopedUserId?: string | null;
     recipient: AppointmentReminderRecipient;
-  }): Promise<void>;
+    route?: TransactionalWhatsAppRoute;
+  }): Promise<WhatsAppSendResult | void>;
 };
 
 export const appointmentReminderCheckpoints = ["24h", "22h", "20h"] as const;

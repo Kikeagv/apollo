@@ -3,6 +3,11 @@ import {
   type KapsoInboundMessage,
 } from "~/domain/whatsapp-inbound";
 import {
+  isKapsoDeliveryStatusEventName,
+  parseKapsoDeliveryStatusPayload,
+  type KapsoDeliveryStatusEvent,
+} from "~/domain/whatsapp-delivery-events";
+import {
   KapsoLifecycleEventError,
   isKapsoPhoneNumberLifecycleEventName,
   isKapsoPhoneNumberWebhookEventName,
@@ -64,6 +69,10 @@ export type KapsoProvisioningStore = {
   enqueueInbound?: (input: {
     idempotencyKey: string;
     message: KapsoInboundMessage;
+  }) => Promise<{ accepted: boolean; eventId: string }>;
+  enqueueDeliveryStatus?: (input: {
+    event: KapsoDeliveryStatusEvent;
+    idempotencyKey: string;
   }) => Promise<{ accepted: boolean; eventId: string }>;
   getStep: (input: {
     clinicId: string;
@@ -175,7 +184,8 @@ export async function receiveKapsoWebhook(input: {
   idempotencyKey: string;
   payload: unknown;
   store: Pick<KapsoProvisioningStore, "enqueue" | "enqueueIgnored"> &
-    Pick<KapsoProvisioningStore, "enqueueInbound">;
+    Pick<KapsoProvisioningStore, "enqueueInbound"> &
+    Pick<KapsoProvisioningStore, "enqueueDeliveryStatus">;
 }) {
   if (input.eventName === "whatsapp.message.received") {
     if (input.store.enqueueInbound === undefined) {
@@ -201,6 +211,23 @@ export async function receiveKapsoWebhook(input: {
         ? { eventIds: results.map((result) => result.eventId) }
         : {}),
     };
+  }
+  if (isKapsoDeliveryStatusEventName(input.eventName)) {
+    const event = parseKapsoDeliveryStatusPayload(
+      input.eventName,
+      input.payload,
+    );
+    if (input.store.enqueueDeliveryStatus !== undefined) {
+      return input.store.enqueueDeliveryStatus({
+        event,
+        idempotencyKey: input.idempotencyKey,
+      });
+    }
+    return input.store.enqueueIgnored({
+      eventName: input.eventName,
+      idempotencyKey: input.idempotencyKey,
+      payload: event.rawPayload,
+    });
   }
   if (isKapsoPhoneNumberWebhookEventName(input.eventName)) {
     if (

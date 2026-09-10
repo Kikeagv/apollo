@@ -26,7 +26,7 @@ const sentConversationEscalationNotifications: Array<{
 const sentConversationReplies: Array<{
   clinicId: string;
   idempotencyKey: string;
-  recipientPhoneE164: string;
+  recipientPhoneE164: string | null;
   text: string;
 }> = [];
 
@@ -34,6 +34,14 @@ const sentConversationReplies: Array<{
 export const simulatedAppointmentMessageSender: ManualAppointmentMessageSender =
   {
     async send(message) {
+      if (
+        sentAppointmentMessages.some(
+          (sent) =>
+            appointmentMessageKey(sent) === appointmentMessageKey(message),
+        )
+      ) {
+        return;
+      }
       sentAppointmentMessages.push(message);
     },
   };
@@ -83,7 +91,7 @@ export async function sendSimulatedConversationEscalationNotification(input: {
 export async function sendSimulatedConversationReply(input: {
   clinicId: string;
   idempotencyKey: string;
-  recipientPhoneE164: string;
+  recipientPhoneE164: string | null;
   text: string;
 }) {
   if (
@@ -98,6 +106,13 @@ export async function sendSimulatedConversationReply(input: {
 
 export function getSentSimulatedAppointmentMessages() {
   return [...sentAppointmentMessages];
+}
+
+function appointmentMessageKey(message: ManualAppointmentTransactionalMessage) {
+  return (
+    message.idempotencyKey ??
+    `${message.appointmentId}:${message.type}:${message.recipient.id}`
+  );
 }
 
 export function getSentSimulatedAppointmentReminders() {

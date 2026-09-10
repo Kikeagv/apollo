@@ -102,6 +102,11 @@ export type WhatsAppInboundStore = {
     now: Date;
     reason: string;
   }): Promise<void>;
+  suppressPendingReminderDeliveries?(input: {
+    clinicId: string;
+    contactId: string;
+    now: Date;
+  }): Promise<number>;
   withConversationLock<T>(input: {
     clinicId: string;
     conversationId: string | null;
@@ -256,6 +261,12 @@ async function processInboundEvent(input: {
     });
     return "ignored";
   }
+
+  await store.suppressPendingReminderDeliveries?.({
+    clinicId: resolved.clinicId,
+    contactId: resolved.contactId,
+    now,
+  });
 
   return store.withConversationLock({
     clinicId: resolved.clinicId,

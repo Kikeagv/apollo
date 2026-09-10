@@ -44,7 +44,7 @@ export type PendingDeliveryCase = PendingCaseBase & {
   delivery: {
     attempts: number;
     idempotencyKey: string;
-    kind: "appointment-reminder" | "daily-agenda-pdf";
+    kind: "appointment-message" | "appointment-reminder" | "daily-agenda-pdf";
     lastError: string | null;
   };
 };

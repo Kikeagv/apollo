@@ -1,4 +1,6 @@
 import type { WhatsAppProvider } from "./whatsapp-provider";
+import type { WhatsAppSendResult } from "./whatsapp-provider";
+import type { TransactionalWhatsAppRoute } from "~/domain/whatsapp-delivery";
 
 export type ManualAppointment = {
   id: string;
@@ -108,12 +110,17 @@ export type ManualAppointmentMessageType =
 export type ManualAppointmentTransactionalMessage = {
   appointmentId: string;
   clinicId: string;
-  recipient: { id: string; name: string; phoneE164: string };
+  idempotencyKey?: string;
+  recipient: { id: string; name: string; phoneE164: string | null };
+  recipientBusinessScopedUserId?: string | null;
+  route?: TransactionalWhatsAppRoute;
   type: ManualAppointmentMessageType;
 };
 
 export type ManualAppointmentMessageSender = {
-  send(message: ManualAppointmentTransactionalMessage): Promise<void>;
+  send(
+    message: ManualAppointmentTransactionalMessage,
+  ): Promise<WhatsAppSendResult | void>;
 };
 
 export type ManualAppointmentMessageDeliveryRecorder = {
@@ -124,6 +131,14 @@ export type ManualAppointmentMessageDeliveryRecorder = {
     recipientContactId: string;
     result: "sent" | "failed";
     type: ManualAppointmentMessageType;
+  }): Promise<void>;
+};
+
+export type ManualAppointmentTransactionalDeliveryEnqueuer = {
+  enqueueTransactionalMessage(input: {
+    actorIdentityId: string;
+    message: ManualAppointmentTransactionalMessage;
+    now: Date;
   }): Promise<void>;
 };
 
@@ -218,7 +233,10 @@ export type CreateManualAppointmentInput = {
 export async function createManualAppointment(
   input: CreateManualAppointmentInput,
   store: ManualAppointmentCreator &
-    Partial<ManualAppointmentMessageDeliveryRecorder>,
+    Partial<
+      ManualAppointmentMessageDeliveryRecorder &
+        ManualAppointmentTransactionalDeliveryEnqueuer
+    >,
   now = new Date(),
   messageSender?: ManualAppointmentMessageSender | WhatsAppProvider,
 ) {
@@ -240,6 +258,7 @@ export async function createManualAppointment(
     input.identityId,
     store,
     messageSender,
+    now,
   );
   return appointment;
 }
@@ -254,7 +273,10 @@ export async function cancelManualAppointment(
     reason?: string;
   },
   store: ManualAppointmentCanceller &
-    Partial<ManualAppointmentMessageDeliveryRecorder>,
+    Partial<
+      ManualAppointmentMessageDeliveryRecorder &
+        ManualAppointmentTransactionalDeliveryEnqueuer
+    >,
   now = new Date(),
   messageSender?: ManualAppointmentMessageSender | WhatsAppProvider,
 ) {
@@ -270,6 +292,7 @@ export async function cancelManualAppointment(
     input.identityId,
     store,
     messageSender,
+    now,
   );
   return appointment;
 }
@@ -324,12 +347,31 @@ async function deliverTransactionalMessage(
   actorIdentityId: string,
   store:
     | (ManualAppointmentCreator &
-        Partial<ManualAppointmentMessageDeliveryRecorder>)
+        Partial<
+          ManualAppointmentMessageDeliveryRecorder &
+            ManualAppointmentTransactionalDeliveryEnqueuer
+        >)
     | (ManualAppointmentCanceller &
-        Partial<ManualAppointmentMessageDeliveryRecorder>),
+        Partial<
+          ManualAppointmentMessageDeliveryRecorder &
+            ManualAppointmentTransactionalDeliveryEnqueuer
+        >),
   messageSender: ManualAppointmentMessageSender | WhatsAppProvider | undefined,
+  now: Date,
 ) {
   if (appointment.transactionalMessage === undefined) return;
+  const enqueueTransactionalMessage = store.enqueueTransactionalMessage;
+  if (
+    messageSender === undefined &&
+    enqueueTransactionalMessage !== undefined
+  ) {
+    await enqueueTransactionalMessage.call(store, {
+      actorIdentityId,
+      message: appointment.transactionalMessage,
+      now,
+    });
+    return;
+  }
   if (messageSender === undefined || !hasMessageDeliveryRecorder(store)) {
     throw new Error(
       "No se configuró el envío de Mensajes transaccionales de Cita",

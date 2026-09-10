@@ -1,4 +1,15 @@
-import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import {
@@ -16,12 +27,17 @@ import {
   type ManualAppointmentCreator,
   type ManualAppointmentMessageDeliveryRecorder,
   type ManualAppointmentMessageType,
+  type ManualAppointmentTransactionalDeliveryEnqueuer,
   type ManualAppointmentReader,
 } from "~/server/application/manual-appointments";
 import { type AppointmentReminderStore } from "~/server/application/appointment-reminders";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
 import { hasCurrentWhatsAppConsent } from "~/server/db/whatsapp-consent-query";
+import {
+  enqueueManualAppointmentTransactionalDelivery,
+  enqueueManualAppointmentTransactionalDeliveryInTransaction,
+} from "~/server/db/transactional-delivery-store";
 import type { db } from "~/server/db";
 import {
   appointmentEvents,
@@ -35,6 +51,7 @@ import {
   serviceOffers,
   services,
   simulatedWhatsAppMessages,
+  whatsappIdentities,
 } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -42,10 +59,13 @@ type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   ManualAppointmentCanceller &
   ManualAppointmentMessageDeliveryRecorder &
+  ManualAppointmentTransactionalDeliveryEnqueuer &
   ManualAppointmentReader &
   AppointmentReminderStore &
   PanaceaCalendarReader &
   PanaceaCalendarDoctorReader = {
+  enqueueTransactionalMessage: enqueueManualAppointmentTransactionalDelivery,
+
   async create(input, now = new Date()) {
     return inClinicTransaction(input, async (transaction) => {
       await setCalendarOperation(transaction);
@@ -128,6 +148,31 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         actorIdentityId: input.identityId,
         clinicId: input.clinicId,
       });
+      const transactionalMessage = appointmentInput.notificationRecipient
+        ? {
+            appointmentId: appointment.id,
+            clinicId: input.clinicId,
+            recipient: appointmentInput.notificationRecipient,
+            recipientBusinessScopedUserId:
+              await latestWhatsAppBusinessScopedUserId(
+                transaction,
+                input.clinicId,
+                appointmentInput.notificationRecipient.id,
+              ),
+            type: "manual-confirmation" as const,
+          }
+        : undefined;
+      if (transactionalMessage !== undefined) {
+        await enableTransactionalDeliveryContext(transaction);
+        await enqueueManualAppointmentTransactionalDeliveryInTransaction(
+          transaction,
+          {
+            actorIdentityId: input.identityId,
+            message: transactionalMessage,
+            now,
+          },
+        );
+      }
       return {
         ...appointment,
         bufferMinutes: appointmentInput.bufferMinutes,
@@ -138,12 +183,7 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         outsideSchedule,
         patientId: input.patientId,
         priceUsd: appointmentInput.priceUsd,
-        transactionalMessage: appointmentInput.notificationRecipient && {
-          appointmentId: appointment.id,
-          clinicId: input.clinicId,
-          recipient: appointmentInput.notificationRecipient,
-          type: "manual-confirmation" as const,
-        },
+        transactionalMessage,
       };
     });
   },
@@ -356,15 +396,35 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
         actorIdentityId: input.identityId,
         clinicId: input.clinicId,
       });
+      const transactionalMessage = notificationRecipient
+        ? {
+            appointmentId: appointment.id,
+            clinicId: input.clinicId,
+            recipient: notificationRecipient,
+            recipientBusinessScopedUserId:
+              await latestWhatsAppBusinessScopedUserId(
+                transaction,
+                input.clinicId,
+                notificationRecipient.id,
+              ),
+            type: "manual-cancellation" as const,
+          }
+        : undefined;
+      if (transactionalMessage !== undefined) {
+        await enableTransactionalDeliveryContext(transaction);
+        await enqueueManualAppointmentTransactionalDeliveryInTransaction(
+          transaction,
+          {
+            actorIdentityId: input.identityId,
+            message: transactionalMessage,
+            now: input.now,
+          },
+        );
+      }
       return {
         ...appointment,
         status: "cancelled" as const,
-        transactionalMessage: notificationRecipient && {
-          appointmentId: appointment.id,
-          clinicId: input.clinicId,
-          recipient: notificationRecipient,
-          type: "manual-cancellation" as const,
-        },
+        transactionalMessage,
       };
     });
   },
@@ -422,6 +482,14 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
     return readCalendarDoctors(input);
   },
 };
+
+async function enableTransactionalDeliveryContext(
+  transaction: ClinicTransaction,
+) {
+  await transaction.execute(
+    sql`select set_config('app.whatsapp_outbound_worker', 'true', true)`,
+  );
+}
 
 async function readManualAppointmentFormData(input: {
   clinicId: string;
@@ -936,6 +1004,27 @@ async function notificationRecipientForAppointment(
       ),
     );
   return recipient;
+}
+
+async function latestWhatsAppBusinessScopedUserId(
+  transaction: ClinicTransaction,
+  clinicId: string,
+  contactId: string,
+) {
+  const [identity] = await transaction
+    .select({ businessScopedUserId: whatsappIdentities.businessScopedUserId })
+    .from(whatsappIdentities)
+    .where(
+      and(
+        eq(whatsappIdentities.clinicId, clinicId),
+        eq(whatsappIdentities.contactId, contactId),
+        eq(whatsappIdentities.status, "active"),
+        isNotNull(whatsappIdentities.businessScopedUserId),
+      ),
+    )
+    .orderBy(desc(whatsappIdentities.observedAt))
+    .limit(1);
+  return identity?.businessScopedUserId ?? null;
 }
 
 function messageEventType(

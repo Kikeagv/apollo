@@ -1,4 +1,21 @@
-import { and, eq, gt, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  exists,
+  gt,
+  gte,
+  inArray,
+  isNull,
+  isNotNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import {
   appointmentReminderCheckpoints,
@@ -6,15 +23,37 @@ import {
 } from "~/server/application/appointment-reminders";
 import {
   retryAt,
+  type TransactionalDeliveryError,
   type TransactionalDeliveryCallbackStore,
   type TransactionalDelivery,
   type TransactionalDeliveryStore,
 } from "~/server/application/transactional-deliveries";
 import {
+  buildTransactionalTemplateParameters,
+  formatTransactionalAppointmentText,
+  reconcileWhatsAppDeliveryStatus,
+  type TransactionalWhatsAppRoute,
+  type TransactionalWhatsAppTemplate,
+  type WhatsAppDeliveryStatus,
+} from "~/domain/whatsapp-delivery";
+import type { ManualAppointmentMessageType } from "~/server/application/manual-appointments";
+import type {
+  TransactionalDeliveryStatusEvent,
+  TransactionalDeliveryStatusStore,
+} from "~/server/application/transactional-delivery-status";
+import { TransactionalDeliveryStatusNotFoundError } from "~/server/application/transactional-delivery-status";
+import {
+  isKapsoDeliveryStatusEventName,
+  type KapsoDeliveryStatusEvent,
+} from "~/domain/whatsapp-delivery-events";
+import {
   inAppointmentSchedulerTransaction,
   inClinicTransaction,
+  inWhatsAppDeliveryStatusWorkerTransaction,
+  inWhatsAppWebhookIngressTransaction,
+  inWhatsAppOutboundWorkerTransaction,
 } from "~/server/db/clinic-context";
-import { hasCurrentWhatsAppConsent } from "~/server/db/whatsapp-consent-query";
+import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
 import type { db } from "~/server/db";
 import {
   appointmentEvents,
@@ -28,6 +67,12 @@ import {
   transactionalDeliveries,
   transactionalDeliveryAlerts,
   transactionalDeliveryAttempts,
+  whatsappWebhookEvents,
+  whatsappInboundMessages,
+  whatsappInboundReplies,
+  whatsappConnections,
+  whatsappCriticalTemplates,
+  whatsappIdentities,
   user,
 } from "~/server/db/schema";
 
@@ -44,7 +89,8 @@ export function shouldSuppressWhatsAppReminder(input: {
   recipientContactId: string | null;
 }) {
   return (
-    input.kind === "appointment-reminder" &&
+    (input.kind === "appointment-reminder" ||
+      input.kind === "appointment-message") &&
     (input.recipientContactId === null || !input.hasCurrentConsent)
   );
 }
@@ -52,7 +98,7 @@ export function shouldSuppressWhatsAppReminder(input: {
 /** Persistencia del outbox y sus concesiones, siempre bajo RLS del worker. */
 export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
   async claimReadyDeliveries({ now }) {
-    return inAppointmentSchedulerTransaction(async (transaction) => {
+    return inWhatsAppOutboundWorkerTransaction(async (transaction) => {
       const candidates = await transaction
         .select()
         .from(transactionalDeliveries)
@@ -70,14 +116,19 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
         );
       const claimed: TransactionalDelivery[] = [];
       for (const candidate of candidates) {
+        const consentSnapshot =
+          isWhatsAppDeliveryKind(candidate.kind) &&
+          candidate.recipientContactId !== null
+            ? await readWhatsAppConsentSnapshot(transaction, {
+                clinicId: candidate.clinicId,
+                contactId: candidate.recipientContactId,
+                now,
+              })
+            : undefined;
         const hasCurrentConsent =
-          candidate.kind !== "appointment-reminder" ||
+          !isWhatsAppDeliveryKind(candidate.kind) ||
           (candidate.recipientContactId !== null &&
-            (await hasCurrentWhatsAppConsent(transaction, {
-              clinicId: candidate.clinicId,
-              contactId: candidate.recipientContactId,
-              now,
-            })));
+            consentSnapshot?.decision === "allowed");
         if (
           shouldSuppressWhatsAppReminder({
             hasCurrentConsent,
@@ -88,6 +139,16 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
           await transaction
             .update(transactionalDeliveries)
             .set({
+              ...(consentSnapshot === undefined
+                ? {}
+                : {
+                    consentAcceptedAt: consentSnapshot.acceptedAt,
+                    consentDecision: consentSnapshot.decision,
+                    consentPrivacyVersion: consentSnapshot.privacyVersion,
+                    consentReference: consentSnapshot.reference,
+                    consentTermsVersion: consentSnapshot.termsVersion,
+                    consentTextReference: consentSnapshot.textReference,
+                  }),
               lastError: "Consentimiento de WhatsApp no vigente",
               leaseExpiresAt: null,
               status: "suppressed",
@@ -108,6 +169,16 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
                 ),
               ),
             );
+          continue;
+        }
+        if (
+          candidate.recipientContactId !== null &&
+          (await hasActiveRecipientDelivery(transaction, {
+            clinicId: candidate.clinicId,
+            contactId: candidate.recipientContactId,
+            now,
+          }))
+        ) {
           continue;
         }
         const [delivery] = await transaction
@@ -140,13 +211,47 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
     });
   },
 
+  async markAccepted({ delivery, now, providerMessageId }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(transactionalDeliveries)
+        .set({
+          leaseExpiresAt: null,
+          providerMessageId,
+          providerStatus: "accepted",
+          status: "accepted",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(transactionalDeliveries.id, delivery.id),
+            eq(transactionalDeliveries.status, "processing"),
+            eq(transactionalDeliveries.attempts, delivery.attempts),
+          ),
+        )
+        .returning({ id: transactionalDeliveries.id });
+      if (updated === undefined) return;
+      await insertDeliveryAttempt(transaction, {
+        attempt: delivery.attempts,
+        clinicId: delivery.clinicId,
+        deliveryId: delivery.id,
+        occurredAt: now,
+        outcome: "accepted",
+        providerMessageId,
+        providerStatus: "accepted",
+        retainUntil: new Date(now.valueOf() + RETAIN_MS),
+      });
+    });
+  },
+
   async markDelivered({ delivery, now }) {
-    await inAppointmentSchedulerTransaction(async (transaction) => {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
       const [updated] = await transaction
         .update(transactionalDeliveries)
         .set({
           deliveredAt: now,
           leaseExpiresAt: null,
+          providerStatus: "sent",
           status: "sent",
           updatedAt: now,
         })
@@ -159,32 +264,79 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
         )
         .returning({ id: transactionalDeliveries.id });
       if (updated === undefined) return;
-      await transaction.insert(transactionalDeliveryAttempts).values({
+      await insertDeliveryAttempt(transaction, {
         attempt: delivery.attempts,
         clinicId: delivery.clinicId,
         deliveryId: delivery.id,
         occurredAt: now,
         outcome: "delivered",
+        providerStatus: "sent",
         retainUntil: new Date(now.valueOf() + RETAIN_MS),
       });
-      if (delivery.kind !== "appointment-reminder") return;
-      const owner = await activeOwner(transaction, delivery.clinicId);
-      if (owner === undefined) return;
-      await transaction.insert(appointmentEvents).values({
-        actorClinicUserId: owner.id,
-        appointmentId: delivery.payload.appointmentId,
+      await recordAppointmentDeliveryEvent(transaction, delivery, "sent", now);
+    });
+  },
+
+  async markFailed({ delivery, error, now }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(transactionalDeliveries)
+        .set({
+          lastError: error.message.slice(0, 1_000),
+          leaseExpiresAt: null,
+          providerStatus: "failed",
+          status: "failed",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(transactionalDeliveries.id, delivery.id),
+            eq(transactionalDeliveries.status, "processing"),
+            eq(transactionalDeliveries.attempts, delivery.attempts),
+          ),
+        )
+        .returning({ id: transactionalDeliveries.id });
+      if (updated === undefined) return;
+      await recordFailedDelivery(transaction, delivery, error.message, now);
+    });
+  },
+
+  async markUnknown({ delivery, error, now }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(transactionalDeliveries)
+        .set({
+          lastError: error.message.slice(0, 1_000),
+          leaseExpiresAt: null,
+          nextAttemptAt: now,
+          status: "unknown",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(transactionalDeliveries.id, delivery.id),
+            eq(transactionalDeliveries.status, "processing"),
+            eq(transactionalDeliveries.attempts, delivery.attempts),
+          ),
+        )
+        .returning({ id: transactionalDeliveries.id });
+      if (updated === undefined) return;
+      await insertDeliveryAttempt(transaction, {
+        attempt: delivery.attempts,
         clinicId: delivery.clinicId,
+        deliveryId: delivery.id,
+        error: error.message.slice(0, 1_000),
         occurredAt: now,
-        reason: delivery.payload.checkpoint,
-        recipientContactId: delivery.payload.recipient.id,
-        type: "reminder-sent",
+        outcome: "unknown",
+        retainUntil: new Date(now.valueOf() + RETAIN_MS),
       });
+      await insertDeliveryAlert(transaction, delivery, now);
     });
   },
 
   async scheduleRetry({ delivery, error, now }) {
-    await inAppointmentSchedulerTransaction(async (transaction) => {
-      const nextAttemptAt = retryAt(delivery.attempts, now);
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      const nextAttemptAt = nextAttemptForError(delivery.attempts, error, now);
       if (nextAttemptAt !== undefined) {
         const [updated] = await transaction
           .update(transactionalDeliveries)
@@ -204,7 +356,7 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
           )
           .returning({ id: transactionalDeliveries.id });
         if (updated === undefined) return;
-        await transaction.insert(transactionalDeliveryAttempts).values({
+        await insertDeliveryAttempt(transaction, {
           attempt: delivery.attempts,
           clinicId: delivery.clinicId,
           deliveryId: delivery.id,
@@ -221,6 +373,7 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
           lastError: error.message.slice(0, 1_000),
           leaseExpiresAt: null,
           status: "failed",
+          providerStatus: "failed",
           updatedAt: now,
         })
         .where(
@@ -232,7 +385,7 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
         )
         .returning({ id: transactionalDeliveries.id });
       if (updated === undefined) return;
-      await transaction.insert(transactionalDeliveryAttempts).values({
+      await insertDeliveryAttempt(transaction, {
         attempt: delivery.attempts,
         clinicId: delivery.clinicId,
         deliveryId: delivery.id,
@@ -241,14 +394,7 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
         outcome: "failed",
         retainUntil: new Date(now.valueOf() + RETAIN_MS),
       });
-      await transaction
-        .insert(transactionalDeliveryAlerts)
-        .values({
-          clinicId: delivery.clinicId,
-          deliveryId: delivery.id,
-          retainUntil: new Date(now.valueOf() + RETAIN_MS),
-        })
-        .onConflictDoNothing();
+      await insertDeliveryAlert(transaction, delivery, now);
     });
   },
 };
@@ -256,33 +402,436 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
 export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCallbackStore =
   {
     async recordProviderCallback(input) {
-      await inAppointmentSchedulerTransaction(async (transaction) => {
-        const delivery =
-          await transaction.query.transactionalDeliveries.findFirst({
-            columns: { clinicId: true, id: true, retainUntil: true },
-            where: eq(
-              transactionalDeliveries.idempotencyKey,
-              input.idempotencyKey,
-            ),
-          });
-        if (delivery === undefined)
-          throw new Error(
-            "El callback no corresponde a una Entrega transaccional",
+      await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+        const delivery = await findDeliveryForCallback(transaction, input);
+        if (delivery !== undefined) {
+          const currentStatus = whatsappStatusFromDelivery(delivery.status);
+          const reconciledStatus = reconcileWhatsAppDeliveryStatus(
+            currentStatus,
+            input.status,
           );
-        await transaction
-          .insert(transactionalDeliveryAttempts)
-          .values({
-            attempt: 0,
-            clinicId: delivery.clinicId,
-            deliveryId: delivery.id,
-            outcome: "callback",
-            providerStatus: input.status,
-            retainUntil: delivery.retainUntil,
-          })
-          .onConflictDoNothing();
+          const callbackNow = new Date();
+          await transaction
+            .update(transactionalDeliveries)
+            .set({
+              deliveredAt:
+                reconciledStatus === "delivered" || reconciledStatus === "read"
+                  ? (delivery.deliveredAt ?? callbackNow)
+                  : delivery.deliveredAt,
+              leaseExpiresAt: null,
+              providerMessageId:
+                input.providerMessageId ?? delivery.providerMessageId,
+              providerStatus: reconciledStatus,
+              lastError:
+                reconciledStatus === "failed"
+                  ? (input.error ?? delivery.lastError ?? "Kapso reportó fallo")
+                  : null,
+              status: reconciledStatus,
+              updatedAt: callbackNow,
+            })
+            .where(eq(transactionalDeliveries.id, delivery.id));
+          const callbackInserted = await insertDeliveryCallbackAttempt(
+            transaction,
+            {
+              attempt: 0,
+              clinicId: delivery.clinicId,
+              deliveryId: delivery.id,
+              occurredAt: callbackNow,
+              error: input.error,
+              outcome: "callback",
+              providerEventId: input.providerEventId,
+              providerMessageId:
+                input.providerMessageId ?? delivery.providerMessageId,
+              providerStatus: input.status,
+              retainUntil: delivery.retainUntil,
+            },
+          );
+          if (
+            callbackInserted &&
+            (input.status === "sent" ||
+              input.status === "delivered" ||
+              input.status === "read")
+          ) {
+            await recordAppointmentDeliveryEvent(
+              transaction,
+              delivery,
+              "sent",
+              callbackNow,
+            );
+          }
+          if (callbackInserted && reconciledStatus === "failed") {
+            await recordAppointmentDeliveryEvent(
+              transaction,
+              delivery,
+              "failed",
+              callbackNow,
+            );
+            await insertDeliveryAlert(transaction, delivery, callbackNow);
+          }
+          return;
+        }
+
+        const reply = await findReplyForCallback(transaction, input);
+        if (reply !== undefined) {
+          const currentStatus = whatsappStatusFromReply(reply.status);
+          const reconciledStatus = reconcileWhatsAppDeliveryStatus(
+            currentStatus,
+            input.status,
+          );
+          await transaction
+            .update(whatsappInboundReplies)
+            .set({
+              lastError:
+                input.status === "failed"
+                  ? (input.error ?? "Kapso reportó fallo")
+                  : null,
+              providerMessageId:
+                input.providerMessageId ?? reply.providerMessageId,
+              sentAt:
+                reconciledStatus === "sent" ||
+                reconciledStatus === "delivered" ||
+                reconciledStatus === "read"
+                  ? (reply.sentAt ?? new Date())
+                  : reply.sentAt,
+              status: reconciledStatus,
+            })
+            .where(eq(whatsappInboundReplies.id, reply.id));
+          return;
+        }
+
+        throw new TransactionalDeliveryStatusNotFoundError();
       });
     },
   };
+
+export const drizzleTransactionalDeliveryStatusStore: TransactionalDeliveryStatusStore =
+  {
+    async claimDueStatusEvents({ limit, now }) {
+      return inWhatsAppDeliveryStatusWorkerTransaction(async (transaction) => {
+        const candidates = await transaction
+          .select()
+          .from(whatsappWebhookEvents)
+          .where(
+            and(
+              inArray(whatsappWebhookEvents.eventName, [
+                "whatsapp.message.sent",
+                "whatsapp.message.delivered",
+                "whatsapp.message.read",
+                "whatsapp.message.failed",
+              ]),
+              or(
+                and(
+                  eq(whatsappWebhookEvents.status, "pending"),
+                  or(
+                    isNull(whatsappWebhookEvents.nextAttemptAt),
+                    lte(whatsappWebhookEvents.nextAttemptAt, now),
+                  ),
+                ),
+                and(
+                  eq(whatsappWebhookEvents.status, "processing"),
+                  lte(whatsappWebhookEvents.leaseExpiresAt, now),
+                ),
+              ),
+            ),
+          )
+          .orderBy(asc(whatsappWebhookEvents.receivedAt))
+          .limit(limit);
+        const claimed: TransactionalDeliveryStatusEvent[] = [];
+        for (const candidate of candidates) {
+          if (!isKapsoDeliveryStatusEventName(candidate.eventName)) continue;
+          const leaseToken = randomUUID();
+          const [event] = await transaction
+            .update(whatsappWebhookEvents)
+            .set({
+              attempts: candidate.attempts + 1,
+              lastError: null,
+              leaseExpiresAt: new Date(now.valueOf() + LEASE_MS),
+              leaseToken,
+              nextAttemptAt: null,
+              status: "processing",
+            })
+            .where(
+              and(
+                eq(whatsappWebhookEvents.id, candidate.id),
+                inArray(whatsappWebhookEvents.eventName, [
+                  "whatsapp.message.sent",
+                  "whatsapp.message.delivered",
+                  "whatsapp.message.read",
+                  "whatsapp.message.failed",
+                ]),
+                or(
+                  and(
+                    eq(whatsappWebhookEvents.status, "pending"),
+                    or(
+                      isNull(whatsappWebhookEvents.nextAttemptAt),
+                      lte(whatsappWebhookEvents.nextAttemptAt, now),
+                    ),
+                  ),
+                  and(
+                    eq(whatsappWebhookEvents.status, "processing"),
+                    lte(whatsappWebhookEvents.leaseExpiresAt, now),
+                  ),
+                ),
+              ),
+            )
+            .returning();
+          if (event === undefined) continue;
+          claimed.push({
+            attempts: event.attempts,
+            eventName: event.eventName as KapsoDeliveryStatusEvent["eventName"],
+            id: event.id,
+            idempotencyKey: event.idempotencyKey,
+            leaseToken: event.leaseToken,
+            payload: event.payload,
+            status: "processing",
+          });
+        }
+        return claimed;
+      });
+    },
+
+    async markStatusProcessed({ eventId, leaseToken, processedAt }) {
+      await inWhatsAppDeliveryStatusWorkerTransaction(async (transaction) => {
+        await transaction
+          .update(whatsappWebhookEvents)
+          .set({
+            leaseExpiresAt: null,
+            leaseToken: null,
+            nextAttemptAt: null,
+            processedAt,
+            status: "processed",
+          })
+          .where(
+            and(
+              eq(whatsappWebhookEvents.id, eventId),
+              eq(whatsappWebhookEvents.leaseToken, leaseToken),
+              eq(whatsappWebhookEvents.status, "processing"),
+            ),
+          );
+      });
+    },
+
+    async markStatusRejected({ eventId, leaseToken, processedAt, reason }) {
+      await inWhatsAppDeliveryStatusWorkerTransaction(async (transaction) => {
+        await transaction
+          .update(whatsappWebhookEvents)
+          .set({
+            lastError: reason.slice(0, 1_000),
+            leaseExpiresAt: null,
+            leaseToken: null,
+            nextAttemptAt: null,
+            rejectedAt: processedAt,
+            status: "rejected",
+          })
+          .where(
+            and(
+              eq(whatsappWebhookEvents.id, eventId),
+              eq(whatsappWebhookEvents.leaseToken, leaseToken),
+              eq(whatsappWebhookEvents.status, "processing"),
+            ),
+          );
+      });
+    },
+
+    async scheduleStatusRetry({
+      eventId,
+      leaseToken,
+      nextAttemptAt,
+      reason,
+      retriedAt,
+    }) {
+      await inWhatsAppDeliveryStatusWorkerTransaction(async (transaction) => {
+        await transaction
+          .update(whatsappWebhookEvents)
+          .set({
+            lastError: reason.slice(0, 1_000),
+            leaseExpiresAt: null,
+            leaseToken: null,
+            nextAttemptAt,
+            status: "pending",
+          })
+          .where(
+            and(
+              eq(whatsappWebhookEvents.id, eventId),
+              eq(whatsappWebhookEvents.leaseToken, leaseToken),
+              eq(whatsappWebhookEvents.status, "processing"),
+            ),
+          );
+        void retriedAt;
+      });
+    },
+  };
+
+/** Inserta el estado Kapso después de autenticarlo, sin resolverlo en HTTP. */
+export async function enqueueTransactionalDeliveryStatus(input: {
+  event: KapsoDeliveryStatusEvent;
+  idempotencyKey: string;
+}) {
+  return inWhatsAppWebhookIngressTransaction(async (transaction) => {
+    const [inserted] = await transaction
+      .insert(whatsappWebhookEvents)
+      .values({
+        eventName: input.event.eventName,
+        idempotencyKey: input.idempotencyKey,
+        payload: input.event.rawPayload,
+        status: "pending",
+      })
+      .onConflictDoNothing({ target: whatsappWebhookEvents.idempotencyKey })
+      .returning({ id: whatsappWebhookEvents.id });
+    return {
+      accepted: inserted !== undefined,
+      eventId: inserted?.id ?? "duplicate",
+    };
+  });
+}
+
+type ManualAppointmentTransactionalDeliveryInput = {
+  actorIdentityId: string;
+  message: {
+    appointmentId: string;
+    clinicId: string;
+    recipient: { id: string; name: string; phoneE164: string | null };
+    recipientBusinessScopedUserId?: string | null;
+    route?: TransactionalWhatsAppRoute;
+    type: ManualAppointmentMessageType;
+  };
+  now: Date;
+};
+
+async function readManualAppointmentDeliveryContext(
+  transaction: SchedulerTransaction,
+  input: ManualAppointmentTransactionalDeliveryInput,
+) {
+  const appointment = await transaction.query.appointments.findFirst({
+    columns: { doctorId: true, startsAt: true },
+    where: and(
+      eq(appointments.clinicId, input.message.clinicId),
+      eq(appointments.id, input.message.appointmentId),
+    ),
+  });
+  if (appointment === undefined) {
+    throw new Error("La Cita no existe para crear su Entrega");
+  }
+  const doctor = await transaction.query.doctors.findFirst({
+    columns: { publicName: true },
+    where: and(
+      eq(doctors.clinicId, input.message.clinicId),
+      eq(doctors.id, appointment.doctorId),
+    ),
+  });
+  return {
+    doctorName: doctor?.publicName ?? null,
+    startsAt: appointment.startsAt,
+  };
+}
+
+/** Convierte la notificación de una Cita manual en una Entrega durable. */
+export async function enqueueManualAppointmentTransactionalDelivery(
+  input: ManualAppointmentTransactionalDeliveryInput,
+  existingTransaction?: SchedulerTransaction,
+) {
+  const appointment =
+    existingTransaction === undefined
+      ? await inClinicTransaction(
+          {
+            clinicId: input.message.clinicId,
+            identityId: input.actorIdentityId,
+          },
+          (transaction) =>
+            readManualAppointmentDeliveryContext(transaction, input),
+        )
+      : await readManualAppointmentDeliveryContext(existingTransaction, input);
+
+  const insertDelivery = async (transaction: SchedulerTransaction) => {
+    await transaction.execute(
+      sql`select set_config('app.clinic_id', ${input.message.clinicId}, true)`,
+    );
+    const consent = await readWhatsAppConsentSnapshot(transaction, {
+      clinicId: input.message.clinicId,
+      contactId: input.message.recipient.id,
+      now: input.now,
+    });
+    const clinic = await transaction.query.clinics.findFirst({
+      columns: { name: true },
+      where: eq(clinics.id, input.message.clinicId),
+    });
+    if (clinic === undefined) throw new Error("La Clínica no existe");
+    const template = await readTemplateSnapshot(
+      transaction,
+      input.message.clinicId,
+      input.message.type === "manual-confirmation"
+        ? "confirmation"
+        : "cancellation",
+      {
+        clinicName: clinic.name,
+        doctorName: appointment.doctorName,
+        startsAt: appointment.startsAt,
+      },
+    );
+    const kind =
+      input.message.type === "manual-confirmation"
+        ? ("confirmation" as const)
+        : ("cancellation" as const);
+    const text = formatTransactionalAppointmentText({
+      clinicName: clinic.name,
+      doctorName: appointment.doctorName,
+      kind,
+      startsAt: appointment.startsAt,
+    });
+    const serviceWindowExpiresAt = await latestServiceWindowExpiry(
+      transaction,
+      input.message.clinicId,
+      input.message.recipient.id,
+    );
+    await transaction
+      .insert(transactionalDeliveries)
+      .values({
+        appointmentId: input.message.appointmentId,
+        clinicId: input.message.clinicId,
+        consentAcceptedAt: consent.acceptedAt,
+        consentDecision: consent.decision,
+        consentPrivacyVersion: consent.privacyVersion,
+        consentReference: consent.reference,
+        consentTermsVersion: consent.termsVersion,
+        consentTextReference: consent.textReference,
+        idempotencyKey: `${input.message.appointmentId}:${input.message.type}:${input.message.recipient.id}`,
+        kind: "appointment-message",
+        lastError:
+          consent.decision === "blocked"
+            ? "Consentimiento de WhatsApp no vigente"
+            : null,
+        nextAttemptAt: input.now,
+        payload: {
+          appointmentId: input.message.appointmentId,
+          doctorName: appointment.doctorName,
+          recipient: input.message.recipient,
+          recipientBusinessScopedUserId:
+            input.message.recipientBusinessScopedUserId ?? null,
+          route: input.message.route,
+          serviceWindowExpiresAt,
+          template,
+          text,
+          type: input.message.type,
+        },
+        recipientContactId: input.message.recipient.id,
+        status: consent.decision === "allowed" ? "pending" : "suppressed",
+        retainUntil: new Date(input.now.valueOf() + RETAIN_MS),
+      })
+      .onConflictDoNothing();
+  };
+
+  return existingTransaction === undefined
+    ? inWhatsAppOutboundWorkerTransaction(insertDelivery)
+    : insertDelivery(existingTransaction);
+}
+
+/** Inserta la Entrega dentro de la transacción de la Cita que la originó. */
+export function enqueueManualAppointmentTransactionalDeliveryInTransaction(
+  transaction: SchedulerTransaction,
+  input: ManualAppointmentTransactionalDeliveryInput,
+) {
+  return enqueueManualAppointmentTransactionalDelivery(input, transaction);
+}
 
 /** Prepara decisiones de Agenda y las inserta de forma idempotente en el outbox. */
 export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
@@ -290,6 +839,9 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
     let reminders = 0;
     for (const appointment of await dueAppointments(transaction, input.now)) {
       if (appointment.patientId === null) continue;
+      await transaction.execute(
+        sql`select set_config('app.clinic_id', ${appointment.clinicId}, true)`,
+      );
       for (const checkpoint of appointmentReminderCheckpoints) {
         const dueNow = isCheckpointDue(
           appointment.startsAt,
@@ -302,15 +854,38 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
         if (!dueNow && !preparingFutureCheckpoint) continue;
         const recipients = await reminderRecipients(transaction, appointment);
         for (const recipient of recipients) {
-          if (
-            !(await hasCurrentWhatsAppConsent(transaction, {
-              clinicId: appointment.clinicId,
-              contactId: recipient.id,
-              now: input.now,
-            }))
-          ) {
-            continue;
-          }
+          const consent = await readWhatsAppConsentSnapshot(transaction, {
+            clinicId: appointment.clinicId,
+            contactId: recipient.id,
+            now: input.now,
+          });
+          const template = await readTemplateSnapshot(
+            transaction,
+            appointment.clinicId,
+            "reminder",
+            {
+              clinicName: appointment.clinicName,
+              doctorName: appointment.doctorName,
+              startsAt: appointment.startsAt,
+            },
+          );
+          const text = formatTransactionalAppointmentText({
+            clinicName: appointment.clinicName,
+            doctorName: appointment.doctorName,
+            kind: "reminder",
+            startsAt: appointment.startsAt,
+          });
+          const serviceWindowExpiresAt = await latestServiceWindowExpiry(
+            transaction,
+            appointment.clinicId,
+            recipient.id,
+          );
+          const recipientBusinessScopedUserId =
+            await latestWhatsAppBusinessScopedUserId(
+              transaction,
+              appointment.clinicId,
+              recipient.id,
+            );
           const [inserted] = await transaction
             .insert(transactionalDeliveries)
             .values({
@@ -322,12 +897,28 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
                 appointment.startsAt.valueOf() -
                   Number.parseInt(checkpoint, 10) * HOUR_MS,
               ),
+              status: consent.decision === "allowed" ? "pending" : "suppressed",
+              consentAcceptedAt: consent.acceptedAt,
+              consentDecision: consent.decision,
+              consentPrivacyVersion: consent.privacyVersion,
+              consentReference: consent.reference,
+              consentTermsVersion: consent.termsVersion,
+              consentTextReference: consent.textReference,
+              lastError:
+                consent.decision === "blocked"
+                  ? "Consentimiento de WhatsApp no vigente"
+                  : null,
               payload: {
                 appointmentId: appointment.id,
                 appointmentStartsAt: appointment.startsAt,
                 checkpoint,
                 clinicName: appointment.clinicName,
+                doctorName: appointment.doctorName,
+                recipientBusinessScopedUserId,
                 recipient,
+                serviceWindowExpiresAt,
+                template,
+                text,
               },
               recipientContactId: recipient.id,
               retainUntil: new Date(input.now.valueOf() + RETAIN_MS),
@@ -377,7 +968,12 @@ export async function suppressPendingReminderDeliveries(input: {
           eq(transactionalDeliveries.clinicId, input.clinicId),
           eq(transactionalDeliveries.recipientContactId, input.contactId),
           eq(transactionalDeliveries.kind, "appointment-reminder"),
-          eq(transactionalDeliveries.status, "sent"),
+          inArray(transactionalDeliveries.status, [
+            "accepted",
+            "delivered",
+            "read",
+            "sent",
+          ]),
           gt(appointments.startsAt, input.now),
           sql`${transactionalDeliveries.payload}->>'checkpoint' = '24h'`,
         ),
@@ -488,12 +1084,468 @@ export const drizzleTransactionalDeliveryAlertResolver = {
   resolveTransactionalDeliveryAlert,
 };
 
+function isWhatsAppDeliveryKind(
+  kind: TransactionalDelivery["kind"],
+): kind is "appointment-message" | "appointment-reminder" {
+  return kind === "appointment-message" || kind === "appointment-reminder";
+}
+
+function nextAttemptForError(
+  attempts: number,
+  error: TransactionalDeliveryError,
+  now: Date,
+) {
+  if (error.retryable === false || attempts > 4) return undefined;
+  if (error.nextAttemptAt !== undefined && error.nextAttemptAt !== null) {
+    if (error.nextAttemptAt > now) return error.nextAttemptAt;
+  }
+  return retryAt(attempts, now);
+}
+
+type DeliveryAttemptInput = {
+  attempt: number;
+  clinicId: string;
+  deliveryId: string;
+  error?: string | null;
+  occurredAt: Date;
+  outcome:
+    | "accepted"
+    | "callback"
+    | "delivered"
+    | "failed"
+    | "read"
+    | "sent"
+    | "unknown";
+  providerEventId?: string | null;
+  providerMessageId?: string | null;
+  providerStatus?: string | null;
+  retainUntil: Date;
+};
+
+async function insertDeliveryAttempt(
+  transaction: SchedulerTransaction,
+  input: DeliveryAttemptInput,
+) {
+  await transaction.insert(transactionalDeliveryAttempts).values(input);
+}
+
+async function insertDeliveryCallbackAttempt(
+  transaction: SchedulerTransaction,
+  input: DeliveryAttemptInput,
+) {
+  const insert = transaction
+    .insert(transactionalDeliveryAttempts)
+    .values(input);
+  if (input.providerEventId === undefined || input.providerEventId === null) {
+    const rows = await insert.returning({
+      id: transactionalDeliveryAttempts.id,
+    });
+    return rows.length > 0;
+  }
+  const rows = await insert
+    .onConflictDoNothing({
+      target: [
+        transactionalDeliveryAttempts.deliveryId,
+        transactionalDeliveryAttempts.providerEventId,
+      ],
+      where: sql`
+        ${transactionalDeliveryAttempts.outcome} = 'callback'
+        AND ${transactionalDeliveryAttempts.providerEventId} IS NOT NULL
+      `,
+    })
+    .returning({ id: transactionalDeliveryAttempts.id });
+  return rows.length > 0;
+}
+
+async function insertDeliveryAlert(
+  transaction: SchedulerTransaction,
+  delivery: Pick<TransactionalDelivery, "clinicId" | "id">,
+  now: Date,
+) {
+  await transaction
+    .insert(transactionalDeliveryAlerts)
+    .values({
+      clinicId: delivery.clinicId,
+      deliveryId: delivery.id,
+      retainUntil: new Date(now.valueOf() + RETAIN_MS),
+    })
+    .onConflictDoNothing();
+}
+
+/** Serializa llamadas externas para un Contacto entre workers concurrentes. */
+async function hasActiveRecipientDelivery(
+  transaction: SchedulerTransaction,
+  input: { clinicId: string; contactId: string; now: Date },
+) {
+  const lockKey = `transactional-delivery:${input.clinicId}:${input.contactId}`;
+  await transaction.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+  );
+  const active = await transaction.query.transactionalDeliveries.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(transactionalDeliveries.clinicId, input.clinicId),
+      eq(transactionalDeliveries.recipientContactId, input.contactId),
+      eq(transactionalDeliveries.status, "processing"),
+      gt(transactionalDeliveries.leaseExpiresAt, input.now),
+    ),
+  });
+  return active !== undefined;
+}
+
+async function recordFailedDelivery(
+  transaction: SchedulerTransaction,
+  delivery: TransactionalDelivery,
+  reason: string,
+  now: Date,
+) {
+  const error = reason.slice(0, 1_000);
+  await insertDeliveryAttempt(transaction, {
+    attempt: delivery.attempts,
+    clinicId: delivery.clinicId,
+    deliveryId: delivery.id,
+    error,
+    occurredAt: now,
+    outcome: "failed",
+    retainUntil: new Date(now.valueOf() + RETAIN_MS),
+  });
+  await insertDeliveryAlert(transaction, delivery, now);
+  await recordAppointmentDeliveryEvent(transaction, delivery, "failed", now);
+}
+
+type AppointmentDeliveryEventOutcome = "failed" | "sent";
+
+async function recordAppointmentDeliveryEvent(
+  transaction: SchedulerTransaction,
+  delivery: {
+    clinicId: string;
+    kind: string;
+    payload: unknown;
+  },
+  outcome: AppointmentDeliveryEventOutcome,
+  now: Date,
+) {
+  const source = toAppointmentDeliveryEventSource(delivery);
+  if (source === undefined) return;
+  const owner = await activeOwner(transaction, source.clinicId);
+  if (owner === undefined) return;
+  const type =
+    source.kind === "appointment-reminder"
+      ? outcome === "sent"
+        ? "reminder-sent"
+        : "reminder-delivery-failed"
+      : source.payload.type === "manual-confirmation"
+        ? outcome === "sent"
+          ? "manual-confirmation-sent"
+          : "manual-confirmation-failed"
+        : outcome === "sent"
+          ? "manual-cancellation-sent"
+          : "manual-cancellation-failed";
+  await transaction.insert(appointmentEvents).values({
+    actorClinicUserId: owner.id,
+    appointmentId: source.payload.appointmentId,
+    clinicId: source.clinicId,
+    occurredAt: now,
+    reason:
+      source.kind === "appointment-reminder"
+        ? source.payload.checkpoint
+        : undefined,
+    recipientContactId: source.payload.recipient.id,
+    type,
+  });
+}
+
+type AppointmentDeliveryEventSource = {
+  clinicId: string;
+  kind: "appointment-message" | "appointment-reminder";
+  payload: {
+    appointmentId: string;
+    checkpoint?: AppointmentReminderCheckpoint;
+    recipient: { id: string };
+    type?: ManualAppointmentMessageType;
+  };
+};
+
+function toAppointmentDeliveryEventSource(input: {
+  clinicId: string;
+  kind: string;
+  payload: unknown;
+}): AppointmentDeliveryEventSource | undefined {
+  if (
+    input.kind !== "appointment-message" &&
+    input.kind !== "appointment-reminder"
+  ) {
+    return undefined;
+  }
+  const payload = asRecord(input.payload);
+  const recipient = asRecord(payload.recipient);
+  if (
+    typeof payload.appointmentId !== "string" ||
+    typeof recipient.id !== "string"
+  ) {
+    return undefined;
+  }
+  const type =
+    payload.type === "manual-confirmation" ||
+    payload.type === "manual-cancellation"
+      ? payload.type
+      : undefined;
+  const checkpoint =
+    payload.checkpoint === "20h" ||
+    payload.checkpoint === "22h" ||
+    payload.checkpoint === "24h"
+      ? payload.checkpoint
+      : undefined;
+  if (
+    (input.kind === "appointment-message" && type === undefined) ||
+    (input.kind === "appointment-reminder" && checkpoint === undefined)
+  ) {
+    return undefined;
+  }
+  return {
+    clinicId: input.clinicId,
+    kind: input.kind,
+    payload: {
+      appointmentId: payload.appointmentId,
+      ...(checkpoint === undefined ? {} : { checkpoint }),
+      recipient: { id: recipient.id },
+      ...(type === undefined ? {} : { type }),
+    },
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function whatsappStatusFromDelivery(
+  status: typeof transactionalDeliveries.$inferSelect.status,
+): WhatsAppDeliveryStatus | null {
+  return isWhatsAppDeliveryStatus(status) ? status : null;
+}
+
+function whatsappStatusFromReply(
+  status: typeof whatsappInboundReplies.$inferSelect.status,
+): WhatsAppDeliveryStatus | null {
+  return isWhatsAppDeliveryStatus(status) ? status : null;
+}
+
+function isWhatsAppDeliveryStatus(
+  status: string,
+): status is WhatsAppDeliveryStatus {
+  return (
+    status === "accepted" ||
+    status === "sent" ||
+    status === "delivered" ||
+    status === "read" ||
+    status === "failed"
+  );
+}
+
+async function findDeliveryForCallback(
+  transaction: SchedulerTransaction,
+  input: {
+    idempotencyKey?: string | null;
+    phoneNumberId?: string | null;
+    providerMessageId?: string | null;
+  },
+) {
+  const predicates = [
+    ...(input.idempotencyKey === undefined || input.idempotencyKey === null
+      ? []
+      : [eq(transactionalDeliveries.idempotencyKey, input.idempotencyKey)]),
+    ...(input.providerMessageId === undefined ||
+    input.providerMessageId === null
+      ? []
+      : [
+          eq(
+            transactionalDeliveries.providerMessageId,
+            input.providerMessageId,
+          ),
+        ]),
+    ...(input.phoneNumberId === undefined || input.phoneNumberId === null
+      ? []
+      : [
+          exists(
+            transaction
+              .select({ clinicId: whatsappConnections.clinicId })
+              .from(whatsappConnections)
+              .where(
+                and(
+                  eq(
+                    whatsappConnections.clinicId,
+                    transactionalDeliveries.clinicId,
+                  ),
+                  eq(whatsappConnections.phoneNumberId, input.phoneNumberId),
+                  eq(whatsappConnections.provider, "kapso"),
+                ),
+              ),
+          ),
+        ]),
+  ];
+  if (predicates.length === 0) return undefined;
+  return transaction.query.transactionalDeliveries.findFirst({
+    columns: {
+      clinicId: true,
+      deliveredAt: true,
+      id: true,
+      idempotencyKey: true,
+      kind: true,
+      lastError: true,
+      payload: true,
+      providerMessageId: true,
+      retainUntil: true,
+      status: true,
+    },
+    where: and(...predicates),
+  });
+}
+
+async function findReplyForCallback(
+  transaction: SchedulerTransaction,
+  input: {
+    idempotencyKey?: string | null;
+    phoneNumberId?: string | null;
+    providerMessageId?: string | null;
+  },
+) {
+  const predicates = [
+    ...(input.idempotencyKey === undefined || input.idempotencyKey === null
+      ? []
+      : [eq(whatsappInboundReplies.idempotencyKey, input.idempotencyKey)]),
+    ...(input.providerMessageId === undefined ||
+    input.providerMessageId === null
+      ? []
+      : [
+          eq(whatsappInboundReplies.providerMessageId, input.providerMessageId),
+        ]),
+    ...(input.phoneNumberId === undefined || input.phoneNumberId === null
+      ? []
+      : [
+          exists(
+            transaction
+              .select({ clinicId: whatsappConnections.clinicId })
+              .from(whatsappConnections)
+              .where(
+                and(
+                  eq(
+                    whatsappConnections.clinicId,
+                    whatsappInboundReplies.clinicId,
+                  ),
+                  eq(whatsappConnections.phoneNumberId, input.phoneNumberId),
+                  eq(whatsappConnections.provider, "kapso"),
+                ),
+              ),
+          ),
+        ]),
+  ];
+  if (predicates.length === 0) return undefined;
+  return transaction.query.whatsappInboundReplies.findFirst({
+    columns: {
+      id: true,
+      providerMessageId: true,
+      sentAt: true,
+      status: true,
+    },
+    where: and(...predicates),
+  });
+}
+
+async function latestServiceWindowExpiry(
+  transaction: SchedulerTransaction,
+  clinicId: string,
+  contactId: string,
+) {
+  const [message] = await transaction
+    .select({
+      serviceWindowExpiresAt: whatsappInboundMessages.serviceWindowExpiresAt,
+    })
+    .from(whatsappInboundMessages)
+    .where(
+      and(
+        eq(whatsappInboundMessages.clinicId, clinicId),
+        eq(whatsappInboundMessages.contactId, contactId),
+        isNotNull(whatsappInboundMessages.serviceWindowExpiresAt),
+      ),
+    )
+    .orderBy(desc(whatsappInboundMessages.receivedAt))
+    .limit(1);
+  return message?.serviceWindowExpiresAt ?? null;
+}
+
+async function latestWhatsAppBusinessScopedUserId(
+  transaction: SchedulerTransaction,
+  clinicId: string,
+  contactId: string,
+) {
+  const [identity] = await transaction
+    .select({ businessScopedUserId: whatsappIdentities.businessScopedUserId })
+    .from(whatsappIdentities)
+    .where(
+      and(
+        eq(whatsappIdentities.clinicId, clinicId),
+        eq(whatsappIdentities.contactId, contactId),
+        eq(whatsappIdentities.status, "active"),
+        isNotNull(whatsappIdentities.businessScopedUserId),
+      ),
+    )
+    .orderBy(desc(whatsappIdentities.observedAt))
+    .limit(1);
+  return identity?.businessScopedUserId ?? null;
+}
+
+async function readTemplateSnapshot(
+  transaction: SchedulerTransaction,
+  clinicId: string,
+  kind: "cancellation" | "confirmation" | "reminder",
+  values: { clinicName: string; doctorName?: string | null; startsAt: Date },
+): Promise<TransactionalWhatsAppTemplate> {
+  const template = await transaction.query.whatsappCriticalTemplates.findFirst({
+    columns: {
+      category: true,
+      name: true,
+      providerTemplateId: true,
+      status: true,
+      variables: true,
+      locale: true,
+    },
+    where: and(
+      eq(whatsappCriticalTemplates.clinicId, clinicId),
+      eq(whatsappCriticalTemplates.kind, kind),
+    ),
+  });
+  if (template === undefined) {
+    return {
+      category: null,
+      locale: "",
+      name: "",
+      parameters: [],
+      providerTemplateId: null,
+      status: null,
+    };
+  }
+  return {
+    category: template.category,
+    locale: template.locale,
+    name: template.name,
+    parameters: buildTransactionalTemplateParameters(
+      template.variables,
+      values,
+    ),
+    providerTemplateId: template.providerTemplateId,
+    status: template.status,
+  };
+}
+
 async function dueAppointments(transaction: SchedulerTransaction, now: Date) {
   return transaction
     .select({
       authorContactId: appointments.authorContactId,
       clinicId: appointments.clinicId,
       clinicName: clinics.name,
+      doctorName: doctors.publicName,
       id: appointments.id,
       origin: appointments.origin,
       patientId: appointments.patientId,
@@ -501,6 +1553,13 @@ async function dueAppointments(transaction: SchedulerTransaction, now: Date) {
     })
     .from(appointments)
     .innerJoin(clinics, eq(appointments.clinicId, clinics.id))
+    .innerJoin(
+      doctors,
+      and(
+        eq(appointments.clinicId, doctors.clinicId),
+        eq(appointments.doctorId, doctors.id),
+      ),
+    )
     .where(
       and(
         eq(appointments.status, "confirmed"),
@@ -670,13 +1729,45 @@ function toDelivery(
   row: typeof transactionalDeliveries.$inferSelect,
 ): TransactionalDelivery {
   const payload = row.payload;
+  if (row.kind === "appointment-message") {
+    const message = payload as {
+      appointmentId: string;
+      doctorName?: string | null;
+      patientName?: string | null;
+      recipientBusinessScopedUserId?: string | null;
+      recipient: { id: string; name: string; phoneE164: string | null };
+      route?: TransactionalWhatsAppRoute;
+      serviceWindowExpiresAt?: string | null;
+      template?: TransactionalWhatsAppTemplate;
+      text?: string;
+      type: ManualAppointmentMessageType;
+    };
+    return {
+      attempts: row.attempts,
+      clinicId: row.clinicId,
+      id: row.id,
+      idempotencyKey: row.idempotencyKey,
+      kind: row.kind,
+      payload: {
+        ...message,
+        serviceWindowExpiresAt: optionalDate(message.serviceWindowExpiresAt),
+      },
+    };
+  }
   if (row.kind === "appointment-reminder") {
     const reminder = payload as {
       appointmentId: string;
       appointmentStartsAt: string;
       checkpoint: AppointmentReminderCheckpoint;
       clinicName: string;
-      recipient: { id: string; name: string; phoneE164: string };
+      doctorName?: string | null;
+      patientName?: string | null;
+      recipientBusinessScopedUserId?: string | null;
+      recipient: { id: string; name: string; phoneE164: string | null };
+      route?: TransactionalWhatsAppRoute;
+      serviceWindowExpiresAt?: string | null;
+      template?: TransactionalWhatsAppTemplate;
+      text?: string;
     };
     return {
       attempts: row.attempts,
@@ -687,6 +1778,7 @@ function toDelivery(
       payload: {
         ...reminder,
         appointmentStartsAt: new Date(reminder.appointmentStartsAt),
+        serviceWindowExpiresAt: optionalDate(reminder.serviceWindowExpiresAt),
       },
     };
   }
@@ -710,4 +1802,8 @@ function toDelivery(
       })),
     },
   };
+}
+
+function optionalDate(value: Date | string | null | undefined) {
+  return value === undefined || value === null ? value : new Date(value);
 }

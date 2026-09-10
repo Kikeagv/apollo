@@ -169,6 +169,37 @@ function createFakeProvider(
 }
 
 describe("recepción del webhook Kapso", () => {
+  it("encola los estados de Entrega para reconciliarlos de forma asíncrona", async () => {
+    const fake = createFakeStore();
+    const enqueueDeliveryStatus = vi
+      .fn<NonNullable<KapsoProvisioningStore["enqueueDeliveryStatus"]>>()
+      .mockResolvedValue({
+        accepted: true,
+        eventId: "status-event-1",
+      });
+    fake.store.enqueueDeliveryStatus = enqueueDeliveryStatus;
+
+    await expect(
+      receiveKapsoWebhook({
+        eventName: "whatsapp.message.delivered",
+        idempotencyKey: "kapso-status-1",
+        payload: {
+          biz_opaque_callback_data: "appointment-1:24h:contact-1",
+          message: { id: "wamid-1" },
+          phone_number_id: "phone-1",
+        },
+        store: fake.store,
+      }),
+    ).resolves.toEqual({ accepted: true, eventId: "status-event-1" });
+
+    const call = enqueueDeliveryStatus.mock.calls[0]?.[0];
+    expect(call?.event.correlationKey).toBe("appointment-1:24h:contact-1");
+    expect(call?.event.messageId).toBe("wamid-1");
+    expect(call?.event.phoneNumberId).toBe("phone-1");
+    expect(call?.event.status).toBe("delivered");
+    expect(call?.idempotencyKey).toBe("kapso-status-1");
+  });
+
   it("guarda una sola vez el evento usando la clave de idempotencia", async () => {
     const fake = createFakeStore();
     const payload = {

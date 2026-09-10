@@ -10,21 +10,28 @@ export class WhatsAppConnectionRequiredError extends Error {
   }
 }
 
+export type WhatsAppSendResult = {
+  providerMessageId: string;
+  status: "accepted";
+};
+
 /** Puerto único de salida de WhatsApp para los casos de uso de Praxia. */
 export type WhatsAppProvider = {
   appointmentMessageSender: ManualAppointmentMessageSender;
   appointmentReminderSender: AppointmentReminderSender;
   provider: WhatsAppProviderId;
   sendConversationReply(input: {
+    buttonLabel?: string;
     clinicId: string;
     idempotencyKey: string;
-    recipientPhoneE164: string;
+    recipientBusinessScopedUserId?: string | null;
+    recipientPhoneE164: string | null;
     text: string;
-  }): Promise<void>;
+  }): Promise<WhatsAppSendResult | void>;
   sendConversationEscalationNotification(input: {
     clinicId: string;
     escalationId: string;
     recipientPhoneE164: string;
     trigger: ConversationEscalationTrigger;
-  }): Promise<void>;
+  }): Promise<WhatsAppSendResult | void>;
 };

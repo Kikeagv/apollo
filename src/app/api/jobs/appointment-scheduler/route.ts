@@ -8,7 +8,7 @@ import {
 } from "~/server/db/transactional-delivery-store";
 import { transactionalDeliveryAdapter } from "~/server/integrations/transactional-delivery";
 
-/** Entrada protegida del job de producción; los adaptadores siguen simulados. */
+/** Entrada protegida del job de producción: prepara y drena la outbox. */
 export async function POST(request: Request) {
   if (
     env.SCHEDULER_SECRET === undefined ||

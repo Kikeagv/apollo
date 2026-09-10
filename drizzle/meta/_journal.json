@@ -470,6 +470,13 @@
       "when": 1788969600000,
       "tag": "0067_apo93_whatsapp_consent_gate",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1788994000000,
+      "tag": "0068_apo89_kapso_transactional_delivery",
+      "breakpoints": true
     }
   ]
 }

@@ -118,7 +118,6 @@ import {
   drizzleVoiceTranscriptionSettingsStore,
 } from "~/server/db/simulated-whatsapp-booking-store";
 import { clinicInvitationEmailSender } from "~/server/email/clinic-invitation-email";
-import { whatsAppProviderAdapter } from "~/server/whatsapp/whatsapp-delivery";
 import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboarding";
 import {
   getNoShowPolicy,
@@ -1040,7 +1039,6 @@ export const panaceaRouter = {
         },
         drizzleManualAppointmentStore,
         undefined,
-        whatsAppProviderAdapter(),
       ),
     ),
 
@@ -1061,7 +1059,6 @@ export const panaceaRouter = {
         },
         drizzleManualAppointmentStore,
         undefined,
-        whatsAppProviderAdapter(),
       ),
     ),
 

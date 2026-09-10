@@ -18,8 +18,7 @@ export function TransactionalDeliveryAlertsSection() {
         <CardHeader className="border-border border-b">
           <h2 className="text-xl font-semibold">Entregas pendientes</h2>
           <p className="text-muted-foreground leading-6 text-pretty">
-            Mensajes administrativos que no pudieron entregarse tras cinco
-            intentos.
+            Mensajes administrativos que requieren atención.
           </p>
         </CardHeader>
         <CardContent className="space-y-4 pt-6">
@@ -45,7 +44,9 @@ export function TransactionalDeliveryAlertsSection() {
                 <p>
                   {alert.delivery.kind === "appointment-reminder"
                     ? "Recordatorio de Cita"
-                    : "Agenda diaria"}
+                    : alert.delivery.kind === "appointment-message"
+                      ? "Mensaje de Cita"
+                      : "Agenda diaria"}
                   {alert.delivery.lastError
                     ? `: ${alert.delivery.lastError}`
                     : "."}

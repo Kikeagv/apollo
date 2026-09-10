@@ -1,4 +1,5 @@
 import { KapsoInboundMessageError } from "~/domain/whatsapp-inbound";
+import { KapsoDeliveryStatusEventError } from "~/domain/whatsapp-delivery-events";
 import { KapsoLifecycleEventError } from "~/domain/whatsapp-kapso-provisioning";
 import { receiveKapsoWebhook } from "~/server/application/whatsapp-provisioning";
 import { verifyKapsoWebhookSignature } from "~/server/whatsapp/kapso-webhook-security";
@@ -53,6 +54,7 @@ export function createKapsoWebhookHandler(input: {
     } catch (error) {
       if (
         error instanceof KapsoInboundMessageError ||
+        error instanceof KapsoDeliveryStatusEventError ||
         error instanceof KapsoLifecycleEventError
       ) {
         return new Response("Evento inválido", { status: 400 });

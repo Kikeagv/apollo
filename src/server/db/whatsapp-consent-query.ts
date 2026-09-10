@@ -11,22 +11,30 @@ import {
   whatsappContactConsents,
 } from "~/server/db/schema";
 
-/** Consulta RLS compartida por los workers que pueden enviar por WhatsApp. */
-export async function hasCurrentWhatsAppConsent(
+export type WhatsAppConsentSnapshot = {
+  acceptedAt: Date | null;
+  decision: "allowed" | "blocked";
+  reference: string;
+  privacyVersion: string;
+  termsVersion: string;
+  textReference: string;
+};
+
+/** Congela la evidencia mínima necesaria para auditar una Entrega futura. */
+export async function readWhatsAppConsentSnapshot(
   transaction: ClinicTransaction,
   input: { clinicId: string; contactId: string; now: Date },
-) {
+): Promise<WhatsAppConsentSnapshot> {
   const contract = await transaction.query.clinicTermsContract.findFirst({
     columns: { currentVersion: true },
     where: eq(clinicTermsContract.id, true),
   });
-  if (contract === undefined) return false;
-  const policy = buildWhatsAppConsentPolicy(contract.currentVersion);
+  const policy = buildWhatsAppConsentPolicy(
+    contract?.currentVersion ?? "unknown",
+  );
   const [consent] = await transaction
     .select({
       acceptedAt: whatsappContactConsents.acceptedAt,
-      acceptedRole: whatsappContactConsents.acceptedRole,
-      clinicId: whatsappContactConsents.clinicId,
       contactId: whatsappContactConsents.contactId,
       id: whatsappContactConsents.id,
       identityId: whatsappContactConsents.identityId,
@@ -38,6 +46,8 @@ export async function hasCurrentWhatsAppConsent(
       scope: whatsappContactConsents.scope,
       termsVersion: whatsappContactConsents.termsVersion,
       textReference: whatsappContactConsents.textReference,
+      clinicId: whatsappContactConsents.clinicId,
+      acceptedRole: whatsappContactConsents.acceptedRole,
     })
     .from(whatsappContactConsents)
     .where(
@@ -54,10 +64,28 @@ export async function hasCurrentWhatsAppConsent(
       desc(whatsappContactConsents.id),
     )
     .limit(1);
-  return (
+  const allowed =
     consent !== undefined &&
     consent.acceptedAt <= input.now &&
     consent.provider === WHATSAPP_CONSENT_PROVIDER &&
-    isWhatsAppConsentCurrent(consent, policy)
+    isWhatsAppConsentCurrent(consent, policy);
+  return {
+    acceptedAt: consent?.acceptedAt ?? null,
+    decision: allowed ? "allowed" : "blocked",
+    reference: consent?.id ?? `policy:${policy.immutableTextReference}`,
+    privacyVersion: policy.privacyVersion,
+    termsVersion: policy.termsVersion,
+    textReference: policy.immutableTextReference,
+  };
+}
+
+/** Consulta RLS compartida por los workers que pueden enviar por WhatsApp. */
+export async function hasCurrentWhatsAppConsent(
+  transaction: ClinicTransaction,
+  input: { clinicId: string; contactId: string; now: Date },
+) {
+  return (
+    (await readWhatsAppConsentSnapshot(transaction, input)).decision ===
+    "allowed"
   );
 }

@@ -578,7 +578,10 @@ function appointmentActionLabel(action: "cancel" | "reschedule") {
   return action === "cancel" ? "cancelarla" : "reprogramarla";
 }
 
-function deliveryKindLabel(kind: "appointment-reminder" | "daily-agenda-pdf") {
+function deliveryKindLabel(
+  kind: "appointment-message" | "appointment-reminder" | "daily-agenda-pdf",
+) {
+  if (kind === "appointment-message") return "Mensaje de Cita";
   return kind === "appointment-reminder"
     ? "Recordatorio de Cita"
     : "PDF de agenda diaria";

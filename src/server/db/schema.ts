@@ -53,6 +53,7 @@ import type {
 } from "~/domain/whatsapp-readiness";
 import type { WhatsAppSetupLinkStatus } from "~/domain/whatsapp-setup-link";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
+import type { WhatsAppDeliveryStatus } from "~/domain/whatsapp-delivery";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -1114,9 +1115,17 @@ export const dailyAgendaEmails = createTable(
 );
 
 export type TransactionalDeliveryKind =
-  "appointment-reminder" | "daily-agenda-pdf";
+  "appointment-message" | "appointment-reminder" | "daily-agenda-pdf";
 export type TransactionalDeliveryStatus =
-  "pending" | "processing" | "sent" | "failed" | "suppressed";
+  | "accepted"
+  | "delivered"
+  | "failed"
+  | "pending"
+  | "processing"
+  | "read"
+  | "sent"
+  | "suppressed"
+  | "unknown";
 
 /** Outbox administrativo: sobrevive caídas entre la decisión y el proveedor. */
 export const transactionalDeliveries = createTable(
@@ -1139,6 +1148,18 @@ export const transactionalDeliveries = createTable(
     }).notNull(),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    providerMessageId: text("provider_message_id"),
+    providerStatus: text(
+      "provider_status",
+    ).$type<WhatsAppDeliveryStatus | null>(),
+    consentReference: text("consent_reference"),
+    consentDecision: text("consent_decision").$type<
+      "allowed" | "blocked" | null
+    >(),
+    consentPrivacyVersion: text("consent_privacy_version"),
+    consentTermsVersion: text("consent_terms_version"),
+    consentTextReference: text("consent_text_reference"),
+    consentAcceptedAt: timestamp("consent_accepted_at", { withTimezone: true }),
     lastError: text("last_error"),
     retainUntil: timestamp("retain_until", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -1160,6 +1181,14 @@ export const transactionalDeliveries = createTable(
     index("transactional_delivery_ready_idx").on(
       table.status,
       table.nextAttemptAt,
+    ),
+    check(
+      "transactional_delivery_kind",
+      sql`${table.kind} IN ('appointment-message', 'appointment-reminder', 'daily-agenda-pdf')`,
+    ),
+    check(
+      "transactional_delivery_status",
+      sql`${table.status} IN ('accepted', 'delivered', 'failed', 'pending', 'processing', 'read', 'sent', 'suppressed', 'unknown')`,
     ),
     foreignKey({
       columns: [table.clinicId, table.appointmentId],
@@ -1183,8 +1212,18 @@ export const transactionalDeliveryAttempts = createTable(
     deliveryId: uuid("delivery_id").notNull(),
     attempt: integer("attempt").notNull(),
     outcome: text("outcome")
-      .$type<"delivered" | "failed" | "callback">()
+      .$type<
+        | "accepted"
+        | "callback"
+        | "delivered"
+        | "failed"
+        | "read"
+        | "sent"
+        | "unknown"
+      >()
       .notNull(),
+    providerMessageId: text("provider_message_id"),
+    providerEventId: text("provider_event_id"),
     providerStatus: text("provider_status"),
     error: text("error"),
     occurredAt: timestamp("occurred_at", { withTimezone: true })
@@ -1194,8 +1233,14 @@ export const transactionalDeliveryAttempts = createTable(
   },
   (table) => [
     uniqueIndex("transactional_delivery_callback_unique")
-      .on(table.deliveryId)
-      .where(sql`${table.outcome} = 'callback'`),
+      .on(table.deliveryId, table.providerEventId)
+      .where(
+        sql`${table.outcome} = 'callback' AND ${table.providerEventId} IS NOT NULL`,
+      ),
+    check(
+      "transactional_delivery_attempt_outcome",
+      sql`${table.outcome} IN ('accepted', 'callback', 'delivered', 'failed', 'read', 'sent', 'unknown')`,
+    ),
     foreignKey({
       columns: [table.clinicId, table.deliveryId],
       foreignColumns: [
@@ -1242,6 +1287,32 @@ export const transactionalDeliveryAlerts = createTable(
       foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
       name: "transactional_delivery_alert_resolver_same_clinic_fk",
     }).onDelete("restrict"),
+  ],
+);
+
+/** Reserva distribuida de capacidad para respetar cinco envíos por segundo. */
+export const whatsappSendRateLimitSlots = createTable(
+  "whatsapp_send_rate_limit_slot",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    phoneNumberId: text("phone_number_id").notNull(),
+    nextAllowedAt: timestamp("next_allowed_at", {
+      withTimezone: true,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_send_rate_limit_slot_phone_unique").on(
+      table.phoneNumberId,
+    ),
   ],
 );
 
@@ -1500,7 +1571,14 @@ export const whatsappInboundMessages = createTable(
 );
 
 export type WhatsAppInboundReplyStatus =
-  "failed" | "pending" | "processing" | "sent";
+  | "accepted"
+  | "delivered"
+  | "failed"
+  | "pending"
+  | "processing"
+  | "read"
+  | "sent"
+  | "unknown";
 
 /** Outbox durable de respuestas inbound; APO-89 podrá drenarlo hacia Kapso. */
 export const whatsappInboundReplies = createTable(
@@ -1551,7 +1629,7 @@ export const whatsappInboundReplies = createTable(
     ),
     check(
       "whatsapp_inbound_reply_status",
-      sql`${table.status} IN ('failed', 'pending', 'processing', 'sent')`,
+      sql`${table.status} IN ('accepted', 'delivered', 'failed', 'pending', 'processing', 'read', 'sent', 'unknown')`,
     ),
   ],
 );

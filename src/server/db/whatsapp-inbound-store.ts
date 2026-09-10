@@ -16,6 +16,7 @@ import {
 import type { WhatsAppConsentStore } from "~/server/application/whatsapp-consent";
 import {
   inWhatsAppInboundWorkerTransaction,
+  inWhatsAppOutboundWorkerTransaction,
   inWhatsAppWebhookIngressTransaction,
 } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
@@ -37,6 +38,10 @@ import type {
   WhatsAppInboundResolution,
   WhatsAppInboundStore,
 } from "~/server/application/whatsapp-inbound";
+import type {
+  WhatsAppOutboundReply,
+  WhatsAppOutboundReplyStore,
+} from "~/server/application/whatsapp-outbound";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -54,7 +59,7 @@ export type WhatsAppInboundPersistenceStore = WhatsAppInboundStore &
     enqueueReply(
       input: Parameters<WhatsAppInboundReplySender["send"]>[0],
     ): Promise<void>;
-  };
+  } & WhatsAppOutboundReplyStore;
 
 /** Persistencia del webhook y del worker inbound con contextos RLS separados. */
 export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
@@ -506,6 +511,132 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
     });
   },
 
+  async claimDueReplies({ limit, now }) {
+    return inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      const candidates = await transaction
+        .select()
+        .from(whatsappInboundReplies)
+        .where(replyDueCondition(now))
+        .orderBy(asc(whatsappInboundReplies.createdAt))
+        .limit(limit);
+      const claimed: WhatsAppOutboundReply[] = [];
+      for (const candidate of candidates) {
+        const leaseToken = randomUUID();
+        const [updated] = await transaction
+          .update(whatsappInboundReplies)
+          .set({
+            attempts: candidate.attempts + 1,
+            lastError: null,
+            leaseExpiresAt: new Date(now.valueOf() + INBOUND_LEASE_MS),
+            leaseToken,
+            nextAttemptAt: now,
+            status: "processing",
+          })
+          .where(
+            and(
+              eq(whatsappInboundReplies.id, candidate.id),
+              replyDueCondition(now),
+            ),
+          )
+          .returning();
+        if (updated !== undefined) claimed.push(toOutboundReply(updated));
+      }
+      return claimed;
+    });
+  },
+
+  async markAcceptedReply({ id, leaseToken, now, providerMessageId }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      await transaction
+        .update(whatsappInboundReplies)
+        .set({
+          lastError: null,
+          leaseExpiresAt: null,
+          leaseToken: null,
+          nextAttemptAt: now,
+          providerMessageId,
+          status: "accepted",
+        })
+        .where(
+          and(
+            eq(whatsappInboundReplies.id, id),
+            eq(whatsappInboundReplies.leaseToken, leaseToken),
+            eq(whatsappInboundReplies.status, "processing"),
+          ),
+        );
+    });
+  },
+
+  async markFailedReply({ id, leaseToken, now, reason }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      await transaction
+        .update(whatsappInboundReplies)
+        .set({
+          lastError: reason.slice(0, 1_000),
+          leaseExpiresAt: null,
+          leaseToken: null,
+          nextAttemptAt: now,
+          status: "failed",
+        })
+        .where(
+          and(
+            eq(whatsappInboundReplies.id, id),
+            eq(whatsappInboundReplies.leaseToken, leaseToken),
+            eq(whatsappInboundReplies.status, "processing"),
+          ),
+        );
+    });
+  },
+
+  async markUnknownReply({ id, leaseToken, now, reason }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      await transaction
+        .update(whatsappInboundReplies)
+        .set({
+          lastError: reason.slice(0, 1_000),
+          leaseExpiresAt: null,
+          leaseToken: null,
+          nextAttemptAt: now,
+          status: "unknown",
+        })
+        .where(
+          and(
+            eq(whatsappInboundReplies.id, id),
+            eq(whatsappInboundReplies.leaseToken, leaseToken),
+            eq(whatsappInboundReplies.status, "processing"),
+          ),
+        );
+    });
+  },
+
+  async scheduleReplyRetry({
+    id,
+    leaseToken,
+    nextAttemptAt,
+    reason,
+    retriedAt,
+  }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      await transaction
+        .update(whatsappInboundReplies)
+        .set({
+          lastError: reason.slice(0, 1_000),
+          leaseExpiresAt: null,
+          leaseToken: null,
+          nextAttemptAt,
+          status: "pending",
+        })
+        .where(
+          and(
+            eq(whatsappInboundReplies.id, id),
+            eq(whatsappInboundReplies.leaseToken, leaseToken),
+            eq(whatsappInboundReplies.status, "processing"),
+          ),
+        );
+      void retriedAt;
+    });
+  },
+
   async saveAssistantResponse({ eventId, leaseToken, responseText }) {
     await inWhatsAppInboundWorkerTransaction(async (transaction) => {
       await transaction
@@ -692,6 +823,35 @@ function dueMessageCondition(now: Date) {
       lte(whatsappInboundMessages.leaseExpiresAt, now),
     ),
   );
+}
+
+function replyDueCondition(now: Date) {
+  return or(
+    and(
+      eq(whatsappInboundReplies.status, "pending"),
+      lte(whatsappInboundReplies.nextAttemptAt, now),
+    ),
+    and(
+      eq(whatsappInboundReplies.status, "processing"),
+      lte(whatsappInboundReplies.leaseExpiresAt, now),
+    ),
+  );
+}
+
+function toOutboundReply(
+  reply: typeof whatsappInboundReplies.$inferSelect,
+): WhatsAppOutboundReply {
+  return {
+    attempts: reply.attempts,
+    buttonLabel: reply.buttonLabel ?? undefined,
+    clinicId: reply.clinicId,
+    id: reply.id,
+    idempotencyKey: reply.idempotencyKey,
+    leaseToken: reply.leaseToken,
+    recipientBusinessScopedUserId: reply.recipientBusinessScopedUserId,
+    recipientPhoneE164: reply.recipientPhoneE164,
+    text: reply.text,
+  };
 }
 
 async function configureWorkerClinic(

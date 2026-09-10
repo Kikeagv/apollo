@@ -84,6 +84,11 @@ function fakeStore(events: WhatsAppInboundEvent[]) {
       recipientPhoneE164: null,
     });
   const scheduleRetry = vi.fn<WhatsAppInboundStore["scheduleRetry"]>();
+  const suppressPendingReminderDeliveries = vi
+    .fn<
+      NonNullable<WhatsAppInboundStore["suppressPendingReminderDeliveries"]>
+    >()
+    .mockResolvedValue(0);
   const saveAssistantResponse =
     vi.fn<WhatsAppInboundStore["saveAssistantResponse"]>();
   const conversationLockKeys: Array<string | null> = [];
@@ -103,6 +108,7 @@ function fakeStore(events: WhatsAppInboundEvent[]) {
     resolveMessage,
     saveAssistantResponse,
     scheduleRetry,
+    suppressPendingReminderDeliveries,
     withConversationLock,
   };
   return {
@@ -115,6 +121,7 @@ function fakeStore(events: WhatsAppInboundEvent[]) {
     resolveMessage,
     saveAssistantResponse,
     scheduleRetry,
+    suppressPendingReminderDeliveries,
     store,
   };
 }
@@ -137,7 +144,12 @@ function assistant() {
 
 describe("worker de mensajes entrantes de WhatsApp", () => {
   it("resuelve un BSUID sin teléfono, conserva la evidencia y despierta al asistente dentro de la ventana", async () => {
-    const { outcomes, saveAssistantResponse, store } = fakeStore([event()]);
+    const {
+      outcomes,
+      saveAssistantResponse,
+      store,
+      suppressPendingReminderDeliveries,
+    } = fakeStore([event()]);
     const acceptedAssistant = assistant();
     const { processText } = acceptedAssistant;
     const send = vi.fn<WhatsAppInboundReplySender["send"]>();
@@ -160,6 +172,11 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
       contactId: "contact-1",
       messageId: "message-1",
       text: "info",
+      now: NOW,
+    });
+    expect(suppressPendingReminderDeliveries).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      contactId: "contact-1",
       now: NOW,
     });
     expect(send).toHaveBeenCalledWith({
