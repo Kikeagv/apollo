@@ -21,6 +21,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "~/components/ui/sheet";
+import { Label } from "~/components/ui/label";
+import { Textarea } from "~/components/ui/textarea";
 import {
   PENDING_CATEGORIES,
   type PendingCase,
@@ -57,6 +59,7 @@ export function PendingInboxSection() {
   const [resolutionTarget, setResolutionTarget] = useState<
     { category: PendingCategory; id: string } | undefined
   >();
+  const [resolutionEvidence, setResolutionEvidence] = useState("");
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -110,16 +113,26 @@ export function PendingInboxSection() {
   }
 
   function selectPending(pendingCase: PendingCase) {
+    setResolutionEvidence("");
     updateUrl({ selected: pendingCaseKey(pendingCase) });
   }
 
   function closeDetail() {
+    setResolutionEvidence("");
     updateUrl({ selected: undefined });
   }
 
   function resolvePending(pendingCase: PendingCase) {
     setResolutionTarget({ category: pendingCase.category, id: pendingCase.id });
-    resolve.mutate({ category: pendingCase.category, id: pendingCase.id });
+    const evidence =
+      pendingCase.category === "delivery"
+        ? resolutionEvidence.trim()
+        : undefined;
+    resolve.mutate({
+      category: pendingCase.category,
+      id: pendingCase.id,
+      ...(evidence === undefined ? {} : { resolutionEvidence: evidence }),
+    });
   }
 
   const detail = selected ? (
@@ -133,6 +146,8 @@ export function PendingInboxSection() {
       onResolve={() => resolvePending(selected)}
       onRetry={() => resolvePending(selected)}
       pending={selected}
+      resolutionEvidence={resolutionEvidence}
+      onResolutionEvidenceChange={setResolutionEvidence}
     />
   ) : null;
 
@@ -340,14 +355,23 @@ function PendingDetail({
   isResolving,
   onResolve,
   onRetry,
+  onResolutionEvidenceChange,
   pending,
+  resolutionEvidence,
 }: {
   error?: { message: string };
   isResolving: boolean;
   onResolve: () => void;
   onRetry: () => void;
+  onResolutionEvidenceChange: (value: string) => void;
   pending: PendingCase;
+  resolutionEvidence: string;
 }) {
+  const requiresResolutionEvidence =
+    pending.category === "delivery" && pending.status === "open";
+  const canResolve =
+    !requiresResolutionEvidence || resolutionEvidence.trim() !== "";
+
   return (
     <Card className="h-fit" data-pending-detail="true">
       <CardHeader className="border-border border-b">
@@ -377,6 +401,27 @@ function PendingDetail({
 
         <PendingSpecificDetail pending={pending} />
 
+        {requiresResolutionEvidence ? (
+          <div className="space-y-2">
+            <Label htmlFor={"delivery-evidence-" + pending.id}>
+              Evidencia de la acción (obligatoria)
+            </Label>
+            <Textarea
+              id={"delivery-evidence-" + pending.id}
+              maxLength={500}
+              onChange={(event) =>
+                onResolutionEvidenceChange(event.target.value)
+              }
+              placeholder="Describa qué verificó o qué acción realizó."
+              value={resolutionEvidence}
+            />
+            <p className="text-muted-foreground text-xs">
+              Resolver la alerta conserva los intentos y no envía otra
+              notificación por WhatsApp.
+            </p>
+          </div>
+        ) : null}
+
         {error ? (
           <Alert variant="destructive">
             <AlertTitle>No se pudo resolver este caso</AlertTitle>
@@ -396,7 +441,11 @@ function PendingDetail({
         ) : null}
 
         {pending.status === "open" ? (
-          <Button disabled={isResolving} onClick={onResolve} type="button">
+          <Button
+            disabled={isResolving || !canResolve}
+            onClick={onResolve}
+            type="button"
+          >
             {isResolving ? "Resolviendo…" : pendingActionLabel(pending)}
           </Button>
         ) : (
@@ -455,6 +504,11 @@ function PendingSpecificDetail({ pending }: { pending: PendingCase }) {
           {pending.delivery.lastError ? (
             <p className="text-destructive">
               Último error: {pending.delivery.lastError}
+            </p>
+          ) : null}
+          {pending.delivery.resolutionEvidence ? (
+            <p className="text-muted-foreground break-words">
+              Evidencia de resolución: {pending.delivery.resolutionEvidence}
             </p>
           ) : null}
         </div>

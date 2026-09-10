@@ -346,6 +346,7 @@ export const panaceaRouter = {
       z.object({
         category: z.enum(["conversation", "appointment", "delivery"]),
         id: z.string().uuid(),
+        resolutionEvidence: z.string().trim().min(1).max(500).optional(),
       }),
     )
     .mutation(({ ctx, input }) =>
@@ -367,7 +368,12 @@ export const panaceaRouter = {
   ),
 
   resolveTransactionalDeliveryAlert: clinicProcedure
-    .input(z.object({ alertId: z.string().uuid() }))
+    .input(
+      z.object({
+        alertId: z.string().uuid(),
+        resolutionEvidence: z.string().trim().min(1).max(500),
+      }),
+    )
     .mutation(({ ctx, input }) =>
       resolveTransactionalDeliveryAlert({
         ...input,

@@ -44,6 +44,7 @@ export async function readWhatsAppConsentSnapshot(
       privacyVersion: whatsappContactConsents.privacyVersion,
       provider: whatsappContactConsents.provider,
       scope: whatsappContactConsents.scope,
+      status: whatsappContactConsents.status,
       termsVersion: whatsappContactConsents.termsVersion,
       textReference: whatsappContactConsents.textReference,
       clinicId: whatsappContactConsents.clinicId,

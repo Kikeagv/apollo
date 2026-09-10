@@ -272,6 +272,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             clinicId: fixture.clinicId,
             id: deliveryAlertId,
             identityId: fixture.identityId,
+            resolutionEvidence: "Se verificó el rechazo del proveedor.",
           },
           drizzlePendingResolver,
         );
@@ -375,6 +376,9 @@ describe("Reserva simulada de WhatsApp persistente", () => {
         expect(preserved.delivery?.resolvedAt).not.toBeNull();
         expect(preserved.delivery?.resolvedByClinicUserId).toBe(
           preserved.owner.id,
+        );
+        expect(preserved.delivery?.resolutionEvidence).toBe(
+          "Se verificó el rechazo del proveedor.",
         );
         expect(preserved.attempts).toHaveLength(1);
         expect(preserved.conversationHistory).toContainEqual({

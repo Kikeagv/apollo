@@ -244,6 +244,45 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
     expect(resolveMessage).not.toHaveBeenCalled();
   });
 
+  it("procesa un opt-out aunque el evento entrante llegue fuera de la ventana", async () => {
+    const fake = fakeStore([
+      event({
+        id: "late-opt-out-1",
+        messageTimestamp: new Date("2026-09-07T11:59:00.000Z"),
+        text: "No me escriban más",
+      }),
+    ]);
+    const acceptedAssistant = assistant();
+    const send = vi.fn<WhatsAppInboundReplySender["send"]>();
+    const suppress = vi.fn().mockResolvedValue(1);
+    fake.store.suppressPendingWhatsAppDeliveries = suppress;
+    const consentGate: WhatsAppInboundConsentGate = {
+      check: vi.fn().mockResolvedValue({
+        kind: "revoked",
+        reference: "late-opt-out-consent",
+      }),
+    };
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        acceptedAssistant,
+        consentGate,
+        { send },
+      ),
+    ).resolves.toMatchObject({ optedOut: 1 });
+
+    expect(fake.resolveMessage).toHaveBeenCalled();
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(suppress).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      now: NOW,
+    });
+  });
+
   it("reintenta cuando el adaptador de respuesta falla después de guardar la respuesta", async () => {
     const fake = fakeStore([event()]);
     const acceptedAssistant = assistant();
@@ -360,6 +399,46 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
       processedAt: NOW,
     });
     expect(fake.conversationLockKeys).toEqual(["whatsapp-contact:contact-1"]);
+  });
+
+  it("registra un opt-out, suprime entregas proactivas y no responde por WhatsApp", async () => {
+    const fake = fakeStore([
+      event({ id: "opt-out-1", text: "No me escriban más" }),
+    ]);
+    const acceptedAssistant = assistant();
+    const send = vi.fn<WhatsAppInboundReplySender["send"]>();
+    const suppress = vi.fn().mockResolvedValue(2);
+    fake.store.suppressPendingWhatsAppDeliveries = suppress;
+    const consentGate: WhatsAppInboundConsentGate = {
+      check: vi.fn().mockResolvedValue({
+        kind: "revoked",
+        reference: "consent-opt-out-1",
+      }),
+    };
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        acceptedAssistant,
+        consentGate,
+        { send },
+      ),
+    ).resolves.toMatchObject({ optedOut: 1 });
+
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(suppress).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      now: NOW,
+    });
+    expect(fake.markProcessed).toHaveBeenCalledWith({
+      consentReference: "consent-opt-out-1",
+      eventId: "queue-1",
+      leaseToken: "lease-1",
+      processedAt: NOW,
+    });
   });
 
   it("mantiene urgencia y atención humana en una ruta segura sin llamar al asistente mientras el gate está pendiente", async () => {

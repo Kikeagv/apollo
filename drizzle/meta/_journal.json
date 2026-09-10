@@ -477,6 +477,13 @@
       "when": 1788994000000,
       "tag": "0068_apo89_kapso_transactional_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1789006860000,
+      "tag": "0069_apo90_consent_opt_out_alerts",
+      "breakpoints": true
     }
   ]
 }

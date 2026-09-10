@@ -31,6 +31,7 @@ export type PendingCaseResolver = {
     clinicId: string;
     identityId: string;
     now: Date;
+    resolutionEvidence: string;
   }): Promise<boolean>;
 };
 
@@ -62,6 +63,7 @@ export type ResolvePendingCaseInput = {
   clinicId: string;
   id: string;
   identityId: string;
+  resolutionEvidence?: string;
 };
 
 export class PendingCaseResolutionError extends Error {
@@ -70,6 +72,15 @@ export class PendingCaseResolutionError extends Error {
       `No se pudo resolver el pendiente de tipo ${category}. Puede que ya haya sido atendido o que requiera reintento.`,
     );
     this.name = "PendingCaseResolutionError";
+  }
+}
+
+export class PendingCaseEvidenceRequiredError extends Error {
+  constructor() {
+    super(
+      "La resolución de una Alerta de Entrega requiere evidencia de la acción.",
+    );
+    this.name = "PendingCaseEvidenceRequiredError";
   }
 }
 
@@ -91,13 +102,25 @@ export async function resolvePendingCase(
             escalationId: input.id,
             identityId: input.identityId,
           })
-        : await resolver.resolveTransactionalDeliveryAlert({
-            alertId: input.id,
-            clinicId: input.clinicId,
-            identityId: input.identityId,
-            now: new Date(),
-          });
+        : await resolveDeliveryAlert(input, resolver);
 
   if (!resolved) throw new PendingCaseResolutionError(input.category);
   return true;
+}
+
+async function resolveDeliveryAlert(
+  input: ResolvePendingCaseInput,
+  resolver: PendingCaseResolver,
+) {
+  const resolutionEvidence = input.resolutionEvidence?.trim();
+  if (resolutionEvidence === undefined || resolutionEvidence === "") {
+    throw new PendingCaseEvidenceRequiredError();
+  }
+  return resolver.resolveTransactionalDeliveryAlert({
+    alertId: input.id,
+    clinicId: input.clinicId,
+    identityId: input.identityId,
+    now: new Date(),
+    resolutionEvidence,
+  });
 }

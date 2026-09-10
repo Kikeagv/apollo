@@ -171,6 +171,47 @@ describe("migraciones de PostgreSQL", () => {
             { column_name: "provider_message_id" },
             { column_name: "provider_status" },
           ]);
+          const deliveryAlertColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_transactional_delivery_alert'
+              and column_name = 'resolution_evidence'
+          `;
+          expect(deliveryAlertColumns).toEqual([
+            { column_name: "resolution_evidence" },
+          ]);
+          const deliveryAlertPolicies = await migrated<
+            Array<{ command: "UPDATE"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_transactional_delivery_alert'
+              and policyname = 'transactional_delivery_alert_clinic_resolve'
+          `;
+          expect(deliveryAlertPolicies).toEqual([
+            {
+              command: "UPDATE",
+              name: "transactional_delivery_alert_clinic_resolve",
+            },
+          ]);
+          const deliveryAlertConstraints = await migrated<
+            Array<{ constraintName: string }>
+          >`
+            select conname as "constraintName"
+            from pg_constraint
+            where conrelid = 'pg-drizzle_transactional_delivery_alert'::regclass
+              and conname = 'transactional_delivery_alert_resolution_evidence'
+          `;
+          expect(deliveryAlertConstraints).toEqual([
+            {
+              constraintName:
+                "transactional_delivery_alert_resolution_evidence",
+            },
+          ]);
           const deliveryAttemptPolicies = await migrated<
             Array<{ command: "ALL" | "SELECT"; name: string }>
           >`
@@ -1119,7 +1160,8 @@ describe("migraciones de PostgreSQL", () => {
                 'text_reference',
                 'accepted_at',
                 'provider',
-                'interaction_id'
+                'interaction_id',
+                'status'
               )
             order by column_name
           `;
@@ -1133,6 +1175,7 @@ describe("migraciones de PostgreSQL", () => {
             { column_name: "patient_id" },
             { column_name: "privacy_version" },
             { column_name: "provider" },
+            { column_name: "status" },
             { column_name: "terms_version" },
             { column_name: "text_reference" },
           ]);
@@ -1143,16 +1186,25 @@ describe("migraciones de PostgreSQL", () => {
             where schemaname = 'public'
               and tablename = 'pg-drizzle_whatsapp_contact_consent'
               and indexname in (
-                'whatsapp_contact_consent_channel_version_unique',
                 'whatsapp_contact_consent_current_idx',
                 'whatsapp_contact_consent_interaction_unique'
               )
             order by indexname
           `;
           expect(consentIndexes).toEqual([
-            { indexName: "whatsapp_contact_consent_channel_version_unique" },
             { indexName: "whatsapp_contact_consent_current_idx" },
             { indexName: "whatsapp_contact_consent_interaction_unique" },
+          ]);
+          const consentStatusConstraints = await migrated<
+            Array<{ constraintName: string }>
+          >`
+            select conname as "constraintName"
+            from pg_constraint
+            where conrelid = 'pg-drizzle_whatsapp_contact_consent'::regclass
+              and conname = 'whatsapp_contact_consent_status'
+          `;
+          expect(consentStatusConstraints).toEqual([
+            { constraintName: "whatsapp_contact_consent_status" },
           ]);
 
           const consentForeignKeys = await migrated<

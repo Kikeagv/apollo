@@ -14,6 +14,7 @@ export type WhatsAppConsentSafeRoute =
   "frustration" | "human-request" | "urgency";
 
 export type WhatsAppConsentAcceptedRole = "adult-patient" | "contact" | "tutor";
+export type WhatsAppConsentStatus = "accepted" | "revoked";
 
 export type WhatsAppConsentPolicy = {
   buttonLabel: typeof WHATSAPP_CONSENT_BUTTON_LABEL;
@@ -38,6 +39,7 @@ export type WhatsAppConsentEvidence = {
   privacyVersion: string;
   provider: typeof WHATSAPP_CONSENT_PROVIDER;
   scope: WhatsAppConsentScope;
+  status: WhatsAppConsentStatus;
   termsVersion: string;
   textReference: string;
 };
@@ -75,6 +77,19 @@ export function isWhatsAppConsentAffirmation(input: {
   );
 }
 
+/** Reconoce únicamente la orden explícita que detiene nuevos envíos. */
+export function isWhatsAppConsentOptOut(text: string | null) {
+  if (text === null) return false;
+  const normalized = text
+    .trim()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[.!?]+$/u, "")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("es-SV");
+  return normalized === "no me escriban mas";
+}
+
 /** Intenciones que siempre tienen una salida segura aun sin habilitar agenda. */
 export function classifyWhatsAppConsentSafeRoute(
   text: string | null,
@@ -100,6 +115,7 @@ export function isWhatsAppConsentCurrent(
 ) {
   return (
     evidence.provider === WHATSAPP_CONSENT_PROVIDER &&
+    evidence.status === "accepted" &&
     evidence.scope === "channel" &&
     evidence.patientId === null &&
     evidence.privacyVersion === policy.privacyVersion &&

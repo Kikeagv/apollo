@@ -1,6 +1,7 @@
 import {
   isWhatsAppConsentAffirmation,
   isWhatsAppConsentCurrent,
+  isWhatsAppConsentOptOut,
   whatsappConsentPrompt,
   WHATSAPP_CONSENT_PROVIDER,
   type WhatsAppConsentAcceptedRole,
@@ -30,6 +31,7 @@ export type WhatsAppConsentStore = {
     phoneE164: string | null;
     policy: WhatsAppConsentPolicy;
     scope: WhatsAppConsentScope;
+    status?: "accepted" | "revoked";
   }): Promise<WhatsAppConsentEvidence>;
 };
 
@@ -46,6 +48,7 @@ export type WhatsAppConsentCheckInput = {
 
 export type WhatsAppConsentDecision =
   | { consume?: boolean; kind: "accepted"; reference: string }
+  | { kind: "revoked"; reference: string }
   | {
       kind: "pending";
       prompt?: { buttonLabel: string; text: string };
@@ -113,6 +116,29 @@ export function createWhatsAppConsentGate(
           : null;
       const affirmation = isWhatsAppConsentAffirmation(input);
 
+      if (isWhatsAppConsentOptOut(input.text)) {
+        const recorded = await store.recordWhatsAppConsent({
+          acceptedAt: input.now,
+          acceptedRole: "contact",
+          clinicId: input.clinicId,
+          contactId: input.contactId,
+          identityId: input.identityId,
+          interactionId: input.messageId,
+          patientId: null,
+          phoneE164: input.phoneE164,
+          policy,
+          scope: "channel",
+          status: "revoked",
+        });
+        if (recorded.provider !== WHATSAPP_CONSENT_PROVIDER) {
+          return {
+            kind: "blocked",
+            reason: "La evidencia de opt-out tiene un proveedor inválido",
+          };
+        }
+        return { kind: "revoked", reference: recorded.id };
+      }
+
       if (current !== null) {
         return {
           consume: affirmation,
@@ -141,6 +167,7 @@ export function createWhatsAppConsentGate(
         phoneE164: input.phoneE164,
         policy,
         scope: "channel",
+        status: "accepted",
       });
       if (recorded.provider !== WHATSAPP_CONSENT_PROVIDER) {
         return {

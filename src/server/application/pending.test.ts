@@ -78,6 +78,7 @@ describe("caso de uso de Pendientes", () => {
         clinicId: "clinic-1",
         identityId: "identity-1",
         id: "delivery-1",
+        resolutionEvidence: "Se verificó el rechazo del proveedor.",
       },
       resolver,
     );
@@ -97,7 +98,29 @@ describe("caso de uso de Pendientes", () => {
       clinicId: "clinic-1",
       identityId: "identity-1",
       now: expect.any(Date) as Date,
+      resolutionEvidence: "Se verificó el rechazo del proveedor.",
     });
+  });
+
+  it("rechaza resolver una Entrega sin evidencia de la acción", async () => {
+    const resolveDelivery = vi.fn(async () => true);
+
+    await expect(
+      resolvePendingCase(
+        {
+          category: "delivery",
+          clinicId: "clinic-1",
+          identityId: "identity-1",
+          id: "delivery-1",
+        },
+        {
+          resolveAppointmentSelfManagementEscalation: async () => true,
+          resolveConversationEscalation: async () => true,
+          resolveTransactionalDeliveryAlert: resolveDelivery,
+        },
+      ),
+    ).rejects.toThrow("requiere evidencia");
+    expect(resolveDelivery).not.toHaveBeenCalled();
   });
 
   it("expone como error un caso que ya no puede resolverse para permitir reintento", async () => {

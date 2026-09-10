@@ -156,6 +156,7 @@ async function listDeliveryCases(
       id: transactionalDeliveryAlerts.id,
       lastError: transactionalDeliveries.lastError,
       priority: transactionalDeliveryAlerts.priority,
+      resolutionEvidence: transactionalDeliveryAlerts.resolutionEvidence,
       resolvedAt: transactionalDeliveryAlerts.resolvedAt,
     })
     .from(transactionalDeliveryAlerts)
@@ -186,6 +187,7 @@ async function listDeliveryCases(
       idempotencyKey: row.deliveryIdempotencyKey,
       kind: row.deliveryKind,
       lastError: row.lastError,
+      resolutionEvidence: row.resolutionEvidence,
     },
     id: row.id,
     priority: row.priority,

@@ -43,6 +43,7 @@ function evidence(
     privacyVersion: POLICY.privacyVersion,
     provider: "kapso",
     scope: "channel",
+    status: "accepted",
     termsVersion: POLICY.termsVersion,
     textReference: POLICY.immutableTextReference,
     ...overrides,
@@ -109,6 +110,7 @@ describe("gate de consentimiento inicial de WhatsApp", () => {
       phoneE164: "+50370000002",
       policy: POLICY,
       scope: "channel",
+      status: "accepted",
     });
   });
 
@@ -231,5 +233,62 @@ describe("gate de consentimiento inicial de WhatsApp", () => {
       reference: "consent-repeat",
     });
     expect(fake.record).toHaveBeenCalledTimes(1);
+  });
+
+  it("registra el opt-out explícito como revocado y no lo confunde con una respuesta normal", async () => {
+    const fake = fakeStore(evidence());
+    const gate = createWhatsAppConsentGate(fake.store);
+
+    await expect(
+      gate.check(
+        checkInput({
+          messageId: "opt-out-1",
+          text: "No me escriban más",
+        }),
+      ),
+    ).resolves.toEqual({
+      kind: "revoked",
+      reference: "consent-new",
+    });
+
+    expect(fake.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        interactionId: "opt-out-1",
+        status: "revoked",
+      }),
+    );
+  });
+
+  it("exige un nuevo CONTINUAR para reactivar después de un opt-out", async () => {
+    const revoked = evidence({ id: "opt-out-1", status: "revoked" });
+    const fake = fakeStore(revoked);
+    const gate = createWhatsAppConsentGate(fake.store);
+
+    await expect(
+      gate.check(
+        checkInput({ messageId: "message-after-opt-out", text: "info" }),
+      ),
+    ).resolves.toMatchObject({ kind: "pending" });
+
+    await expect(
+      gate.check(checkInput({ messageId: "opt-in-2", text: "CONTINUAR" })),
+    ).resolves.toMatchObject({ kind: "accepted", consume: true });
+    expect(fake.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        interactionId: "opt-in-2",
+        status: "accepted",
+      }),
+    );
+  });
+
+  it("bloquea entregas proactivas cuando la evidencia más reciente es un opt-out", async () => {
+    const fake = fakeStore(evidence({ status: "revoked" }));
+
+    await expect(
+      canSendWhatsAppProactiveDelivery(
+        { clinicId: "clinic-1", contactId: "contact-1", now: NOW },
+        fake.store,
+      ),
+    ).resolves.toBe(false);
   });
 });

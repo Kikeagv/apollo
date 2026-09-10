@@ -1,6 +1,7 @@
 import type { KapsoInboundMessage } from "~/domain/whatsapp-inbound";
 import {
   classifyWhatsAppConsentSafeRoute,
+  isWhatsAppConsentOptOut,
   type WhatsAppConsentSafeRoute,
 } from "~/domain/whatsapp-consent";
 import type { WhatsAppConsentGate } from "./whatsapp-consent";
@@ -107,6 +108,11 @@ export type WhatsAppInboundStore = {
     contactId: string;
     now: Date;
   }): Promise<number>;
+  suppressPendingWhatsAppDeliveries?(input: {
+    clinicId: string;
+    contactId: string;
+    now: Date;
+  }): Promise<number>;
   withConversationLock<T>(input: {
     clinicId: string;
     conversationId: string | null;
@@ -151,6 +157,7 @@ export type KapsoInboundWorkerResult = {
   claimed: number;
   conflicts: number;
   ignored: number;
+  optedOut: number;
   processed: number;
   rejected: number;
   retried: number;
@@ -174,6 +181,7 @@ export async function runKapsoInboundWorker(
     claimed: events.length,
     conflicts: 0,
     ignored: 0,
+    optedOut: 0,
     processed: 0,
     rejected: 0,
     retried: 0,
@@ -215,7 +223,9 @@ async function processInboundEvent(input: {
   replySender: WhatsAppInboundReplySender;
   safeRoute?: WhatsAppInboundSafeRoute;
   store: WhatsAppInboundStore;
-}): Promise<"awaitingConsent" | "conflicts" | "ignored" | "processed"> {
+}): Promise<
+  "awaitingConsent" | "conflicts" | "ignored" | "optedOut" | "processed"
+> {
   const { event, now, store } = input;
   const leaseToken = requireLeaseToken(event);
 
@@ -232,7 +242,7 @@ async function processInboundEvent(input: {
   const serviceWindowExpiresAt = new Date(
     (event.messageTimestamp ?? event.receivedAt).valueOf() + SERVICE_WINDOW_MS,
   );
-  if (serviceWindowExpiresAt <= now) {
+  if (serviceWindowExpiresAt <= now && !isWhatsAppConsentOptOut(event.text)) {
     await store.markIgnored({
       eventId: event.eventId,
       leaseToken,
@@ -361,6 +371,21 @@ async function processInboundEvent(input: {
           processedAt: now,
         });
         return "awaitingConsent";
+      }
+
+      if (consent.kind === "revoked") {
+        await store.suppressPendingWhatsAppDeliveries?.({
+          clinicId: resolved.clinicId,
+          contactId: resolved.contactId,
+          now,
+        });
+        await store.markProcessed({
+          consentReference: consent.reference,
+          eventId: event.eventId,
+          leaseToken,
+          processedAt: now,
+        });
+        return "optedOut";
       }
 
       if (consent.consume) {

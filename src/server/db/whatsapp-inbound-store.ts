@@ -181,6 +181,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           privacyVersion: input.policy.privacyVersion,
           provider: WHATSAPP_CONSENT_PROVIDER,
           scope: input.scope,
+          status: input.status ?? "accepted",
           termsVersion: input.policy.termsVersion,
           textReference: input.policy.immutableTextReference,
         })
@@ -1076,6 +1077,7 @@ function toWhatsAppConsentEvidence(
     privacyVersion: row.privacyVersion,
     provider: row.provider,
     scope: row.scope,
+    status: row.status,
     termsVersion: row.termsVersion,
     textReference: row.textReference,
   };
@@ -1091,6 +1093,7 @@ function matchesWhatsAppConsentInput(
     evidence.identityId === input.identityId &&
     evidence.patientId === input.patientId &&
     evidence.scope === input.scope &&
+    evidence.status === (input.status ?? "accepted") &&
     evidence.acceptedRole === input.acceptedRole &&
     (input.phoneE164 === null || evidence.phoneE164 === input.phoneE164) &&
     evidence.privacyVersion === input.policy.privacyVersion &&

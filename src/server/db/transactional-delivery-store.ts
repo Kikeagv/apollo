@@ -1004,9 +1004,52 @@ export async function suppressPendingReminderDeliveries(input: {
   });
 }
 
+/** Un opt-out cancela cualquier Entrega de WhatsApp proactiva aún pendiente. */
+export async function suppressPendingWhatsAppDeliveries(input: {
+  clinicId: string;
+  contactId: string;
+  now: Date;
+}) {
+  return inAppointmentSchedulerTransaction(async (transaction) => {
+    const consent = await readWhatsAppConsentSnapshot(transaction, input);
+    const rows = await transaction
+      .update(transactionalDeliveries)
+      .set({
+        consentAcceptedAt: consent.acceptedAt,
+        consentDecision: consent.decision,
+        consentPrivacyVersion: consent.privacyVersion,
+        consentReference: consent.reference,
+        consentTermsVersion: consent.termsVersion,
+        consentTextReference: consent.textReference,
+        lastError: "El Contacto revocó el Consentimiento de WhatsApp",
+        leaseExpiresAt: null,
+        status: "suppressed",
+        updatedAt: input.now,
+      })
+      .where(
+        and(
+          eq(transactionalDeliveries.clinicId, input.clinicId),
+          eq(transactionalDeliveries.recipientContactId, input.contactId),
+          inArray(transactionalDeliveries.kind, [
+            "appointment-message",
+            "appointment-reminder",
+          ]),
+          eq(transactionalDeliveries.status, "pending"),
+        ),
+      )
+      .returning({ id: transactionalDeliveries.id });
+    return rows.length;
+  });
+}
+
 export type TransactionalDeliveryAlert = {
   createdAt: Date;
-  delivery: { idempotencyKey: string; kind: string; lastError: string | null };
+  delivery: {
+    idempotencyKey: string;
+    kind: string;
+    lastError: string | null;
+    resolutionEvidence: string | null;
+  };
   id: string;
 };
 
@@ -1022,6 +1065,7 @@ export async function listTransactionalDeliveryAlerts(input: {
         deliveryKind: transactionalDeliveries.kind,
         lastError: transactionalDeliveries.lastError,
         id: transactionalDeliveryAlerts.id,
+        resolutionEvidence: transactionalDeliveryAlerts.resolutionEvidence,
       })
       .from(transactionalDeliveryAlerts)
       .innerJoin(
@@ -1041,6 +1085,7 @@ export async function listTransactionalDeliveryAlerts(input: {
             idempotencyKey: alert.deliveryIdempotencyKey,
             kind: alert.deliveryKind,
             lastError: alert.lastError,
+            resolutionEvidence: alert.resolutionEvidence,
           },
           id: alert.id,
         })),
@@ -1053,7 +1098,10 @@ export async function resolveTransactionalDeliveryAlert(input: {
   clinicId: string;
   identityId: string;
   now: Date;
+  resolutionEvidence: string;
 }) {
+  const resolutionEvidence = input.resolutionEvidence.trim();
+  if (resolutionEvidence === "") return false;
   return inClinicTransaction(input, async (transaction) => {
     const member = await transaction.query.clinicUsers.findFirst({
       columns: { id: true },
@@ -1066,7 +1114,11 @@ export async function resolveTransactionalDeliveryAlert(input: {
     if (member === undefined) return false;
     const [alert] = await transaction
       .update(transactionalDeliveryAlerts)
-      .set({ resolvedAt: input.now, resolvedByClinicUserId: member.id })
+      .set({
+        resolutionEvidence,
+        resolvedAt: input.now,
+        resolvedByClinicUserId: member.id,
+      })
       .where(
         and(
           eq(transactionalDeliveryAlerts.id, input.alertId),

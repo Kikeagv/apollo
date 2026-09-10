@@ -30,6 +30,7 @@ import type { WhatsAppIdentityStatus } from "~/domain/whatsapp-identity";
 import type {
   WhatsAppConsentAcceptedRole,
   WhatsAppConsentScope,
+  WhatsAppConsentStatus,
 } from "~/domain/whatsapp-consent";
 import type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
 import type { ClinicReadinessStatus } from "~/domain/clinic-setup";
@@ -1263,6 +1264,7 @@ export const transactionalDeliveryAlerts = createTable(
       .$type<PendingPriority>()
       .default("high")
       .notNull(),
+    resolutionEvidence: text("resolution_evidence"),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolvedByClinicUserId: uuid("resolved_by_clinic_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -1287,6 +1289,10 @@ export const transactionalDeliveryAlerts = createTable(
       foreignColumns: [clinicUsers.clinicId, clinicUsers.id],
       name: "transactional_delivery_alert_resolver_same_clinic_fk",
     }).onDelete("restrict"),
+    check(
+      "transactional_delivery_alert_resolution_evidence",
+      sql`${table.resolvedAt} IS NULL OR btrim(coalesce(${table.resolutionEvidence}, '')) <> ''`,
+    ),
   ],
 );
 
@@ -1752,6 +1758,10 @@ export const whatsappContactConsents = createTable(
     acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
     provider: text("provider").$type<"kapso">().notNull(),
     interactionId: text("interaction_id").notNull(),
+    status: text("status")
+      .$type<WhatsAppConsentStatus>()
+      .default("accepted")
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -1762,15 +1772,6 @@ export const whatsappContactConsents = createTable(
       table.provider,
       table.interactionId,
     ),
-    uniqueIndex("whatsapp_contact_consent_channel_version_unique")
-      .on(
-        table.clinicId,
-        table.contactId,
-        table.privacyVersion,
-        table.termsVersion,
-        table.textReference,
-      )
-      .where(sql`${table.scope} = 'channel'`),
     index("whatsapp_contact_consent_current_idx").on(
       table.clinicId,
       table.contactId,
@@ -1810,6 +1811,10 @@ export const whatsappContactConsents = createTable(
     check(
       "whatsapp_contact_consent_provider",
       sql`${table.provider} = 'kapso'`,
+    ),
+    check(
+      "whatsapp_contact_consent_status",
+      sql`${table.status} IN ('accepted', 'revoked')`,
     ),
     check(
       "whatsapp_contact_consent_reference",

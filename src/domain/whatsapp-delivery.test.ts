@@ -19,6 +19,43 @@ describe("decisión de Entrega transaccional de WhatsApp", () => {
     ).toEqual(["Clínica Central", "9 de septiembre de 2026", "6:00 p. m."]);
   });
 
+  it("descarta variables que podrían exponer contenido clínico o identificadores", () => {
+    expect(
+      buildTransactionalTemplateParameters(
+        [
+          "clinic_name",
+          "date",
+          "time",
+          "doctor_name",
+          "diagnosis",
+          "results",
+          "medications",
+          "dui",
+          "clinical_notes",
+          "documents",
+          "transcript",
+        ],
+        {
+          clinicName: "Clínica Central",
+          doctorName: "Dra. Ana Pérez",
+          startsAt: new Date("2026-09-10T00:00:00.000Z"),
+        },
+      ),
+    ).toEqual([
+      "Clínica Central",
+      "9 de septiembre de 2026",
+      "6:00 p. m.",
+      "Dra. Ana Pérez",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ]);
+  });
+
   it("usa texto dentro de la Ventana de servicio y no intenta plantilla", () => {
     expect(
       chooseTransactionalWhatsAppRoute({
