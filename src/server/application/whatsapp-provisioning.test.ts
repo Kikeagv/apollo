@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { KapsoProvisioningStepName } from "~/domain/whatsapp-kapso-provisioning";
+import { whatsappCriticalTemplateCatalog } from "~/domain/whatsapp-readiness";
 
 import {
   KapsoProvisioningProviderError,
@@ -11,6 +12,11 @@ import {
   type KapsoProvisioningProvider,
   type KapsoProvisioningStore,
 } from "./whatsapp-provisioning";
+import type {
+  WhatsAppReadinessProvider,
+  WhatsAppReadinessRecord,
+  WhatsAppReadinessProvisioningStore,
+} from "./whatsapp-readiness";
 
 function connection(
   overrides: Partial<KapsoProvisioningConnection> = {},
@@ -168,6 +174,152 @@ function createFakeProvider(
   };
 }
 
+function createFakeReadiness(overrides: Partial<WhatsAppReadinessRecord> = {}) {
+  const now = new Date("2026-09-07T12:00:00.000Z");
+  let state: WhatsAppReadinessRecord = {
+    billing: {
+      alertThresholdCents: 100,
+      chargesSeparated: true,
+      consumedCents: 0,
+      creditCents: 10_000,
+      lastError: null,
+      lastSyncedAt: now,
+      mode: "partner_managed",
+      status: "ready",
+    },
+    clinicId: "clinic-1",
+    connection: {
+      businessAccountId: "waba-1",
+      clinicId: "clinic-1",
+      connectionType: "coexistence",
+      createdAt: now,
+      customer: "customer-1",
+      lastTestAt: null,
+      metadata: {
+        projectId: "project-1",
+        provisioningEventId: "event-1",
+        webhookStatus: "ready",
+      },
+      phoneNumberE164: "+50370000000",
+      phoneNumberId: "phone-1",
+      provider: "kapso",
+      status: "provisioning",
+      updatedAt: now,
+    },
+    e2e: {
+      evidence: null,
+      evidenceScope: null,
+      lastError: null,
+      lastTestAt: null,
+      status: "pending",
+    },
+    nextAction: "Sincronizar las plantillas críticas",
+    numberEnvironment: "unknown",
+    numberHealth: "unknown",
+    numberHealthCheckedAt: null,
+    phoneNumberWebhook: {
+      lastAttemptAt: now,
+      lastError: null,
+      remoteId: "phone-webhook-1",
+      status: "ready",
+    },
+    projectId: "project-1",
+    projectWebhook: {
+      lastAttemptAt: now,
+      lastError: null,
+      remoteId: "project-webhook-1",
+      status: "ready",
+    },
+    provisioningEventId: "event-1",
+    statusReason: "Pendiente de sincronización",
+    templates: whatsappCriticalTemplateCatalog.map((template) => ({
+      category: template.category,
+      kind: template.kind,
+      locale: template.locale,
+      name: template.name,
+      providerTemplateId: `template-${template.kind}`,
+      rejectionReason: null,
+      status: "APPROVED" as const,
+      syncedAt: now,
+      variables: [...template.variables],
+    })),
+    templatesSync: {
+      lastError: null,
+      lastSyncedAt: now,
+      status: "ready",
+    },
+    technicalStatus: "pending",
+    ...overrides,
+  };
+  const saveForProvisioning = vi.fn<
+    WhatsAppReadinessProvisioningStore["saveForProvisioning"]
+  >(async (input) => {
+    state = input.state;
+  });
+  const syncAlerts = vi.fn<WhatsAppReadinessProvisioningStore["syncAlerts"]>(
+    async () => undefined,
+  );
+  const openAlert = vi.fn<WhatsAppReadinessProvisioningStore["openAlert"]>(
+    async () => undefined,
+  );
+  const store: WhatsAppReadinessProvisioningStore = {
+    readForProvisioning: vi.fn(async () => state),
+    openAlert,
+    saveForProvisioning,
+    syncAlerts,
+  };
+  return {
+    getState: () => state,
+    openAlert,
+    saveForProvisioning,
+    store,
+    syncAlerts,
+  };
+}
+
+function createFakeReadinessProvider(
+  overrides: Partial<WhatsAppReadinessProvider> = {},
+): WhatsAppReadinessProvider {
+  const now = new Date("2026-09-07T12:00:00.000Z");
+  return {
+    getBilling: vi.fn().mockResolvedValue({
+      alertThresholdCents: 100,
+      chargesSeparated: true,
+      consumedCents: 0,
+      creditCents: 10_000,
+      mode: "partner_managed",
+      status: "ready",
+    }),
+    getNumberHealth: vi.fn().mockResolvedValue({
+      checkedAt: now,
+      health: "healthy",
+    }),
+    runE2ETest: vi.fn().mockResolvedValue({
+      evidence: "Kapso roundtrip de prueba",
+      evidenceScope: "message-roundtrip",
+      testedAt: now,
+    }),
+    syncTemplates: vi.fn().mockResolvedValue({
+      numberEnvironment: "production",
+      numberHealth: "healthy",
+      numberHealthCheckedAt: now,
+      syncedAt: now,
+      templates: whatsappCriticalTemplateCatalog.map((template) => ({
+        category: template.category,
+        kind: template.kind,
+        locale: template.locale,
+        name: template.name,
+        providerTemplateId: `template-${template.kind}`,
+        rejectionReason: null,
+        status: "APPROVED" as const,
+        syncedAt: now,
+        variables: [...template.variables],
+      })),
+    }),
+    ...overrides,
+  };
+}
+
 describe("recepción del webhook Kapso", () => {
   it("encola los estados de Entrega para reconciliarlos de forma asíncrona", async () => {
     const fake = createFakeStore();
@@ -229,6 +381,159 @@ describe("recepción del webhook Kapso", () => {
 });
 
 describe("worker de provisión Kapso", () => {
+  it("completa readiness después de los webhooks y persiste ready por generación", async () => {
+    const fake = createFakeStore();
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.created",
+      idempotencyKey: "kapso-readiness-1",
+      payload: {
+        business_account_id: "waba-1",
+        customer: { id: "customer-1" },
+        display_phone_number: "+50370000000",
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+    const readiness = createFakeReadiness();
+    const readinessProvider = createFakeReadinessProvider();
+    const syncTemplates = vi.spyOn(readinessProvider, "syncTemplates");
+    const getBilling = vi.spyOn(readinessProvider, "getBilling");
+    const runE2ETest = vi.spyOn(readinessProvider, "runE2ETest");
+
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        createFakeProvider(),
+        { provider: readinessProvider, store: readiness.store },
+      ),
+    ).resolves.toMatchObject({ processed: 1 });
+
+    expect(syncTemplates).toHaveBeenCalledWith({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+    expect(getBilling).toHaveBeenCalledWith({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+    expect(runE2ETest).toHaveBeenCalledWith({
+      phoneNumberId: "phone-1",
+      projectWebhookId: "project-webhook-1",
+    });
+    expect(readiness.getState()).toMatchObject({
+      connection: { status: "ready" },
+      technicalStatus: "ready",
+    });
+    expect(readiness.saveForProvisioning).toHaveBeenCalled();
+    expect(readiness.syncAlerts).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        access: "provisioning-worker",
+        provisioningEventId: "event-1",
+      }),
+    );
+  });
+
+  it("deja una alerta reintentable y no habilita envíos ante un fallo parcial", async () => {
+    const fake = createFakeStore();
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.created",
+      idempotencyKey: "kapso-readiness-partial-1",
+      payload: {
+        customer: { id: "customer-1" },
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+    const readiness = createFakeReadiness();
+    const readinessProvider = createFakeReadinessProvider();
+    const syncTemplates = vi
+      .spyOn(readinessProvider, "syncTemplates")
+      .mockRejectedValueOnce(new Error("templates timeout"));
+
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        createFakeProvider(),
+        { provider: readinessProvider, store: readiness.store },
+      ),
+    ).resolves.toMatchObject({ retried: 1 });
+
+    expect(readiness.getState()).toMatchObject({
+      connection: { status: "degraded" },
+      technicalStatus: "degraded",
+      templatesSync: { status: "failed", lastError: "templates timeout" },
+    });
+    const lastAlertSync = readiness.syncAlerts.mock.lastCall?.[0];
+    expect(
+      lastAlertSync?.gates.some(
+        (gate) =>
+          gate.code === "templates" &&
+          gate.status === "failed" &&
+          gate.message.includes("templates timeout"),
+      ),
+    ).toBe(true);
+
+    const retry = fake.events[0];
+    if (!retry) throw new Error("Falta el evento de prueba");
+    retry.nextAttemptAt = new Date("2026-09-07T12:00:00.000Z");
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        createFakeProvider(),
+        { provider: readinessProvider, store: readiness.store },
+      ),
+    ).resolves.toMatchObject({ processed: 1 });
+    expect(syncTemplates).toHaveBeenCalledTimes(2);
+    expect(readiness.getState()).toMatchObject({
+      connection: { status: "ready" },
+      technicalStatus: "ready",
+    });
+  });
+
+  it("abre una alerta de webhooks cuando el provisioning parcial necesita reintento", async () => {
+    const fake = createFakeStore();
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.created",
+      idempotencyKey: "kapso-webhook-alert-1",
+      payload: {
+        customer: { id: "customer-1" },
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+    const readiness = createFakeReadiness();
+    const provider = createFakeProvider({
+      ensurePhoneNumberWebhook: vi
+        .fn()
+        .mockRejectedValue(
+          new KapsoProvisioningProviderError(503, "Kapso down"),
+        ),
+    });
+
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        provider,
+        { provider: createFakeReadinessProvider(), store: readiness.store },
+      ),
+    ).resolves.toMatchObject({ retried: 1 });
+
+    expect(readiness.openAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gateCode: "webhooks",
+        reason: "Kapso down",
+        eventId: "event-1",
+      }),
+    );
+  });
+
   it("asocia el número y configura ambos webhooks sin declarar ready", async () => {
     const fake = createFakeStore();
     await receiveKapsoWebhook({

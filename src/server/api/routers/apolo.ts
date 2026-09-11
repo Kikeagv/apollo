@@ -104,7 +104,13 @@ export const apoloRouter = {
   retryWhatsAppReadiness: protectedProcedure
     .input(
       z.object({
-        action: z.enum(["templates", "billing", "e2e", "reactivate"]),
+        action: z.enum([
+          "templates",
+          "billing",
+          "e2e",
+          "webhooks",
+          "reactivate",
+        ]),
         clinicId: z.string().uuid(),
       }),
     )

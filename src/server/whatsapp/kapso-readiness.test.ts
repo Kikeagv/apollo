@@ -279,6 +279,7 @@ describe("adaptador de readiness de Kapso", () => {
       projectWebhookId: "project-webhook-1",
     });
     expect(e2eResult.evidence).toContain("success");
+    expect(e2eResult.evidenceScope).toBe("webhook-preflight");
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
       "https://api.kapso.ai/platform/v1/whatsapp/phone_numbers/phone-1/billing?waba_id=waba-1",

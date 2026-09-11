@@ -484,6 +484,13 @@
       "when": 1789006860000,
       "tag": "0069_apo90_consent_opt_out_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1789027200000,
+      "tag": "0070_apo77_whatsapp_readiness_worker_alerts",
+      "breakpoints": true
     }
   ]
 }

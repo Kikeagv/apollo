@@ -478,6 +478,32 @@ export function ApoloOperations() {
                 </ul>
               </div>
             </div>
+            {readiness.data.alerts?.some((alert) => alert.status === "open") ? (
+              <div
+                className="rounded-lg border border-rose-500/70 bg-rose-950/30 p-4"
+                data-whatsapp-connection-alerts="true"
+                role="alert"
+              >
+                <p className="font-medium text-rose-100">
+                  Alertas operativas de WhatsApp
+                </p>
+                <ul className="mt-2 space-y-2 text-sm text-rose-100/90">
+                  {readiness.data.alerts
+                    .filter((alert) => alert.status === "open")
+                    .map((alert) => (
+                      <li key={alert.id}>
+                        <span className="font-medium">
+                          {apoloReadinessGateLabel(alert.gateCode)}:
+                        </span>{" "}
+                        {alert.reason}{" "}
+                        <span className="text-rose-100/70">
+                          Siguiente acción: {alert.nextAction}
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ) : null}
             <ul className="space-y-3" data-whatsapp-readiness-gates="true">
               {readiness.data.readiness.gates.map((gate) => (
                 <li
@@ -493,7 +519,8 @@ export function ApoloOperations() {
                     </span>
                   </div>
                   <p className="mt-1 text-sm text-slate-300">{gate.message}</p>
-                  {gate.code === "templates" ||
+                  {gate.code === "webhooks" ||
+                  gate.code === "templates" ||
                   gate.code === "billing" ||
                   gate.code === "e2e" ||
                   (gate.code === "number" &&
@@ -507,26 +534,30 @@ export function ApoloOperations() {
                       onClick={() =>
                         retryReadiness.mutate({
                           action:
-                            gate.code === "templates"
-                              ? "templates"
-                              : gate.code === "billing"
-                                ? "billing"
-                                : gate.code === "e2e"
-                                  ? "e2e"
-                                  : "reactivate",
+                            gate.code === "webhooks"
+                              ? "webhooks"
+                              : gate.code === "templates"
+                                ? "templates"
+                                : gate.code === "billing"
+                                  ? "billing"
+                                  : gate.code === "e2e"
+                                    ? "e2e"
+                                    : "reactivate",
                           clinicId,
                         })
                       }
                       type="button"
                     >
                       {apoloReadinessActionLabel(
-                        gate.code === "templates"
-                          ? "templates"
-                          : gate.code === "billing"
-                            ? "billing"
-                            : gate.code === "e2e"
-                              ? "e2e"
-                              : "reactivate",
+                        gate.code === "webhooks"
+                          ? "webhooks"
+                          : gate.code === "templates"
+                            ? "templates"
+                            : gate.code === "billing"
+                              ? "billing"
+                              : gate.code === "e2e"
+                                ? "e2e"
+                                : "reactivate",
                       )}
                     </button>
                   ) : null}
@@ -992,13 +1023,14 @@ function apoloReadinessGateLabel(
 }
 
 function apoloReadinessActionLabel(
-  action: "templates" | "billing" | "e2e" | "reactivate",
+  action: "templates" | "billing" | "e2e" | "webhooks" | "reactivate",
 ) {
   return {
     billing: "Reintentar billing",
     e2e: "Ejecutar prueba E2E",
     reactivate: "Reactivar conexión",
     templates: "Sincronizar plantillas",
+    webhooks: "Reintentar webhooks",
   }[action];
 }
 

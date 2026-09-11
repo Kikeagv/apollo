@@ -1,7 +1,9 @@
 import { env } from "~/env";
 import { runKapsoProvisioningWorker } from "~/server/application/whatsapp-provisioning";
 import { drizzleWhatsAppProvisioningStore } from "~/server/db/whatsapp-provisioning-store";
+import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import { createKapsoProvisioningProvider } from "~/server/whatsapp/kapso-provisioning";
+import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
 
 export async function POST(request: Request) {
   if (
@@ -15,6 +17,9 @@ export async function POST(request: Request) {
     apiKey: env.KAPSO_API_KEY,
     secretKey: env.KAPSO_WEBHOOK_SECRET,
     webhookUrl: new URL("/api/webhooks/kapso", env.PUBLIC_SITE_URL).toString(),
+  });
+  const readinessProvider = createKapsoReadinessProvider({
+    apiKey: env.KAPSO_API_KEY,
   });
   // El webhook de proyecto es la fuente del primer evento created; reconcílialo
   // antes de consumir la cola para que una instalación nueva no dependa de una
@@ -34,6 +39,10 @@ export async function POST(request: Request) {
     { now: new Date() },
     drizzleWhatsAppProvisioningStore,
     provider,
+    {
+      provider: readinessProvider,
+      store: drizzleWhatsAppReadinessStore,
+    },
   );
   return Response.json({ ...result, projectWebhook });
 }

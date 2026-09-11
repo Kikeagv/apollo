@@ -229,7 +229,7 @@ describe("migraciones de PostgreSQL", () => {
             ]),
           );
           const webhookEventPolicies = await migrated<
-            Array<{ command: "ALL" | "SELECT"; name: string }>
+            Array<{ command: "ALL" | "SELECT" | "UPDATE"; name: string }>
           >`
             select cmd as command, policyname as name
             from pg_policies
@@ -241,6 +241,10 @@ describe("migraciones de PostgreSQL", () => {
               {
                 command: "ALL",
                 name: "whatsapp_webhook_event_delivery_status_worker_manage",
+              },
+              {
+                command: "UPDATE",
+                name: "whatsapp_webhook_event_superadmin_retry",
               },
             ]),
           );
@@ -962,11 +966,13 @@ describe("migraciones de PostgreSQL", () => {
               and c.relname in (
                 'pg-drizzle_whatsapp_readiness',
                 'pg-drizzle_whatsapp_critical_template',
-                'pg-drizzle_whatsapp_billing'
+                'pg-drizzle_whatsapp_billing',
+                'pg-drizzle_whatsapp_connection_alert'
               )
             order by c.relname
           `;
           expect(rlsTables).toEqual([
+            { relforcerowsecurity: true, relrowsecurity: true },
             { relforcerowsecurity: true, relrowsecurity: true },
             { relforcerowsecurity: true, relrowsecurity: true },
             { relforcerowsecurity: true, relrowsecurity: true },
@@ -981,7 +987,8 @@ describe("migraciones de PostgreSQL", () => {
               and tablename in (
                 'pg-drizzle_whatsapp_readiness',
                 'pg-drizzle_whatsapp_critical_template',
-                'pg-drizzle_whatsapp_billing'
+                'pg-drizzle_whatsapp_billing',
+                'pg-drizzle_whatsapp_connection_alert'
               )
           `;
           expect(policies).toEqual(
@@ -1022,8 +1029,54 @@ describe("migraciones de PostgreSQL", () => {
                 name: "whatsapp_billing_provider_read",
                 table_name: "pg-drizzle_whatsapp_billing",
               },
+              {
+                name: "whatsapp_readiness_provisioning_worker_manage",
+                table_name: "pg-drizzle_whatsapp_readiness",
+              },
+              {
+                name: "whatsapp_critical_template_provisioning_worker_manage",
+                table_name: "pg-drizzle_whatsapp_critical_template",
+              },
+              {
+                name: "whatsapp_billing_provisioning_worker_manage",
+                table_name: "pg-drizzle_whatsapp_billing",
+              },
+              {
+                name: "whatsapp_connection_alert_superadmin_manage",
+                table_name: "pg-drizzle_whatsapp_connection_alert",
+              },
+              {
+                name: "whatsapp_connection_alert_provisioning_worker_manage",
+                table_name: "pg-drizzle_whatsapp_connection_alert",
+              },
             ]),
           );
+
+          const alertColumns = await migrated<Array<{ column_name: string }>>`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_connection_alert'
+              and column_name in (
+                'clinic_id',
+                'provisioning_event_id',
+                'gate_code',
+                'status',
+                'reason',
+                'next_action',
+                'resolved_at'
+              )
+            order by column_name
+          `;
+          expect(alertColumns).toEqual([
+            { column_name: "clinic_id" },
+            { column_name: "gate_code" },
+            { column_name: "next_action" },
+            { column_name: "provisioning_event_id" },
+            { column_name: "reason" },
+            { column_name: "resolved_at" },
+            { column_name: "status" },
+          ]);
 
           const templateStatuses = await migrated<
             Array<{ definition: string }>

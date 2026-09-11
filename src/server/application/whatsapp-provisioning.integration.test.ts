@@ -4,18 +4,24 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { db } from "~/server/db";
+import { whatsappCriticalTemplateCatalog } from "~/domain/whatsapp-readiness";
 import {
   inClinicTransaction,
   inSuperadminTransaction,
 } from "~/server/db/clinic-context";
 import { drizzleWhatsAppProvisioningStore } from "~/server/db/whatsapp-provisioning-store";
+import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import {
   apoloSuperadmins,
   clinicUsers,
   clinics,
   user as identities,
+  whatsappBilling,
   whatsappConnections,
+  whatsappConnectionAlerts,
+  whatsappCriticalTemplates,
   whatsappInboundMessages,
+  whatsappReadiness,
   whatsappWebhookEvents,
 } from "~/server/db/schema";
 import {
@@ -23,6 +29,7 @@ import {
   runKapsoProvisioningWorker,
   type KapsoProvisioningProvider,
 } from "./whatsapp-provisioning";
+import type { WhatsAppReadinessProvider } from "./whatsapp-readiness";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
@@ -292,6 +299,155 @@ describe("persistencia y RLS de provisión Kapso", () => {
             /duplicate key|unique/i,
           );
         }
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "el worker persiste readiness y alertas bajo el contexto RLS correcto",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-09-07T12:00:00.000Z");
+      const readinessProvider: WhatsAppReadinessProvider = {
+        getBilling: async () => ({
+          alertThresholdCents: 100,
+          chargesSeparated: true,
+          consumedCents: 0,
+          creditCents: 10_000,
+          mode: "partner_managed",
+          status: "ready",
+        }),
+        getNumberHealth: async () => ({
+          checkedAt: now,
+          health: "healthy",
+        }),
+        runE2ETest: async () => ({
+          evidence: "Kapso roundtrip de integración",
+          evidenceScope: "message-roundtrip",
+          testedAt: now,
+        }),
+        syncTemplates: async () => ({
+          numberEnvironment: "production",
+          numberHealth: "healthy",
+          numberHealthCheckedAt: now,
+          syncedAt: now,
+          templates: whatsappCriticalTemplateCatalog.map((template) => ({
+            category: template.category,
+            kind: template.kind,
+            locale: template.locale,
+            name: template.name,
+            providerTemplateId: `template-${template.kind}`,
+            rejectionReason: null,
+            status: "APPROVED" as const,
+            syncedAt: now,
+            variables: [...template.variables],
+          })),
+        }),
+      };
+
+      try {
+        await receiveKapsoWebhook({
+          eventName: "whatsapp.phone_number.created",
+          idempotencyKey: fixture.idempotencyKey,
+          payload: {
+            business_account_id: fixture.primary.businessAccountId,
+            customer: { id: fixture.primary.customer },
+            display_phone_number: "+50370000000",
+            phone_number_id: fixture.primary.phoneNumberId,
+            project: { id: fixture.primary.projectId },
+          },
+          store: drizzleWhatsAppProvisioningStore,
+        });
+        const provisioningProvider: KapsoProvisioningProvider = {
+          getPhoneNumber: async () => ({
+            businessAccountId: fixture.primary.businessAccountId,
+            customerId: fixture.primary.customer,
+            displayPhoneE164: "+50370000000",
+            phoneNumberId: fixture.primary.phoneNumberId,
+          }),
+          ensureProjectWebhook: async () => ({ remoteId: "project-hook" }),
+          ensurePhoneNumberWebhook: async () => ({ remoteId: "phone-hook" }),
+        };
+
+        await expect(
+          runKapsoProvisioningWorker(
+            { now },
+            drizzleWhatsAppProvisioningStore,
+            provisioningProvider,
+            {
+              provider: readinessProvider,
+              store: drizzleWhatsAppReadinessStore,
+            },
+          ),
+        ).resolves.toMatchObject({ processed: 1 });
+
+        const persisted = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            const [connection, readiness, billing, templates, alerts] =
+              await Promise.all([
+                transaction.query.whatsappConnections.findFirst({
+                  where: eq(
+                    whatsappConnections.clinicId,
+                    fixture.primary.clinicId,
+                  ),
+                }),
+                transaction.query.whatsappReadiness.findFirst({
+                  where: eq(
+                    whatsappReadiness.clinicId,
+                    fixture.primary.clinicId,
+                  ),
+                }),
+                transaction.query.whatsappBilling.findFirst({
+                  where: eq(whatsappBilling.clinicId, fixture.primary.clinicId),
+                }),
+                transaction.query.whatsappCriticalTemplates.findMany({
+                  where: eq(
+                    whatsappCriticalTemplates.clinicId,
+                    fixture.primary.clinicId,
+                  ),
+                }),
+                transaction.query.whatsappConnectionAlerts.findMany({
+                  where: eq(
+                    whatsappConnectionAlerts.clinicId,
+                    fixture.primary.clinicId,
+                  ),
+                }),
+              ]);
+            return { alerts, billing, connection, readiness, templates };
+          },
+        );
+        expect(persisted).toMatchObject({
+          alerts: [],
+          billing: { mode: "partner_managed", status: "ready" },
+          connection: { status: "ready" },
+          readiness: {
+            e2eEvidenceScope: "message-roundtrip",
+            technicalStatus: "ready",
+          },
+        });
+        expect(persisted.templates).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "confirmation",
+              locale: "es",
+              status: "APPROVED",
+            }),
+          ]),
+        );
+
+        await expect(
+          inClinicTransaction(
+            {
+              clinicId: fixture.primary.clinicId,
+              identityId: fixture.primary.identityId,
+            },
+            (transaction) =>
+              transaction.query.whatsappConnectionAlerts.findMany(),
+          ),
+        ).resolves.toEqual([]);
       } finally {
         await fixture.cleanup();
       }

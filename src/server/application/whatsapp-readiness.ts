@@ -1,5 +1,6 @@
 import {
   evaluateWhatsAppReadiness,
+  type WhatsAppReadinessGate,
   type WhatsAppBillingSnapshot,
   type WhatsAppCriticalTemplateKind,
   type WhatsAppE2ESnapshot,
@@ -10,10 +11,14 @@ import {
   type WhatsAppTemplateSnapshot,
   type WhatsAppWebhookSnapshot,
 } from "~/domain/whatsapp-readiness";
+import {
+  type WhatsAppConnectionAlert,
+  type WhatsAppConnectionAlertGate,
+} from "~/domain/whatsapp-connection-alert";
 import type { WhatsAppConnection } from "~/domain/whatsapp-connection";
 
 export type WhatsAppReadinessAction =
-  "templates" | "billing" | "e2e" | "reactivate";
+  "templates" | "billing" | "e2e" | "webhooks" | "reactivate";
 
 export type WhatsAppReadinessRemoteStep = {
   lastAttemptAt: Date | null;
@@ -38,6 +43,7 @@ export type WhatsAppReadinessE2E = WhatsAppE2ESnapshot & {
 };
 
 export type WhatsAppReadinessRecord = {
+  alerts?: WhatsAppConnectionAlert[];
   billing: WhatsAppReadinessBilling;
   clinicId: string;
   connection: WhatsAppConnection | null;
@@ -67,6 +73,45 @@ export type WhatsAppReadinessAccess = {
   clinicId: string;
 };
 
+export type WhatsAppReadinessAlertSyncInput = {
+  clinicId: string;
+  gates: WhatsAppConnectionAlertGate[];
+  now: Date;
+  provisioningEventId: string;
+} & (
+  | { access: "superadmin"; actorIdentityId: string }
+  | { access: "provisioning-worker"; leaseToken: string }
+);
+
+export type WhatsAppReadinessProvisioningStore = {
+  openAlert(input: {
+    access: "provisioning-worker";
+    clinicId: string;
+    eventId: string;
+    gateCode: WhatsAppConnectionAlertGate["code"];
+    leaseToken: string;
+    nextAction: string;
+    now: Date;
+    reason: string;
+  }): Promise<void>;
+  readForProvisioning(input: {
+    clinicId: string;
+    eventId: string;
+    leaseToken: string;
+    phoneNumberId: string;
+    projectId: string;
+  }): Promise<WhatsAppReadinessRecord>;
+  saveForProvisioning(input: {
+    clinicId: string;
+    eventId: string;
+    leaseToken: string;
+    phoneNumberId: string;
+    projectId: string;
+    state: WhatsAppReadinessRecord;
+  }): Promise<void>;
+  syncAlerts(input: WhatsAppReadinessAlertSyncInput): Promise<void>;
+};
+
 export type WhatsAppReadinessStore = {
   read(input: WhatsAppReadinessAccess): Promise<WhatsAppReadinessRecord>;
   save(input: {
@@ -77,6 +122,16 @@ export type WhatsAppReadinessStore = {
     expectedConnectionUpdatedAt: Date | null;
     state: WhatsAppReadinessRecord;
   }): Promise<void>;
+  readForProvisioning?: WhatsAppReadinessProvisioningStore["readForProvisioning"];
+  saveForProvisioning?: WhatsAppReadinessProvisioningStore["saveForProvisioning"];
+  openAlert?: WhatsAppReadinessProvisioningStore["openAlert"];
+  syncAlerts?: WhatsAppReadinessProvisioningStore["syncAlerts"];
+  retryWebhooks?: (input: {
+    actorIdentityId: string;
+    clinicId: string;
+    eventId: string;
+    now: Date;
+  }) => Promise<void>;
 };
 
 export type WhatsAppReadinessProvider = {
@@ -136,6 +191,13 @@ export class WhatsAppReadinessConflictError extends Error {
   }
 }
 
+export class WhatsAppReadinessRetryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WhatsAppReadinessRetryError";
+  }
+}
+
 /** Lee el estado técnico y recalcula la decisión desde sus evidencias. */
 export async function getWhatsAppReadiness(
   input: WhatsAppReadinessAccess,
@@ -165,8 +227,27 @@ export async function retryWhatsAppReadiness(
     clinicId: input.clinicId,
   };
   const state = await dependencies.store.read(access);
-  const expectedConnectionUpdatedAt = state.connection?.updatedAt ?? null;
   const now = dependencies.now ?? new Date();
+
+  if (input.action === "webhooks") {
+    if (
+      dependencies.store.retryWebhooks === undefined ||
+      state.provisioningEventId === null
+    ) {
+      throw new WhatsAppReadinessBlockedError(
+        "La Conexión no tiene una generación de webhooks reintentable",
+      );
+    }
+    await dependencies.store.retryWebhooks({
+      actorIdentityId: input.actorIdentityId,
+      clinicId: input.clinicId,
+      eventId: state.provisioningEventId,
+      now,
+    });
+    return getWhatsAppReadiness(access, dependencies.store);
+  }
+
+  const expectedConnectionUpdatedAt = state.connection?.updatedAt ?? null;
   let next = cloneState(state);
 
   try {
@@ -192,6 +273,10 @@ export async function retryWhatsAppReadiness(
         expectedConnectionUpdatedAt,
         state: next,
       });
+      await syncReadinessAlerts(dependencies.store, next, now, {
+        access: "superadmin",
+        actorIdentityId: input.actorIdentityId,
+      });
     }
     throw error;
   }
@@ -205,7 +290,147 @@ export async function retryWhatsAppReadiness(
     expectedConnectionUpdatedAt,
     state: next,
   });
+  await syncReadinessAlerts(dependencies.store, next, now, {
+    access: "superadmin",
+    actorIdentityId: input.actorIdentityId,
+  });
   return toSnapshot(next, now);
+}
+
+/** Completa los gates automáticamente desde el worker de provisioning. */
+export async function provisionWhatsAppReadiness(
+  input: {
+    clinicId: string;
+    eventId: string;
+    leaseToken: string;
+    now: Date;
+    phoneNumberId: string;
+    projectId: string;
+  },
+  dependencies: {
+    provider: WhatsAppReadinessProvider;
+    store: WhatsAppReadinessProvisioningStore;
+  },
+): Promise<WhatsAppReadinessSnapshot> {
+  const state = await dependencies.store.readForProvisioning(input);
+  if (
+    state.connection === null ||
+    state.provisioningEventId !== input.eventId ||
+    state.projectId !== input.projectId ||
+    state.connection.phoneNumberId !== input.phoneNumberId
+  ) {
+    throw new WhatsAppReadinessConflictError();
+  }
+
+  const now = input.now;
+  let next = withDerivedState(cloneState(state), now, true);
+  let retryableFailure: string | null = null;
+  await saveProvisioningReadiness(next, input, dependencies.store);
+
+  for (const action of ["templates", "billing", "e2e"] as const) {
+    try {
+      assertConnectionForAction(next.connection, action);
+      next = await applyAction(next, action, dependencies.provider, now);
+    } catch (error) {
+      if (
+        error instanceof WhatsAppReadinessBlockedError &&
+        error.statePatch !== undefined
+      ) {
+        next = { ...next, ...error.statePatch };
+      } else {
+        next = markActionFailed(next, action, error, now);
+        if (retryableFailure === null && isRetryableReadinessError(error)) {
+          retryableFailure = toErrorMessage(error);
+        }
+      }
+    }
+    next = withDerivedState(next, now, true);
+    await saveProvisioningReadiness(next, input, dependencies.store);
+  }
+
+  if (retryableFailure !== null && next.technicalStatus !== "blocked") {
+    throw new WhatsAppReadinessRetryError(retryableFailure);
+  }
+
+  return toSnapshot(next, now);
+}
+
+async function saveProvisioningReadiness(
+  state: WhatsAppReadinessRecord,
+  input: {
+    clinicId: string;
+    eventId: string;
+    leaseToken: string;
+    now: Date;
+    phoneNumberId: string;
+    projectId: string;
+  },
+  store: WhatsAppReadinessProvisioningStore,
+) {
+  await store.saveForProvisioning({
+    clinicId: input.clinicId,
+    eventId: input.eventId,
+    leaseToken: input.leaseToken,
+    phoneNumberId: input.phoneNumberId,
+    projectId: input.projectId,
+    state,
+  });
+  await syncReadinessAlerts(store, state, input.now, {
+    access: "provisioning-worker",
+    leaseToken: input.leaseToken,
+  });
+}
+
+async function syncReadinessAlerts(
+  store: Pick<WhatsAppReadinessStore, "syncAlerts"> &
+    Partial<WhatsAppReadinessProvisioningStore>,
+  state: WhatsAppReadinessRecord,
+  now: Date,
+  access:
+    | { access: "superadmin"; actorIdentityId: string }
+    | { access: "provisioning-worker"; leaseToken: string },
+) {
+  if (store.syncAlerts === undefined || state.provisioningEventId === null) {
+    return;
+  }
+  await store.syncAlerts({
+    ...access,
+    clinicId: state.clinicId,
+    gates: evaluateWhatsAppReadiness(
+      toEvaluationInput(state, false, now),
+    ).gates.map((gate) => toAlertGate(gate, state)),
+    now,
+    provisioningEventId: state.provisioningEventId,
+  });
+}
+
+function toAlertGate(
+  gate: WhatsAppReadinessGate,
+  state: WhatsAppReadinessRecord,
+): WhatsAppConnectionAlertGate {
+  const detail = readinessGateLastError(state, gate.code);
+  return {
+    action: gate.action,
+    code: gate.code,
+    message:
+      detail !== null && !gate.message.includes(detail)
+        ? `${gate.message}: ${detail}`
+        : gate.message,
+    status: gate.status,
+  };
+}
+
+function readinessGateLastError(
+  state: WhatsAppReadinessRecord,
+  code: WhatsAppReadinessGate["code"],
+) {
+  if (code === "templates") return state.templatesSync.lastError;
+  if (code === "billing") return state.billing.lastError;
+  if (code === "e2e") return state.e2e.lastError;
+  if (code === "webhooks") {
+    return state.projectWebhook.lastError ?? state.phoneNumberWebhook.lastError;
+  }
+  return null;
 }
 
 function assertConnectionForAction(
@@ -335,6 +560,12 @@ async function applyAction(
     };
   }
 
+  if (action === "webhooks") {
+    throw new WhatsAppReadinessBlockedError(
+      "Los webhooks se reintentan mediante la cola de provisioning",
+    );
+  }
+
   if (state.projectWebhook.remoteId === null) {
     throw new WhatsAppReadinessBlockedError(
       "El webhook de proyecto no tiene evidencia para ejecutar la prueba E2E",
@@ -354,6 +585,28 @@ async function applyAction(
       status: "passed",
     },
   };
+}
+
+function isRetryableReadinessError(error: unknown) {
+  if (error instanceof WhatsAppReadinessBlockedError) return false;
+  const status =
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof error.status === "number"
+      ? error.status
+      : undefined;
+  if (status !== undefined) {
+    return status === 0 || status === 408 || status === 429 || status >= 500;
+  }
+  if (error instanceof Error) {
+    return (
+      error.name === "AbortError" ||
+      error.name === "TimeoutError" ||
+      error.message.toLowerCase().includes("timeout")
+    );
+  }
+  return true;
 }
 
 function markActionFailed(
@@ -512,6 +765,7 @@ function toSnapshot(
 function cloneState(state: WhatsAppReadinessRecord): WhatsAppReadinessRecord {
   return {
     ...state,
+    alerts: state.alerts?.map((alert) => ({ ...alert })) ?? [],
     billing: { ...state.billing },
     connection:
       state.connection === null

@@ -109,11 +109,15 @@ function fakeStore(initial = record()) {
   const save = vi.fn<WhatsAppReadinessStore["save"]>(async ({ state }) => {
     current = { ...state, revision: (state.revision ?? 0) + 1 };
   });
+  const retryWebhooks = vi.fn<
+    NonNullable<WhatsAppReadinessStore["retryWebhooks"]>
+  >(async () => undefined);
   const store: WhatsAppReadinessStore = {
     read,
+    retryWebhooks,
     save,
   };
-  return { getState: () => current, read, save, store };
+  return { getState: () => current, read, retryWebhooks, save, store };
 }
 
 function fakeProvider(
@@ -399,6 +403,34 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
       phoneNumberId: "phone-1",
       projectWebhookId: "project-webhook-1",
     });
+  });
+
+  it("reencola los webhooks sin ejecutar gates de readiness desde la UI de operaciones", async () => {
+    const fake = fakeStore();
+    const syncTemplates = vi.fn<WhatsAppReadinessProvider["syncTemplates"]>();
+    const getBilling = vi.fn<WhatsAppReadinessProvider["getBilling"]>();
+    const runE2ETest = vi.fn<WhatsAppReadinessProvider["runE2ETest"]>();
+    const provider = fakeProvider({ syncTemplates, getBilling, runE2ETest });
+
+    const result = await retryWhatsAppReadiness(
+      {
+        action: "webhooks",
+        actorIdentityId: "superadmin-1",
+        clinicId: "clinic-1",
+      },
+      { now, provider, store: fake.store },
+    );
+
+    expect(fake.retryWebhooks).toHaveBeenCalledWith({
+      actorIdentityId: "superadmin-1",
+      clinicId: "clinic-1",
+      eventId: "event-1",
+      now,
+    });
+    expect(syncTemplates).not.toHaveBeenCalled();
+    expect(getBilling).not.toHaveBeenCalled();
+    expect(runE2ETest).not.toHaveBeenCalled();
+    expect(result.readiness.status).toBe("pending");
   });
 
   it("no sincroniza números sandbox y deja evidencia del bloqueo sin declarar ready", async () => {

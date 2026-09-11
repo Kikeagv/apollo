@@ -48,10 +48,12 @@ import type { KapsoWebhookEventPayload } from "~/domain/whatsapp-kapso-provision
 import type {
   WhatsAppCriticalTemplateKind,
   WhatsAppE2EEvidenceScope,
+  WhatsAppReadinessGateCode,
   WhatsAppTemplateCategory,
   WhatsAppTemplateStatus,
   WhatsAppTechnicalReadinessStatus,
 } from "~/domain/whatsapp-readiness";
+import type { WhatsAppConnectionAlertStatus } from "~/domain/whatsapp-connection-alert";
 import type { WhatsAppSetupLinkStatus } from "~/domain/whatsapp-setup-link";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 import type { WhatsAppDeliveryStatus } from "~/domain/whatsapp-delivery";
@@ -427,6 +429,66 @@ export const whatsappReadiness = createTable(
     check(
       "whatsapp_readiness_status_reason_not_blank",
       sql`btrim(${table.statusReason}) <> ''`,
+    ),
+  ],
+);
+
+/** Alerta operativa por gate y generación; visible al superadmin y reintentable. */
+export const whatsappConnectionAlerts = createTable(
+  "whatsapp_connection_alert",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    provisioningEventId: uuid("provisioning_event_id")
+      .notNull()
+      .references(() => whatsappWebhookEvents.id, { onDelete: "cascade" }),
+    gateCode: text("gate_code").$type<WhatsAppReadinessGateCode>().notNull(),
+    status: text("status")
+      .$type<WhatsAppConnectionAlertStatus>()
+      .default("open")
+      .notNull(),
+    reason: text("reason").notNull(),
+    nextAction: text("next_action").notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_connection_alert_generation_gate_unique").on(
+      table.clinicId,
+      table.provisioningEventId,
+      table.gateCode,
+    ),
+    index("whatsapp_connection_alert_clinic_status_idx").on(
+      table.clinicId,
+      table.status,
+      table.updatedAt,
+    ),
+    check(
+      "whatsapp_connection_alert_gate_code",
+      sql`${table.gateCode} IN ('number', 'webhooks', 'templates', 'billing', 'e2e')`,
+    ),
+    check(
+      "whatsapp_connection_alert_status",
+      sql`${table.status} IN ('open', 'resolved')`,
+    ),
+    check(
+      "whatsapp_connection_alert_reason_not_blank",
+      sql`btrim(${table.reason}) <> ''`,
+    ),
+    check(
+      "whatsapp_connection_alert_next_action_not_blank",
+      sql`btrim(${table.nextAction}) <> ''`,
+    ),
+    check(
+      "whatsapp_connection_alert_resolution",
+      sql`${table.status} = 'open' OR ${table.resolvedAt} IS NOT NULL`,
     ),
   ],
 );
