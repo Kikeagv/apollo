@@ -11,6 +11,19 @@ import type {
   AudioTranscriber,
 } from "~/server/integrations/audio-transcriber";
 import type { WhatsAppProvider } from "./whatsapp-provider";
+import {
+  notifySecretaryOfEscalation,
+  type WhatsAppHumanTakeoverRecord,
+} from "./whatsapp-human-takeover";
+
+export {
+  activateWhatsAppHumanTakeover,
+  isWhatsAppHumanTakeoverActive,
+} from "./whatsapp-human-takeover";
+export type {
+  WhatsAppHumanTakeoverRecord,
+  WhatsAppHumanTakeoverStore,
+} from "./whatsapp-human-takeover";
 
 const RESERVATION_DURATION_MS = 10 * 60_000;
 
@@ -129,6 +142,7 @@ export type SimulatedWhatsAppBookingStore = {
     contactId: string;
     messageId?: string;
     now: Date;
+    lastInboundOrigin?: WhatsAppMessageOrigin;
     trigger: ConversationEscalationTrigger;
   }): Promise<{
     created?: boolean;
@@ -136,6 +150,16 @@ export type SimulatedWhatsAppBookingStore = {
     notificationSent?: boolean;
     secretaryPhoneE164: string | null;
   }>;
+  openHumanTakeover(input: {
+    clinicId: string;
+    contactId: string;
+    messageId: string;
+    now: Date;
+    trigger: Extract<
+      ConversationEscalationTrigger,
+      "business-app" | "unsupported-message"
+    >;
+  }): Promise<WhatsAppHumanTakeoverRecord>;
   isVoiceTranscriptionEnabled(input: { clinicId: string }): Promise<boolean>;
   markConversationEscalationNotificationSent?(input: {
     clinicId: string;
@@ -157,6 +181,7 @@ export type SimulatedWhatsAppBookingStore = {
   confirmReservation(input: {
     clinicId: string;
     contactId: string;
+    messageId: string;
     now: Date;
     reservationId: string;
   }): Promise<
@@ -218,6 +243,7 @@ export type SimulatedWhatsAppBookingStore = {
   holdReservation(input: {
     clinicId: string;
     contactId: string;
+    messageId: string;
     now: Date;
     offerId: string;
     patientId: string;
@@ -341,7 +367,24 @@ export async function processWhatsAppConsentSafeRoute(
     now,
   });
   const conversation = await store.getConversation(context);
-  if (conversation.escalationId !== null || conversation.agendaStopped) {
+  const trigger =
+    input.route === "human-request" ? "human-request" : "frustration";
+  if (conversation.escalationId !== null) {
+    const escalation = await store.createConversationEscalation({
+      ...context,
+      messageId: input.messageId,
+      now,
+      trigger,
+    });
+    await notifySecretaryOfEscalation(
+      store,
+      escalation,
+      input.clinicId,
+      trigger,
+    );
+    return conversationSilenced();
+  }
+  if (conversation.agendaStopped) {
     return conversationSilenced();
   }
   if (input.route === "urgency") {
@@ -361,8 +404,6 @@ export async function processWhatsAppConsentSafeRoute(
     return urgentProtocol();
   }
 
-  const trigger =
-    input.route === "human-request" ? "human-request" : "frustration";
   const escalation = await store.createConversationEscalation({
     ...context,
     messageId: input.messageId,
@@ -370,10 +411,6 @@ export async function processWhatsAppConsentSafeRoute(
     trigger,
   });
   await notifySecretaryOfEscalation(store, escalation, input.clinicId, trigger);
-  await store.saveConversation({
-    ...context,
-    conversation: { ...conversation, escalationId: escalation.id },
-  });
   return conversationSilenced();
 }
 
@@ -502,11 +539,11 @@ async function escalateVoiceNote(
   >,
   messageId?: string,
 ) {
-  const conversation = await store.getConversation(context);
   const escalation = await store.createConversationEscalation({
     ...context,
     messageId,
     now,
+    lastInboundOrigin: "voice",
     trigger,
   });
   await notifySecretaryOfEscalation(
@@ -515,14 +552,6 @@ async function escalateVoiceNote(
     context.clinicId,
     trigger,
   );
-  await store.saveConversation({
-    ...context,
-    conversation: {
-      ...conversation,
-      escalationId: escalation.id,
-      lastInboundOrigin: "voice",
-    },
-  });
   return conversationSilenced();
 }
 
@@ -604,6 +633,7 @@ async function processMessage(
       ...context,
       messageId,
       now,
+      lastInboundOrigin: origin,
       trigger,
     });
     await notifySecretaryOfEscalation(
@@ -612,10 +642,6 @@ async function processMessage(
       context.clinicId,
       trigger,
     );
-    await store.saveConversation({
-      ...context,
-      conversation: { ...conversation, escalationId: escalation.id },
-    });
     return conversationSilenced();
   }
   const response: WhatsAppBookingResponse =
@@ -694,6 +720,7 @@ async function processMessage(
             ...context,
             messageId,
             now,
+            lastInboundOrigin: origin,
             trigger: "guardianship-pending",
           });
           await notifySecretaryOfEscalation(
@@ -702,10 +729,6 @@ async function processMessage(
             context.clinicId,
             "guardianship-pending",
           );
-          await store.saveConversation({
-            ...context,
-            conversation: { ...conversation, escalationId: escalation.id },
-          });
           return guardianshipPending();
         }
         case "opciones": {
@@ -752,6 +775,7 @@ async function processMessage(
           if (startsAt === undefined) return invalidRequest();
           const reservation = await store.holdReservation({
             ...context,
+            messageId,
             now,
             offerId: conversation.selectedOfferId,
             patientId: conversation.selectedPatientId,
@@ -781,6 +805,7 @@ async function processMessage(
             return patientSelectionRequired(patients);
           const appointment = await store.confirmReservation({
             ...context,
+            messageId,
             now,
             reservationId: conversation.reservationId,
           });
@@ -853,6 +878,7 @@ async function processMessage(
       ...context,
       messageId,
       now,
+      lastInboundOrigin: origin,
       trigger: "misunderstanding",
     });
     await notifySecretaryOfEscalation(
@@ -861,10 +887,6 @@ async function processMessage(
       context.clinicId,
       "misunderstanding",
     );
-    await store.saveConversation({
-      ...context,
-      conversation: { ...conversation, escalationId: escalation.id },
-    });
     return conversationSilenced();
   }
   if (conversation.misunderstandingCount > 0) {
@@ -920,36 +942,6 @@ function guardianshipPending(): WhatsAppBookingResponse {
     kind: "guardianship-pending",
     text: "La Clínica debe verificar la representación autorizada antes de gestionar datos del Paciente.",
   };
-}
-
-async function notifySecretaryOfEscalation(
-  store: SimulatedWhatsAppBookingStore,
-  escalation: {
-    created?: boolean;
-    id: string;
-    notificationSent?: boolean;
-    secretaryPhoneE164: string | null;
-  },
-  clinicId: string,
-  trigger: ConversationEscalationTrigger,
-) {
-  if (
-    escalation.notificationSent === true ||
-    escalation.secretaryPhoneE164 === null ||
-    store.notifySecretaryOfConversationEscalation === undefined
-  )
-    return;
-  await store.notifySecretaryOfConversationEscalation({
-    clinicId,
-    escalationId: escalation.id,
-    recipientPhoneE164: escalation.secretaryPhoneE164,
-    trigger,
-  });
-  await store.markConversationEscalationNotificationSent?.({
-    clinicId,
-    escalationId: escalation.id,
-    sentAt: new Date(),
-  });
 }
 
 function escalationTrigger(
@@ -1171,6 +1163,14 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
       trigger: ConversationEscalationTrigger;
     }
   >();
+  const escalationsById = new Map<
+    string,
+    {
+      id: string;
+      secretaryPhoneE164: string | null;
+      trigger: ConversationEscalationTrigger;
+    }
+  >();
   const notifiedEscalations = new Set<string>();
   const reservations: Array<{
     contactId: string;
@@ -1178,6 +1178,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     id: string;
     offerId: string;
     patientId: string;
+    sourceMessageId: string;
     startsAt: Date;
   }> = [];
   const appointments: Array<{
@@ -1185,6 +1186,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     id: string;
     origin: "reservation";
     patientId: string;
+    sourceMessageId: string;
     startsAt: Date;
     status: "cancelled" | "confirmed";
   }> = [];
@@ -1240,12 +1242,39 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     async completeMessage({ id, response }) {
       messages.set(id, response);
     },
+    async beginResolvedMessage({ id, origin }) {
+      const duplicate = messages.get(id) ?? null;
+      if (duplicate === null) messageOrigins.set(id, origin);
+      return { duplicate };
+    },
     async createConversationEscalation({
       clinicId,
       contactId,
+      lastInboundOrigin,
       messageId,
       trigger,
     }) {
+      const conversationKey = `${clinicId}:${contactId}`;
+      const conversation = conversations.get(conversationKey) ?? {
+        agendaStopped: false,
+        escalationId: null,
+        lastInboundOrigin: "text" as const,
+        misunderstandingCount: 0,
+        reservationId: null,
+        selectedOfferId: null,
+        selectedPatientId: null,
+      };
+      if (conversation.escalationId !== null) {
+        const existing = escalationsById.get(conversation.escalationId);
+        if (existing === undefined) {
+          throw new Error("El takeover de la conversación no existe");
+        }
+        return {
+          ...existing,
+          created: false,
+          notificationSent: notifiedEscalations.has(existing.id),
+        };
+      }
       const messageKey =
         messageId === undefined
           ? undefined
@@ -1273,12 +1302,59 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
         trigger,
       };
       conversationEscalations.push({ contactId, trigger });
+      escalationsById.set(escalation.id, escalation);
       if (messageKey !== undefined)
         escalationsByMessage.set(messageKey, escalation);
+      conversations.set(conversationKey, {
+        ...conversation,
+        ...(lastInboundOrigin === undefined ? {} : { lastInboundOrigin }),
+        escalationId: escalation.id,
+      });
       return {
         ...escalation,
         created: true,
         notificationSent: false,
+      };
+    },
+    async openHumanTakeover(input) {
+      const key = `${input.clinicId}:${input.contactId}`;
+      const conversation = conversations.get(key) ?? {
+        agendaStopped: false,
+        escalationId: null,
+        lastInboundOrigin: "text" as const,
+        misunderstandingCount: 0,
+        reservationId: null,
+        selectedOfferId: null,
+        selectedPatientId: null,
+      };
+      if (conversation.escalationId !== null) {
+        const existing = escalationsById.get(conversation.escalationId);
+        if (existing === undefined) {
+          throw new Error("El takeover de la conversación no existe");
+        }
+        return {
+          created: false,
+          id: existing.id,
+          notificationSent: notifiedEscalations.has(existing.id),
+          secretaryPhoneE164: existing.secretaryPhoneE164,
+        };
+      }
+      const escalation = await store.createConversationEscalation({
+        clinicId: input.clinicId,
+        contactId: input.contactId,
+        messageId: input.messageId,
+        now: input.now,
+        trigger: input.trigger,
+      });
+      conversations.set(key, {
+        ...conversation,
+        escalationId: escalation.id,
+      });
+      return {
+        created: escalation.created === true,
+        id: escalation.id,
+        notificationSent: escalation.notificationSent === true,
+        secretaryPhoneE164: escalation.secretaryPhoneE164,
       };
     },
     async markConversationEscalationNotificationSent({ escalationId }) {
@@ -1379,7 +1455,18 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
       registeredPatientsByMessage.set(messageKey, patient);
       return patient;
     },
-    async holdReservation({ contactId, now, offerId, patientId, startsAt }) {
+    async holdReservation({
+      contactId,
+      messageId,
+      now,
+      offerId,
+      patientId,
+      startsAt,
+    }) {
+      const existing = reservations.find(
+        (candidate) => candidate.sourceMessageId === messageId,
+      );
+      if (existing !== undefined) return existing;
       if (!hasManageableInMemoryPatientLink(input, contactId, patientId, now))
         return undefined;
       if (
@@ -1392,12 +1479,17 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
         id: randomUUID(),
         offerId,
         patientId,
+        sourceMessageId: messageId,
         startsAt,
       };
       reservations.push(reservation);
       return reservation;
     },
-    async confirmReservation({ contactId, now, reservationId }) {
+    async confirmReservation({ contactId, messageId, now, reservationId }) {
+      const existing = appointments.find(
+        (candidate) => candidate.sourceMessageId === messageId,
+      );
+      if (existing !== undefined) return existing;
       const reservation = reservations.find(
         (candidate) =>
           candidate.id === reservationId &&
@@ -1419,6 +1511,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
         id: randomUUID(),
         origin: "reservation" as const,
         patientId: reservation.patientId,
+        sourceMessageId: messageId,
         startsAt: reservation.startsAt,
         status: "confirmed" as const,
       };

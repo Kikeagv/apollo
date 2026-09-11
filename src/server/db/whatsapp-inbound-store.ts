@@ -7,7 +7,11 @@ import {
   resolveWhatsAppIdentity,
   type WhatsAppIdentityRecord,
 } from "~/domain/whatsapp-identity";
-import type { KapsoInboundMessage } from "~/domain/whatsapp-inbound";
+import {
+  matchesWhatsAppCustomer,
+  type WhatsAppInboundMessage,
+  type WhatsAppInboundMessageOrigin,
+} from "~/domain/whatsapp-inbound";
 import {
   buildWhatsAppConsentPolicy,
   WHATSAPP_CONSENT_PROVIDER,
@@ -24,11 +28,13 @@ import {
   clinics,
   clinicTermsContract,
   contacts,
+  conversationEscalations,
   whatsappConnections,
   whatsappConversationLocks,
   whatsappContactConsents,
   whatsappIdentities,
   whatsappInboundMessages,
+  whatsappInboundAlerts,
   whatsappInboundReplies,
 } from "~/server/db/schema";
 import type {
@@ -54,7 +60,7 @@ export type WhatsAppInboundPersistenceStore = WhatsAppInboundStore &
   WhatsAppConsentStore & {
     enqueueInbound(input: {
       idempotencyKey: string;
-      message: KapsoInboundMessage;
+      message: WhatsAppInboundMessage;
     }): Promise<{ accepted: boolean; eventId: string }>;
     enqueueReply(
       input: Parameters<WhatsAppInboundReplySender["send"]>[0],
@@ -71,17 +77,18 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           batchSequence: message.batchSequence,
           businessScopedUserId: message.businessScopedUserId,
           conversationId: message.conversationId,
-          customerId: message.customerId,
+          customerId: message.customerReference,
           direction: message.direction,
           eventName: message.eventName,
           fromWaId: message.fromWaId,
           idempotencyKey,
           messageId: message.id,
           messageTimestamp: message.messageTimestamp,
-          origin: message.origin,
+          origin: inboundOriginToStorage(message.origin),
           parentBusinessScopedUserId: message.parentBusinessScopedUserId,
           phoneE164: message.phoneE164,
-          phoneNumberId: message.phoneNumberId,
+          phoneNumberId: message.connectionReference,
+          batchFirstSequence: message.batchFirstSequence,
           rawPayload: message.rawPayload,
           interactiveAction: message.interactiveAction,
           status: "pending",
@@ -102,7 +109,10 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           or(
             eq(whatsappInboundMessages.idempotencyKey, idempotencyKey),
             and(
-              eq(whatsappInboundMessages.phoneNumberId, message.phoneNumberId),
+              eq(
+                whatsappInboundMessages.phoneNumberId,
+                message.connectionReference,
+              ),
               eq(whatsappInboundMessages.messageId, message.id),
             ),
           ),
@@ -272,7 +282,9 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
             ),
           )
           .returning();
-        if (updated !== undefined) claimed.push(toInboundEvent(updated));
+        if (updated !== undefined) {
+          claimed.push(toInboundEvent(updated));
+        }
       }
       return claimed;
     });
@@ -294,10 +306,13 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
     });
   },
 
-  async resolveMessage({ message }) {
+  async resolveMessage({ message, mode = "live" }) {
     return inWhatsAppInboundWorkerTransaction(async (transaction) => {
       const connection = await transaction.query.whatsappConnections.findFirst({
-        where: eq(whatsappConnections.phoneNumberId, message.phoneNumberId),
+        where: eq(
+          whatsappConnections.phoneNumberId,
+          message.connectionReference,
+        ),
       });
       if (connection?.provider !== "kapso") {
         return {
@@ -307,8 +322,10 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         } satisfies WhatsAppInboundResolution;
       }
       if (
-        message.customerId === null ||
-        connection.customer !== message.customerId
+        !matchesWhatsAppCustomer({
+          connectionCustomerReference: connection.customer,
+          messageCustomerReference: message.customerReference,
+        })
       ) {
         return {
           kind: "customer-mismatch",
@@ -341,7 +358,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         .where(
           and(
             eq(whatsappIdentities.clinicId, connection.clinicId),
-            eq(whatsappIdentities.phoneNumberId, message.phoneNumberId),
+            eq(whatsappIdentities.phoneNumberId, message.connectionReference),
             eq(whatsappIdentities.status, "active"),
           ),
         );
@@ -350,7 +367,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         businessScopedUserId: message.businessScopedUserId,
         identities,
         phoneE164: message.phoneE164,
-        phoneNumberId: message.phoneNumberId,
+        phoneNumberId: message.connectionReference,
       });
 
       if (resolved.kind === "conflict") {
@@ -374,12 +391,20 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
             ),
           });
           if (contact !== undefined) {
-            const identityId = await preserveIdentitySnapshot(transaction, {
-              clinicId: connection.clinicId,
-              existing: identities,
-              message,
-              contactId: contact.id,
-            });
+            const identityId =
+              mode === "historical"
+                ? await insertIdentitySnapshot(transaction, {
+                    clinicId: connection.clinicId,
+                    contactId: contact.id,
+                    message,
+                    status: "historical",
+                  })
+                : await preserveIdentitySnapshot(transaction, {
+                    clinicId: connection.clinicId,
+                    existing: identities,
+                    message,
+                    contactId: contact.id,
+                  });
             await updateInboundResolution(transaction, message.eventId, {
               clinicId: connection.clinicId,
               contactId: contact.id,
@@ -399,7 +424,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         await insertIdentitySnapshot(transaction, {
           clinicId: connection.clinicId,
           message,
-          status: "unresolved",
+          status: mode === "historical" ? "historical" : "unresolved",
         });
         await updateInboundResolution(transaction, message.eventId, {
           clinicId: connection.clinicId,
@@ -410,12 +435,15 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         } satisfies WhatsAppInboundResolution;
       }
 
-      const identityId = await preserveIdentitySnapshot(transaction, {
-        clinicId: connection.clinicId,
-        existing: identities,
-        message,
-        contactId: resolved.identity.contactId,
-      });
+      const identityId =
+        mode === "historical"
+          ? resolved.identity.id
+          : await preserveIdentitySnapshot(transaction, {
+              clinicId: connection.clinicId,
+              existing: identities,
+              message,
+              contactId: resolved.identity.contactId,
+            });
       await updateInboundResolution(transaction, message.eventId, {
         clinicId: connection.clinicId,
         contactId: resolved.identity.contactId,
@@ -490,6 +518,46 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
     });
   },
 
+  async recordOperationalAlert({
+    customerReference,
+    eventId,
+    nextAction,
+    now,
+    connectionReference,
+    reason,
+  }) {
+    await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+      await transaction.execute(
+        sql`select set_config('app.whatsapp_inbound_event_id', ${eventId}, true)`,
+      );
+      await transaction
+        .insert(whatsappInboundAlerts)
+        .values({
+          customerId: customerReference,
+          inboundMessageId: eventId,
+          nextAction,
+          phoneNumberId: connectionReference,
+          reason,
+          status: "open",
+          updatedAt: now,
+        })
+        .onConflictDoNothing({
+          target: whatsappInboundAlerts.inboundMessageId,
+        });
+      await transaction
+        .update(whatsappInboundAlerts)
+        .set({
+          customerId: customerReference,
+          nextAction,
+          reason,
+          resolvedAt: null,
+          status: "open",
+          updatedAt: now,
+        })
+        .where(eq(whatsappInboundAlerts.inboundMessageId, eventId));
+    });
+  },
+
   async enqueueReply(input) {
     await inWhatsAppInboundWorkerTransaction(async (transaction) => {
       await transaction
@@ -500,6 +568,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           idempotencyKey: input.idempotencyKey,
           recipientBusinessScopedUserId: input.recipientBusinessScopedUserId,
           recipientPhoneE164: input.recipientPhoneE164,
+          serviceWindowExpiresAt: input.serviceWindowExpiresAt,
           text: input.text,
           status: "pending",
         })
@@ -548,7 +617,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
 
   async markAcceptedReply({ id, leaseToken, now, providerMessageId }) {
     await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
-      await transaction
+      const [accepted] = await transaction
         .update(whatsappInboundReplies)
         .set({
           lastError: null,
@@ -563,6 +632,37 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
             eq(whatsappInboundReplies.id, id),
             eq(whatsappInboundReplies.leaseToken, leaseToken),
             eq(whatsappInboundReplies.status, "processing"),
+          ),
+        )
+        .returning({
+          clinicId: whatsappInboundReplies.clinicId,
+          idempotencyKey: whatsappInboundReplies.idempotencyKey,
+        });
+      if (accepted === undefined) return;
+      const escalationId = escalationIdFromNotificationKey(
+        accepted.idempotencyKey,
+      );
+      if (escalationId === null) return;
+      // El outbound worker no tiene contexto clínico al reclamar el outbox;
+      // fija el de la propia fila antes de actualizar la tarea humana.
+      await transaction.execute(
+        sql`select set_config('app.clinic_id', ${accepted.clinicId}, true)`,
+      );
+      const clinic = await transaction.query.clinics.findFirst({
+        columns: { subscriptionStatus: true },
+        where: eq(clinics.id, accepted.clinicId),
+      });
+      if (clinic === undefined) return;
+      await transaction.execute(
+        sql`select set_config('app.subscription_status', ${clinic.subscriptionStatus}, true)`,
+      );
+      await transaction
+        .update(conversationEscalations)
+        .set({ notificationSentAt: now })
+        .where(
+          and(
+            eq(conversationEscalations.clinicId, accepted.clinicId),
+            eq(conversationEscalations.id, escalationId),
           ),
         );
     });
@@ -851,8 +951,20 @@ function toOutboundReply(
     leaseToken: reply.leaseToken,
     recipientBusinessScopedUserId: reply.recipientBusinessScopedUserId,
     recipientPhoneE164: reply.recipientPhoneE164,
+    serviceWindowExpiresAt: reply.serviceWindowExpiresAt,
     text: reply.text,
   };
+}
+
+function escalationIdFromNotificationKey(idempotencyKey: string) {
+  const prefix = "escalation:";
+  if (!idempotencyKey.startsWith(prefix)) return null;
+  const escalationId = idempotencyKey.slice(prefix.length);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    escalationId,
+  )
+    ? escalationId
+    : null;
 }
 
 async function configureWorkerClinic(
@@ -904,7 +1016,7 @@ async function insertIdentitySnapshot(
     clinicId: string;
     contactId?: string | null;
     message: WhatsAppInboundEvent;
-    status: "conflict" | "unresolved";
+    status: "conflict" | "historical" | "unresolved";
   },
 ) {
   const [inserted] = await transaction
@@ -915,7 +1027,7 @@ async function insertIdentitySnapshot(
       contactId: input.contactId ?? null,
       parentBusinessScopedUserId: input.message.parentBusinessScopedUserId,
       phoneE164: input.message.phoneE164,
-      phoneNumberId: input.message.phoneNumberId,
+      phoneNumberId: input.message.connectionReference,
       sourceMessageId: input.message.id,
       status: input.status,
       observedAt: input.message.messageTimestamp ?? input.message.receivedAt,
@@ -943,7 +1055,7 @@ async function preserveIdentitySnapshot(
   const base = input.existing.find(
     (identity) =>
       identity.contactId === input.contactId &&
-      identity.phoneNumberId === input.message.phoneNumberId &&
+      identity.phoneNumberId === input.message.connectionReference &&
       ((input.message.businessScopedUserId !== null &&
         identity.businessScopedUserId === input.message.businessScopedUserId) ||
         (input.message.phoneE164 !== null &&
@@ -959,7 +1071,7 @@ async function preserveIdentitySnapshot(
       base?.parentBusinessScopedUserId ??
       null,
     phoneE164: input.message.phoneE164 ?? base?.phoneE164 ?? null,
-    phoneNumberId: input.message.phoneNumberId,
+    phoneNumberId: input.message.connectionReference,
     status: "active",
     username: input.message.username ?? base?.username ?? null,
     waId: input.message.fromWaId ?? base?.waId ?? null,
@@ -1014,6 +1126,32 @@ async function preserveIdentitySnapshot(
   return inserted.id;
 }
 
+function inboundOriginToStorage(origin: WhatsAppInboundMessageOrigin) {
+  switch (origin) {
+    case "api":
+      return "cloud_api" as const;
+    case "business-app":
+      return "business_app" as const;
+    case "history-sync":
+      return "history_sync" as const;
+    case "unknown":
+      return "unknown" as const;
+  }
+}
+
+function storageOriginToDomain(origin: string): WhatsAppInboundMessageOrigin {
+  switch (origin) {
+    case "cloud_api":
+      return "api";
+    case "business_app":
+      return "business-app";
+    case "history_sync":
+      return "history-sync";
+    default:
+      return "unknown";
+  }
+}
+
 function toIdentityRecord(
   row: typeof whatsappIdentities.$inferSelect,
 ): WhatsAppIdentityRecord {
@@ -1035,23 +1173,27 @@ function toInboundEvent(
 ): WhatsAppInboundEvent {
   return {
     attempts: row.attempts,
+    batchFirstSequence: row.batchFirstSequence,
     batchSequence: row.batchSequence,
     businessScopedUserId: row.businessScopedUserId,
     conversationId: row.conversationId,
-    customerId: row.customerId,
+    customerReference: row.customerId,
     direction: row.direction,
     eventId: row.id,
-    eventName: "whatsapp.message.received",
+    eventName:
+      row.eventName === "whatsapp.message.sent"
+        ? "whatsapp.message.sent"
+        : "whatsapp.message.received",
     fromWaId: row.fromWaId,
     id: row.messageId,
     idempotencyKey: row.idempotencyKey,
     interactiveAction: row.interactiveAction,
     leaseToken: row.leaseToken,
     messageTimestamp: row.messageTimestamp,
-    origin: row.origin,
+    origin: storageOriginToDomain(row.origin),
     parentBusinessScopedUserId: row.parentBusinessScopedUserId,
     phoneE164: row.phoneE164,
-    phoneNumberId: row.phoneNumberId,
+    connectionReference: row.phoneNumberId,
     rawPayload: row.rawPayload,
     receivedAt: row.receivedAt,
     status: row.status,

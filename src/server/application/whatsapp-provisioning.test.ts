@@ -321,6 +321,54 @@ function createFakeReadinessProvider(
 }
 
 describe("recepción del webhook Kapso", () => {
+  it("encola un message.sent de Business App para activar takeover", async () => {
+    const fake = createFakeStore();
+    const enqueueInbound = vi
+      .fn<NonNullable<KapsoProvisioningStore["enqueueInbound"]>>()
+      .mockResolvedValue({ accepted: true, eventId: "manual-message-1" });
+    const enqueueDeliveryStatus = vi.fn();
+
+    await expect(
+      receiveKapsoWebhook({
+        eventName: "whatsapp.message.sent",
+        idempotencyKey: "kapso-business-app-1",
+        payload: {
+          conversation: {
+            id: "conversation-1",
+            phone_number: "50370002222",
+            phone_number_id: "phone-1",
+          },
+          message: {
+            from: "50370000000",
+            id: "wamid-business-app-1",
+            kapso: { direction: "outbound", origin: "business_app" },
+            text: { body: "Te atenderemos pronto" },
+            to: "50370002222",
+            type: "text",
+          },
+          phone_number_id: "phone-1",
+        },
+        store: {
+          ...fake.store,
+          enqueueDeliveryStatus,
+          enqueueInbound,
+        },
+      }),
+    ).resolves.toMatchObject({
+      accepted: true,
+      eventId: "manual-message-1",
+    });
+
+    const call = enqueueInbound.mock.calls[0]?.[0];
+    expect(call?.idempotencyKey).toBe("kapso-business-app-1");
+    expect(call?.message).toMatchObject({
+      direction: "outbound",
+      eventName: "whatsapp.message.sent",
+      origin: "business-app",
+    });
+    expect(enqueueDeliveryStatus).not.toHaveBeenCalled();
+  });
+
   it("encola los estados de Entrega para reconciliarlos de forma asíncrona", async () => {
     const fake = createFakeStore();
     const enqueueDeliveryStatus = vi
@@ -350,6 +398,97 @@ describe("recepción del webhook Kapso", () => {
     expect(call?.event.phoneNumberId).toBe("phone-1");
     expect(call?.event.status).toBe("delivered");
     expect(call?.idempotencyKey).toBe("kapso-status-1");
+  });
+
+  it("mantiene un message.sent de cloud_api como estado de Entrega", async () => {
+    const fake = createFakeStore();
+    const enqueueDeliveryStatus = vi
+      .fn<NonNullable<KapsoProvisioningStore["enqueueDeliveryStatus"]>>()
+      .mockResolvedValue({ accepted: true, eventId: "status-event-1" });
+    fake.store.enqueueDeliveryStatus = enqueueDeliveryStatus;
+
+    await expect(
+      receiveKapsoWebhook({
+        eventName: "whatsapp.message.sent",
+        idempotencyKey: "kapso-status-sent-1",
+        payload: {
+          message: {
+            id: "wamid-cloud-api-1",
+            kapso: { direction: "outbound", origin: "cloud_api" },
+          },
+          phone_number_id: "phone-1",
+        },
+        store: fake.store,
+      }),
+    ).resolves.toEqual({ accepted: true, eventId: "status-event-1" });
+
+    expect(enqueueDeliveryStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("enruta cada elemento de un lote sent según su origen", async () => {
+    const fake = createFakeStore();
+    const enqueueInbound = vi
+      .fn<NonNullable<KapsoProvisioningStore["enqueueInbound"]>>()
+      .mockResolvedValue({ accepted: true, eventId: "manual-message-1" });
+    const enqueueDeliveryStatus = vi
+      .fn<NonNullable<KapsoProvisioningStore["enqueueDeliveryStatus"]>>()
+      .mockResolvedValue({ accepted: true, eventId: "status-message-1" });
+
+    await expect(
+      receiveKapsoWebhook({
+        eventName: "whatsapp.message.sent",
+        idempotencyKey: "kapso-sent-batch-1",
+        payload: {
+          batch: true,
+          batch_info: { first_sequence: 20, last_sequence: 21 },
+          data: [
+            {
+              conversation: {
+                id: "conversation-1",
+                phone_number: "50370002222",
+                phone_number_id: "phone-1",
+              },
+              message: {
+                from: "50370000000",
+                id: "wamid-business-app-batch-1",
+                kapso: { direction: "outbound", origin: "business_app" },
+                text: { body: "Te atenderemos pronto" },
+                to: "50370002222",
+                type: "text",
+              },
+              phone_number_id: "phone-1",
+            },
+            {
+              message: {
+                id: "wamid-cloud-api-batch-1",
+                kapso: { direction: "outbound", origin: "cloud_api" },
+                type: "text",
+              },
+              phone_number_id: "phone-1",
+            },
+          ],
+        },
+        store: {
+          ...fake.store,
+          enqueueDeliveryStatus,
+          enqueueInbound,
+        },
+      }),
+    ).resolves.toMatchObject({
+      accepted: true,
+      eventIds: ["manual-message-1", "status-message-1"],
+    });
+
+    expect(enqueueInbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "kapso-sent-batch-1:wamid-business-app-batch-1",
+      }),
+    );
+    expect(enqueueDeliveryStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "kapso-sent-batch-1:wamid-cloud-api-batch-1",
+      }),
+    );
   });
 
   it("guarda una sola vez el evento usando la clave de idempotencia", async () => {

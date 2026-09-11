@@ -491,6 +491,76 @@
       "when": 1789027200000,
       "tag": "0070_apo77_whatsapp_readiness_worker_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1789144808000,
+      "tag": "0071_apo78_whatsapp_human_takeover",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1789231208000,
+      "tag": "0072_apo78_whatsapp_inbound_alerts",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1789231209000,
+      "tag": "0073_apo78_whatsapp_batch_ordering",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1789231210000,
+      "tag": "0074_apo78_whatsapp_booking_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1789231211000,
+      "tag": "0075_apo78_whatsapp_inbound_alert_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1789231212000,
+      "tag": "0076_apo78_whatsapp_inbound_alert_worker_refresh",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1789231213000,
+      "tag": "0077_apo78_whatsapp_inbound_alert_worker_read",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1789231214000,
+      "tag": "0078_apo78_whatsapp_sent_takeover",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1789231215000,
+      "tag": "0079_apo78_whatsapp_reply_service_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1789231216000,
+      "tag": "0080_apo78_takeover_notification_worker",
+      "breakpoints": true
     }
   ]
 }

@@ -29,6 +29,12 @@ export function ApoloOperations() {
   const [clinicId, setClinicId] = useState("");
   const clinics = api.apolo.listCommercialClinics.useQuery();
   const runtimeDiagnostic = api.apolo.getWhatsAppRuntimeDiagnostic.useQuery();
+  const inboundAlerts = api.apolo.listWhatsAppInboundAlerts.useQuery();
+  const resolveInboundAlert = api.apolo.resolveWhatsAppInboundAlert.useMutation(
+    {
+      onSuccess: () => void inboundAlerts.refetch(),
+    },
+  );
   const onboarding = api.apolo.getKapsoOnboarding.useQuery(
     { clinicId },
     { enabled: Boolean(clinicId) },
@@ -146,6 +152,71 @@ export function ApoloOperations() {
             El diagnóstico no está disponible para esta identidad.
           </p>
         )}
+      </section>
+      <section
+        aria-labelledby="whatsapp-inbound-alerts-title"
+        className="space-y-3 rounded-xl border border-rose-500/70 p-5"
+        data-whatsapp-inbound-alerts="true"
+      >
+        <div>
+          <h2
+            className="text-xl font-semibold"
+            id="whatsapp-inbound-alerts-title"
+          >
+            Alertas de recepción de WhatsApp
+          </h2>
+          <p className="mt-1 text-sm text-slate-300">
+            Eventos rechazados porque no se pudo verificar su Conexión o
+            customer. No se asignan automáticamente a ninguna Clínica.
+          </p>
+        </div>
+        {inboundAlerts.isLoading ? (
+          <p className="text-sm text-slate-300" role="status">
+            Consultando alertas…
+          </p>
+        ) : inboundAlerts.error ? (
+          <p className="text-sm text-amber-200" role="alert">
+            {inboundAlerts.error.message}
+          </p>
+        ) : inboundAlerts.data?.length === 0 ? (
+          <p className="text-sm text-slate-400">No hay alertas abiertas.</p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {inboundAlerts.data?.map((alert) => (
+              <li
+                className="rounded-lg border border-rose-500/40 bg-rose-950/30 p-3"
+                key={alert.id}
+              >
+                <p>{alert.reason}</p>
+                <p className="mt-1 text-slate-300">
+                  Conexión: <code>{alert.connectionReference}</code> · customer:{" "}
+                  <code>{alert.customerReference ?? "no informado"}</code>
+                </p>
+                <p className="mt-1 text-slate-300">
+                  Siguiente acción: {alert.nextAction}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Recibida: {formatDateTime(alert.createdAt)}
+                </p>
+                <button
+                  className="mt-3 rounded bg-rose-300 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-50"
+                  disabled={resolveInboundAlert.isPending}
+                  onClick={() =>
+                    resolveInboundAlert.mutate({ alertId: alert.id })
+                  }
+                  type="button"
+                >
+                  Corregí la Conexión; reintentar
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {resolveInboundAlert.error ? (
+          <p className="text-sm text-amber-200" role="alert">
+            {resolveInboundAlert.error.message}
+          </p>
+        ) : null}
       </section>
       <label className="block text-sm">
         Clínica

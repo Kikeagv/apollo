@@ -1,12 +1,14 @@
 import { normalizeSecretaryPhoneE164 } from "~/domain/whatsapp-operational-policies";
 
 export type ConversationEscalationTrigger =
+  | "business-app"
   | "human-request"
   | "frustration"
   | "guardianship-pending"
   | "misunderstanding"
   | "voice-transcription-disabled"
-  | "voice-transcription-failed";
+  | "voice-transcription-failed"
+  | "unsupported-message";
 
 export type ConversationEscalation = {
   contact: { id: string; name: string };

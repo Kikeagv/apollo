@@ -50,6 +50,11 @@ export function ConversationEscalationsSection() {
                 <p className="text-muted-foreground">
                   Recibido: {formatDate(escalation.createdAt)}
                 </p>
+                <p className="text-muted-foreground">
+                  Siguiente acción: revisar la conversación y cerrar este
+                  Escalamiento para reanudar el asistente. El actor queda
+                  auditado en Pendientes resueltos.
+                </p>
                 <Button
                   disabled={resolve.isPending}
                   onClick={() =>
@@ -71,6 +76,8 @@ export function ConversationEscalationsSection() {
 
 function triggerLabel(trigger: ConversationEscalationTrigger) {
   switch (trigger) {
+    case "business-app":
+      return "escribió desde WhatsApp Business App; el asistente de la Clínica permanece en silencio";
     case "human-request":
       return "solicitó atención humana";
     case "frustration":
@@ -79,6 +86,8 @@ function triggerLabel(trigger: ConversationEscalationTrigger) {
       return "requiere verificación de representación de Tutor";
     case "misunderstanding":
       return "tuvo dos fallos consecutivos de comprensión";
+    case "unsupported-message":
+      return "envió un tipo de mensaje que requiere atención humana";
   }
 }
 

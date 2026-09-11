@@ -19,6 +19,7 @@ import type {
   ConversationEscalationReader,
   ConversationEscalationResolver,
   EscalationNotificationSettingsStore,
+  ConversationEscalationTrigger,
 } from "~/server/application/conversation-escalations";
 import type { VoiceTranscriptionSettingsStore } from "~/server/application/voice-note-transcription-settings";
 import {
@@ -171,10 +172,229 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       );
     },
 
+    async openHumanTakeover(input) {
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        async (transaction) => {
+          await transaction
+            .insert(whatsappConversations)
+            .values({
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              state: EMPTY_CONVERSATION,
+              updatedAt: input.now,
+            })
+            .onConflictDoNothing();
+          const [current] = await transaction
+            .select({ state: whatsappConversations.state })
+            .from(whatsappConversations)
+            .where(
+              and(
+                eq(whatsappConversations.clinicId, input.clinicId),
+                eq(whatsappConversations.contactId, input.contactId),
+              ),
+            )
+            .for("update");
+          if (current === undefined) {
+            throw new Error("No se pudo bloquear la conversación de WhatsApp");
+          }
+          let conversation = { ...EMPTY_CONVERSATION, ...current.state };
+          let escalation:
+            | {
+                contactId: string;
+                id: string;
+                notificationSentAt: Date | null;
+                resolvedAt: Date | null;
+                trigger: ConversationEscalationTrigger;
+              }
+            | undefined;
+          let created = false;
+          if (conversation.escalationId !== null) {
+            escalation =
+              await transaction.query.conversationEscalations.findFirst({
+                columns: {
+                  contactId: true,
+                  id: true,
+                  notificationSentAt: true,
+                  resolvedAt: true,
+                  trigger: true,
+                },
+                where: and(
+                  eq(conversationEscalations.clinicId, input.clinicId),
+                  eq(conversationEscalations.contactId, input.contactId),
+                  eq(conversationEscalations.id, conversation.escalationId),
+                  isNull(conversationEscalations.resolvedAt),
+                ),
+              });
+            if (escalation === undefined) {
+              conversation = { ...conversation, escalationId: null };
+            }
+          }
+          if (escalation === undefined) {
+            const [createdEscalation] = await transaction
+              .insert(conversationEscalations)
+              .values({
+                clinicId: input.clinicId,
+                contactId: input.contactId,
+                createdAt: input.now,
+                sourceMessageId: input.messageId,
+                trigger: input.trigger,
+              })
+              .onConflictDoNothing()
+              .returning({
+                contactId: conversationEscalations.contactId,
+                id: conversationEscalations.id,
+                notificationSentAt: conversationEscalations.notificationSentAt,
+                resolvedAt: conversationEscalations.resolvedAt,
+                trigger: conversationEscalations.trigger,
+              });
+            escalation = createdEscalation;
+            created = escalation !== undefined;
+            if (escalation === undefined) {
+              escalation =
+                await transaction.query.conversationEscalations.findFirst({
+                  columns: {
+                    contactId: true,
+                    id: true,
+                    notificationSentAt: true,
+                    resolvedAt: true,
+                    trigger: true,
+                  },
+                  where: and(
+                    eq(conversationEscalations.clinicId, input.clinicId),
+                    eq(
+                      conversationEscalations.sourceMessageId,
+                      input.messageId,
+                    ),
+                  ),
+                });
+              if (
+                escalation?.contactId !== input.contactId ||
+                escalation?.trigger !== input.trigger
+              ) {
+                throw new Error("La interacción ya inició otro Escalamiento");
+              }
+            }
+            if (escalation === undefined) {
+              throw new Error(
+                "No se pudo crear el Escalamiento de conversación",
+              );
+            }
+            if (escalation.resolvedAt !== null) {
+              const clinic = await transaction.query.clinics.findFirst({
+                columns: {
+                  escalationNotificationsEnabled: true,
+                  escalationSecretaryPhoneE164: true,
+                },
+                where: eq(clinics.id, input.clinicId),
+              });
+              return {
+                created: false,
+                id: escalation.id,
+                notificationSent: true,
+                secretaryPhoneE164:
+                  clinic?.escalationNotificationsEnabled === true
+                    ? clinic.escalationSecretaryPhoneE164
+                    : null,
+              };
+            }
+            await transaction
+              .update(whatsappConversations)
+              .set({
+                state: { ...conversation, escalationId: escalation.id },
+                updatedAt: input.now,
+              })
+              .where(
+                and(
+                  eq(whatsappConversations.clinicId, input.clinicId),
+                  eq(whatsappConversations.contactId, input.contactId),
+                ),
+              );
+          }
+          const clinic = await transaction.query.clinics.findFirst({
+            columns: {
+              escalationNotificationsEnabled: true,
+              escalationSecretaryPhoneE164: true,
+            },
+            where: eq(clinics.id, input.clinicId),
+          });
+          return {
+            created,
+            id: escalation.id,
+            notificationSent: escalation.notificationSentAt !== null,
+            secretaryPhoneE164:
+              clinic?.escalationNotificationsEnabled === true
+                ? clinic.escalationSecretaryPhoneE164
+                : null,
+          };
+        },
+      );
+    },
+
     async createConversationEscalation(input) {
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
+          await transaction
+            .insert(whatsappConversations)
+            .values({
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              state: EMPTY_CONVERSATION,
+              updatedAt: input.now,
+            })
+            .onConflictDoNothing();
+          const [current] = await transaction
+            .select({ state: whatsappConversations.state })
+            .from(whatsappConversations)
+            .where(
+              and(
+                eq(whatsappConversations.clinicId, input.clinicId),
+                eq(whatsappConversations.contactId, input.contactId),
+              ),
+            )
+            .for("update");
+          if (current === undefined) {
+            throw new Error("No se pudo bloquear la conversación de WhatsApp");
+          }
+          let conversation = { ...EMPTY_CONVERSATION, ...current.state };
+          if (conversation.escalationId !== null) {
+            const active =
+              await transaction.query.conversationEscalations.findFirst({
+                columns: {
+                  contactId: true,
+                  id: true,
+                  notificationSentAt: true,
+                  resolvedAt: true,
+                  trigger: true,
+                },
+                where: and(
+                  eq(conversationEscalations.clinicId, input.clinicId),
+                  eq(conversationEscalations.contactId, input.contactId),
+                  eq(conversationEscalations.id, conversation.escalationId),
+                  isNull(conversationEscalations.resolvedAt),
+                ),
+              });
+            if (active !== undefined) {
+              const clinic = await transaction.query.clinics.findFirst({
+                columns: {
+                  escalationNotificationsEnabled: true,
+                  escalationSecretaryPhoneE164: true,
+                },
+                where: eq(clinics.id, input.clinicId),
+              });
+              return {
+                created: false,
+                id: active.id,
+                notificationSent: active.notificationSentAt !== null,
+                secretaryPhoneE164:
+                  clinic?.escalationNotificationsEnabled === true
+                    ? clinic.escalationSecretaryPhoneE164
+                    : null,
+              };
+            }
+            conversation = { ...conversation, escalationId: null };
+          }
           const [createdEscalation] = await transaction
             .insert(conversationEscalations)
             .values({
@@ -189,6 +409,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               contactId: conversationEscalations.contactId,
               id: conversationEscalations.id,
               notificationSentAt: conversationEscalations.notificationSentAt,
+              resolvedAt: conversationEscalations.resolvedAt,
               trigger: conversationEscalations.trigger,
             });
           let escalation = createdEscalation;
@@ -200,6 +421,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                   contactId: true,
                   id: true,
                   notificationSentAt: true,
+                  resolvedAt: true,
                   trigger: true,
                 },
                 where: and(
@@ -216,6 +438,26 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
           }
           if (escalation === undefined) {
             throw new Error("No se pudo crear el Escalamiento de conversación");
+          }
+          if (escalation.resolvedAt === null) {
+            await transaction
+              .update(whatsappConversations)
+              .set({
+                state: {
+                  ...conversation,
+                  ...(input.lastInboundOrigin === undefined
+                    ? {}
+                    : { lastInboundOrigin: input.lastInboundOrigin }),
+                  escalationId: escalation.id,
+                },
+                updatedAt: input.now,
+              })
+              .where(
+                and(
+                  eq(whatsappConversations.clinicId, input.clinicId),
+                  eq(whatsappConversations.contactId, input.contactId),
+                ),
+              );
           }
           const clinic = await transaction.query.clinics.findFirst({
             columns: {
@@ -685,6 +927,18 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
+          const existing =
+            await transaction.query.temporaryReservations.findFirst({
+              columns: {
+                expiresAt: true,
+                id: true,
+              },
+              where: and(
+                eq(temporaryReservations.clinicId, input.clinicId),
+                eq(temporaryReservations.sourceMessageId, input.messageId),
+              ),
+            });
+          if (existing !== undefined) return existing;
           if (!(await isAsclepioEnabled(transaction, input.clinicId))) {
             return undefined;
           }
@@ -738,6 +992,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               expiresAt,
               patientId: input.patientId,
               serviceOfferId: input.offerId,
+              sourceMessageId: input.messageId,
               startsAt: input.startsAt,
             })
             .returning({
@@ -756,6 +1011,25 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
       return inSimulatedWhatsAppClinicTransaction(
         input.clinicId,
         async (transaction) => {
+          const existingAppointment =
+            await transaction.query.appointments.findFirst({
+              columns: {
+                id: true,
+                patientId: true,
+              },
+              where: and(
+                eq(appointments.clinicId, input.clinicId),
+                eq(appointments.sourceMessageId, input.messageId),
+              ),
+            });
+          if (existingAppointment !== undefined) {
+            if (existingAppointment.patientId === null) return undefined;
+            return {
+              id: existingAppointment.id,
+              origin: "reservation" as const,
+              patientId: existingAppointment.patientId,
+            };
+          }
           const initialReservation =
             await transaction.query.temporaryReservations.findFirst({
               columns: {
@@ -832,6 +1106,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               patientId: reservation.patientId,
               priceUsd: offer.priceUsd,
               serviceOfferId: reservation.serviceOfferId,
+              sourceMessageId: input.messageId,
               startsAt: reservation.startsAt,
             })
             .returning({
@@ -944,6 +1219,27 @@ export const drizzleConversationEscalationResolver: ConversationEscalationResolv
       return inClinicTransaction(input, async (transaction) => {
         const actorClinicUserId = await activeClinicUserId(transaction, input);
         if (actorClinicUserId === undefined) return false;
+        const [target] = await transaction
+          .select({ contactId: conversationEscalations.contactId })
+          .from(conversationEscalations)
+          .where(
+            and(
+              eq(conversationEscalations.clinicId, input.clinicId),
+              eq(conversationEscalations.id, input.escalationId),
+            ),
+          )
+          .limit(1);
+        if (target === undefined) return false;
+        const [conversation] = await transaction
+          .select({ state: whatsappConversations.state })
+          .from(whatsappConversations)
+          .where(
+            and(
+              eq(whatsappConversations.clinicId, input.clinicId),
+              eq(whatsappConversations.contactId, target.contactId),
+            ),
+          )
+          .for("update");
         const resolvedAt = new Date();
         const [escalation] = await transaction
           .update(conversationEscalations)
@@ -957,14 +1253,6 @@ export const drizzleConversationEscalationResolver: ConversationEscalationResolv
           )
           .returning({ contactId: conversationEscalations.contactId });
         if (escalation === undefined) return false;
-        const conversation =
-          await transaction.query.whatsappConversations.findFirst({
-            columns: { state: true },
-            where: and(
-              eq(whatsappConversations.clinicId, input.clinicId),
-              eq(whatsappConversations.contactId, escalation.contactId),
-            ),
-          });
         if (conversation?.state.escalationId === input.escalationId) {
           await transaction
             .update(whatsappConversations)

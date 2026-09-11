@@ -1,7 +1,7 @@
-import { KapsoInboundMessageError } from "~/domain/whatsapp-inbound";
 import { KapsoDeliveryStatusEventError } from "~/domain/whatsapp-delivery-events";
 import { KapsoLifecycleEventError } from "~/domain/whatsapp-kapso-provisioning";
 import { receiveKapsoWebhook } from "~/server/application/whatsapp-provisioning";
+import { KapsoInboundMessageError } from "~/server/whatsapp/kapso-inbound";
 import { verifyKapsoWebhookSignature } from "~/server/whatsapp/kapso-webhook-security";
 
 export function createKapsoWebhookHandler(input: {

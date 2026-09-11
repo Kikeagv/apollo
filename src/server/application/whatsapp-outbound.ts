@@ -68,6 +68,20 @@ export async function runWhatsAppOutboundReplyWorker(
   let unknown = 0;
   for (const reply of replies) {
     const leaseToken = requireLeaseToken(reply);
+    if (
+      reply.serviceWindowExpiresAt !== undefined &&
+      reply.serviceWindowExpiresAt !== null &&
+      reply.serviceWindowExpiresAt <= input.now
+    ) {
+      await store.markFailedReply({
+        id: reply.id,
+        leaseToken,
+        now: input.now,
+        reason: "La Ventana de servicio de WhatsApp ya expiró",
+      });
+      failed += 1;
+      continue;
+    }
     let result: WhatsAppSendResult;
     try {
       result = await provider.send(reply);

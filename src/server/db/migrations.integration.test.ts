@@ -1329,6 +1329,179 @@ describe("migraciones de PostgreSQL", () => {
             },
           ]);
 
+          const inboundOrderingColumns = await migrated<
+            Array<{ table_name: string; column_name: string }>
+          >`
+            select table_name, column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and (
+                (table_name = 'pg-drizzle_whatsapp_inbound_message'
+                  and column_name = 'batch_first_sequence')
+                or (table_name = 'pg-drizzle_whatsapp_inbound_alert'
+                  and column_name = 'resolved_by_identity_id')
+                or (table_name = 'pg-drizzle_whatsapp_inbound_reply'
+                  and column_name = 'service_window_expires_at')
+                or (table_name = 'pg-drizzle_temporary_reservation'
+                  and column_name = 'source_message_id')
+                or (table_name = 'pg-drizzle_appointment'
+                  and column_name = 'source_message_id')
+              )
+            order by table_name, column_name
+          `;
+          expect(inboundOrderingColumns).toEqual([
+            {
+              column_name: "source_message_id",
+              table_name: "pg-drizzle_appointment",
+            },
+            {
+              column_name: "source_message_id",
+              table_name: "pg-drizzle_temporary_reservation",
+            },
+            {
+              column_name: "resolved_by_identity_id",
+              table_name: "pg-drizzle_whatsapp_inbound_alert",
+            },
+            {
+              column_name: "batch_first_sequence",
+              table_name: "pg-drizzle_whatsapp_inbound_message",
+            },
+            {
+              column_name: "service_window_expires_at",
+              table_name: "pg-drizzle_whatsapp_inbound_reply",
+            },
+          ]);
+
+          const inboundEventNameConstraint = await migrated<
+            Array<{ definition: string }>
+          >`
+            select pg_get_constraintdef(oid) as definition
+            from pg_constraint
+            where conrelid = 'pg-drizzle_whatsapp_inbound_message'::regclass
+              and conname = 'whatsapp_inbound_message_event_name'
+          `;
+          expect(inboundEventNameConstraint[0]?.definition).toContain(
+            "whatsapp.message.sent",
+          );
+
+          const bookingIdempotencyIndexes = await migrated<
+            Array<{ indexName: string }>
+          >`
+            select indexname as "indexName"
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname in (
+                'appointment_source_message_unique',
+                'temporary_reservation_source_message_unique'
+              )
+            order by indexname
+          `;
+          expect(bookingIdempotencyIndexes).toEqual([
+            { indexName: "appointment_source_message_unique" },
+            { indexName: "temporary_reservation_source_message_unique" },
+          ]);
+
+          const conversationEscalationTriggers = await migrated<
+            Array<{ definition: string }>
+          >`
+            select pg_get_constraintdef(oid) as definition
+            from pg_constraint
+            where conrelid = 'pg-drizzle_conversation_escalation'::regclass
+              and conname = 'pg-drizzle_conversation_escalation_trigger_check'
+          `;
+          expect(conversationEscalationTriggers[0]?.definition).toMatch(
+            /business-app.*unsupported-message/s,
+          );
+
+          const conversationEscalationTable = await migrated<
+            Array<{ relforcerowsecurity: boolean; relrowsecurity: boolean }>
+          >`
+            select c.relrowsecurity, c.relforcerowsecurity
+            from pg_class c
+            inner join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relname = 'pg-drizzle_conversation_escalation'
+          `;
+          expect(conversationEscalationTable).toEqual([
+            { relforcerowsecurity: true, relrowsecurity: true },
+          ]);
+
+          const conversationEscalationPolicies = await migrated<
+            Array<{ command: "INSERT" | "SELECT" | "UPDATE"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_conversation_escalation'
+            order by cmd, policyname
+          `;
+          expect(conversationEscalationPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "INSERT",
+                name: "conversation_escalation_whatsapp_append",
+              },
+              {
+                command: "SELECT",
+                name: "conversation_escalation_operating_read",
+              },
+              {
+                command: "UPDATE",
+                name: "conversation_escalation_operating_resolve",
+              },
+              {
+                command: "UPDATE",
+                name: "conversation_escalation_outbound_worker_notification",
+              },
+            ]),
+          );
+
+          const inboundAlertTable = await migrated<
+            Array<{ relforcerowsecurity: boolean; relrowsecurity: boolean }>
+          >`
+            select c.relrowsecurity, c.relforcerowsecurity
+            from pg_class c
+            inner join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relname = 'pg-drizzle_whatsapp_inbound_alert'
+          `;
+          expect(inboundAlertTable).toEqual([
+            { relforcerowsecurity: true, relrowsecurity: true },
+          ]);
+          const inboundAlertPolicies = await migrated<
+            Array<{ command: "INSERT" | "SELECT" | "UPDATE"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_inbound_alert'
+            order by cmd, policyname
+          `;
+          expect(inboundAlertPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "INSERT",
+                name: "whatsapp_inbound_alert_worker_append",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_inbound_alert_superadmin_read",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_inbound_alert_worker_read",
+              },
+              {
+                command: "UPDATE",
+                name: "whatsapp_inbound_alert_superadmin_resolve",
+              },
+              {
+                command: "UPDATE",
+                name: "whatsapp_inbound_alert_worker_refresh",
+              },
+            ]),
+          );
+
           const inboundPolicies = await migrated<
             Array<{ name: string; table_name: string }>
           >`

@@ -84,6 +84,38 @@ describe("worker outbound de respuestas WhatsApp", () => {
     });
   });
 
+  it("no envía una respuesta cuando la Ventana de servicio ya expiró", async () => {
+    const now = new Date("2026-09-09T12:00:00.000Z");
+    const expiredReply = {
+      ...reply,
+      serviceWindowExpiresAt: new Date("2026-09-09T11:59:59.000Z"),
+    };
+    const store = {
+      claimDueReplies: vi.fn().mockResolvedValue([expiredReply]),
+      markAcceptedReply: vi.fn(),
+      markFailedReply: vi.fn().mockResolvedValue(undefined),
+      markUnknownReply: vi.fn(),
+      scheduleReplyRetry: vi.fn(),
+    };
+    const send = vi.fn();
+
+    await expect(
+      runWhatsAppOutboundReplyWorker({ now }, store, { send }),
+    ).resolves.toMatchObject({
+      accepted: 0,
+      claimed: 1,
+      failed: 1,
+    });
+
+    expect(send).not.toHaveBeenCalled();
+    expect(store.markFailedReply).toHaveBeenCalledWith({
+      id: "reply-1",
+      leaseToken: "lease-1",
+      now,
+      reason: "La Ventana de servicio de WhatsApp ya expiró",
+    });
+  });
+
   it("no reintenta si falla guardar un ID ya aceptado por Kapso", async () => {
     const markUnknownReply = vi
       .fn<WhatsAppOutboundReplyStore["markUnknownReply"]>()

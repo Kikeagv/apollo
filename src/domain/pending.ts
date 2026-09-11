@@ -9,13 +9,20 @@ export type PendingCategoryFilter = PendingCategory | "all";
 export type PendingStatus = "open" | "resolved";
 export type PendingPriority = "urgent" | "high" | "normal" | "low";
 
+export type PendingResolutionActor = {
+  id: string;
+  name: string;
+};
+
 export type PendingConversationTrigger =
+  | "business-app"
   | "human-request"
   | "frustration"
   | "guardianship-pending"
   | "misunderstanding"
   | "voice-transcription-disabled"
-  | "voice-transcription-failed";
+  | "voice-transcription-failed"
+  | "unsupported-message";
 
 type PendingCaseBase = {
   createdAt: Date;
@@ -28,6 +35,7 @@ type PendingCaseBase = {
 export type PendingConversationCase = PendingCaseBase & {
   category: "conversation";
   contact: { id: string; name: string };
+  resolvedBy: PendingResolutionActor | null;
   trigger: PendingConversationTrigger;
 };
 

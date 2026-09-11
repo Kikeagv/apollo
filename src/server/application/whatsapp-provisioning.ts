@@ -1,7 +1,5 @@
-import {
-  parseKapsoInboundMessagePayload,
-  type KapsoInboundMessage,
-} from "~/domain/whatsapp-inbound";
+import type { WhatsAppInboundMessage } from "~/domain/whatsapp-inbound";
+import { parseKapsoInboundMessagePayload } from "~/server/whatsapp/kapso-inbound";
 import {
   isKapsoDeliveryStatusEventName,
   parseKapsoDeliveryStatusPayload,
@@ -74,7 +72,7 @@ export type KapsoProvisioningStore = {
   }) => Promise<{ accepted: boolean; eventId: string }>;
   enqueueInbound?: (input: {
     idempotencyKey: string;
-    message: KapsoInboundMessage;
+    message: WhatsAppInboundMessage;
   }) => Promise<{ accepted: boolean; eventId: string }>;
   enqueueDeliveryStatus?: (input: {
     event: KapsoDeliveryStatusEvent;
@@ -199,29 +197,34 @@ export async function receiveKapsoWebhook(input: {
     Pick<KapsoProvisioningStore, "enqueueDeliveryStatus">;
 }) {
   if (input.eventName === "whatsapp.message.received") {
+    const messages = parseKapsoInboundMessagePayload(
+      input.payload,
+      input.eventName,
+    );
     if (input.store.enqueueInbound === undefined) {
       throw new Error("Falta el almacén de mensajes entrantes de Kapso");
     }
-    const enqueueInbound = input.store.enqueueInbound;
-    const messages = parseKapsoInboundMessagePayload(input.payload);
-    const results = await Promise.all(
-      messages.map((message) =>
-        enqueueInbound({
-          idempotencyKey:
-            messages.length === 1
-              ? input.idempotencyKey
-              : `${input.idempotencyKey}:${message.id}`,
-          message,
-        }),
-      ),
+    return summarizeKapsoQueueResults(
+      await enqueueKapsoInboundMessages({
+        batchSize: messages.length,
+        idempotencyKey: input.idempotencyKey,
+        messages,
+        enqueueInbound: input.store.enqueueInbound,
+      }),
     );
-    return {
-      accepted: results.some((result) => result.accepted),
-      eventId: results.length === 1 ? results[0]?.eventId : undefined,
-      ...(results.length > 1
-        ? { eventIds: results.map((result) => result.eventId) }
-        : {}),
-    };
+  }
+  if (input.eventName === "whatsapp.message.sent") {
+    const messages = parseKapsoInboundMessagePayload(
+      input.payload,
+      input.eventName,
+    );
+    return enqueueKapsoSentMessages({
+      enqueueDeliveryStatus: input.store.enqueueDeliveryStatus,
+      enqueueIgnored: input.store.enqueueIgnored,
+      enqueueInbound: input.store.enqueueInbound,
+      idempotencyKey: input.idempotencyKey,
+      messages,
+    });
   }
   if (isKapsoDeliveryStatusEventName(input.eventName)) {
     const event = parseKapsoDeliveryStatusPayload(
@@ -268,6 +271,106 @@ export async function receiveKapsoWebhook(input: {
     event,
     idempotencyKey: input.idempotencyKey,
   });
+}
+
+async function enqueueKapsoInboundMessages(input: {
+  batchSize: number;
+  enqueueInbound: NonNullable<KapsoProvisioningStore["enqueueInbound"]>;
+  idempotencyKey: string;
+  messages: WhatsAppInboundMessage[];
+}) {
+  return Promise.all(
+    input.messages.map((message) =>
+      input.enqueueInbound({
+        idempotencyKey:
+          input.batchSize === 1
+            ? input.idempotencyKey
+            : `${input.idempotencyKey}:${message.id}`,
+        message,
+      }),
+    ),
+  );
+}
+
+async function enqueueKapsoSentMessages(input: {
+  enqueueDeliveryStatus: KapsoProvisioningStore["enqueueDeliveryStatus"];
+  enqueueIgnored: KapsoProvisioningStore["enqueueIgnored"];
+  enqueueInbound: KapsoProvisioningStore["enqueueInbound"];
+  idempotencyKey: string;
+  messages: WhatsAppInboundMessage[];
+}) {
+  const results = await Promise.all(
+    input.messages.map(async (message) => {
+      const idempotencyKey =
+        input.messages.length === 1
+          ? input.idempotencyKey
+          : `${input.idempotencyKey}:${message.id}`;
+      if (
+        message.origin === "business-app" ||
+        message.origin === "history-sync"
+      ) {
+        if (input.enqueueInbound === undefined) {
+          throw new Error("Falta el almacén de mensajes entrantes de Kapso");
+        }
+        const [result] = await enqueueKapsoInboundMessages({
+          batchSize: input.messages.length,
+          enqueueInbound: input.enqueueInbound,
+          idempotencyKey: input.idempotencyKey,
+          messages: [message],
+        });
+        if (result === undefined) {
+          throw new Error("No se pudo encolar el mensaje de Business App");
+        }
+        return result;
+      }
+
+      const event = parseKapsoDeliveryStatusPayload(
+        "whatsapp.message.sent",
+        withDeliveryStatusIdentity(message),
+      );
+      if (input.enqueueDeliveryStatus !== undefined) {
+        return input.enqueueDeliveryStatus({ event, idempotencyKey });
+      }
+      return input.enqueueIgnored({
+        eventName: "whatsapp.message.sent",
+        idempotencyKey,
+        payload: event.rawPayload,
+      });
+    }),
+  );
+  return summarizeKapsoQueueResults(results);
+}
+
+function summarizeKapsoQueueResults(
+  results: Array<{ accepted: boolean; eventId: string }>,
+) {
+  return {
+    accepted: results.some((result) => result.accepted),
+    eventId: results.length === 1 ? results[0]?.eventId : undefined,
+    ...(results.length > 1
+      ? { eventIds: results.map((result) => result.eventId) }
+      : {}),
+  };
+}
+
+function withDeliveryStatusIdentity(message: WhatsAppInboundMessage) {
+  const rawPayload = message.rawPayload;
+  const rawMessage = asRecord(rawPayload.message);
+  return {
+    ...rawPayload,
+    message: {
+      ...rawMessage,
+      id: message.id,
+      phone_number_id: message.connectionReference,
+    },
+    phone_number_id: message.connectionReference,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 export type KapsoProvisioningWorkerResult = {

@@ -14,10 +14,12 @@ import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import {
   appointmentSelfManagementEscalations,
+  clinicUsers,
   contacts,
   conversationEscalations,
   transactionalDeliveries,
   transactionalDeliveryAlerts,
+  user,
 } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -63,6 +65,8 @@ async function listConversationCases(
       id: conversationEscalations.id,
       priority: conversationEscalations.priority,
       resolvedAt: conversationEscalations.resolvedAt,
+      resolvedById: clinicUsers.id,
+      resolvedByName: user.name,
       trigger: conversationEscalations.trigger,
     })
     .from(conversationEscalations)
@@ -73,6 +77,14 @@ async function listConversationCases(
         eq(conversationEscalations.contactId, contacts.id),
       ),
     )
+    .leftJoin(
+      clinicUsers,
+      and(
+        eq(conversationEscalations.clinicId, clinicUsers.clinicId),
+        eq(conversationEscalations.resolvedByClinicUserId, clinicUsers.id),
+      ),
+    )
+    .leftJoin(user, eq(clinicUsers.identityId, user.id))
     .where(
       and(
         eq(conversationEscalations.clinicId, clinicId),
@@ -89,6 +101,10 @@ async function listConversationCases(
     id: row.id,
     priority: row.priority,
     resolvedAt: row.resolvedAt,
+    resolvedBy:
+      row.resolvedById === null || row.resolvedByName === null
+        ? null
+        : { id: row.resolvedById, name: row.resolvedByName },
     status: row.resolvedAt === null ? "open" : "resolved",
     trigger: row.trigger,
   }));

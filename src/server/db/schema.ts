@@ -57,6 +57,7 @@ import type { WhatsAppConnectionAlertStatus } from "~/domain/whatsapp-connection
 import type { WhatsAppSetupLinkStatus } from "~/domain/whatsapp-setup-link";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 import type { WhatsAppDeliveryStatus } from "~/domain/whatsapp-delivery";
+import type { WhatsAppInboundAlertStatus } from "~/domain/whatsapp-inbound-alert";
 
 export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
@@ -973,6 +974,7 @@ export const appointments = createTable(
     serviceOfferId: uuid("service_offer_id"),
     actorClinicUserId: uuid("actor_clinic_user_id"),
     authorContactId: uuid("author_contact_id"),
+    sourceMessageId: text("source_message_id"),
     origin: text("origin").$type<AppointmentOrigin>(),
     priceUsd: numeric("price_usd", { precision: 12, scale: 2 }),
     durationMinutes: integer("duration_minutes"),
@@ -998,6 +1000,9 @@ export const appointments = createTable(
       table.doctorId,
       table.startsAt,
     ),
+    uniqueIndex("appointment_source_message_unique")
+      .on(table.clinicId, table.sourceMessageId)
+      .where(sql`${table.sourceMessageId} IS NOT NULL`),
     foreignKey({
       columns: [table.clinicId, table.doctorId],
       foreignColumns: [doctors.clinicId, doctors.id],
@@ -1121,6 +1126,7 @@ export const temporaryReservations = createTable(
     contactId: uuid("contact_id"),
     patientId: uuid("patient_id"),
     serviceOfferId: uuid("service_offer_id"),
+    sourceMessageId: text("source_message_id"),
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -1131,6 +1137,9 @@ export const temporaryReservations = createTable(
       table.doctorId,
       table.startsAt,
     ),
+    uniqueIndex("temporary_reservation_source_message_unique")
+      .on(table.clinicId, table.sourceMessageId)
+      .where(sql`${table.sourceMessageId} IS NOT NULL`),
     foreignKey({
       columns: [table.clinicId, table.doctorId],
       foreignColumns: [doctors.clinicId, doctors.id],
@@ -1527,6 +1536,7 @@ export const whatsappInboundMessages = createTable(
     idempotencyKey: text("idempotency_key").notNull(),
     eventName: text("event_name").notNull(),
     messageId: text("message_id").notNull(),
+    batchFirstSequence: integer("batch_first_sequence"),
     batchSequence: integer("batch_sequence"),
     phoneNumberId: text("phone_number_id").notNull(),
     conversationId: text("conversation_id"),
@@ -1617,7 +1627,14 @@ export const whatsappInboundMessages = createTable(
     }).onDelete("cascade"),
     check(
       "whatsapp_inbound_message_event_name",
-      sql`${table.eventName} = 'whatsapp.message.received'`,
+      sql`${table.eventName} IN ('whatsapp.message.received', 'whatsapp.message.sent')`,
+    ),
+    check(
+      "whatsapp_inbound_message_batch_order",
+      sql`(${table.batchFirstSequence} IS NULL AND ${table.batchSequence} IS NULL)
+        OR (${table.batchFirstSequence} IS NOT NULL
+          AND ${table.batchSequence} IS NOT NULL
+          AND ${table.batchSequence} >= ${table.batchFirstSequence})`,
     ),
     check(
       "whatsapp_inbound_message_status",
@@ -1634,6 +1651,61 @@ export const whatsappInboundMessages = createTable(
     check(
       "whatsapp_inbound_message_interactive_action",
       sql`${table.interactiveAction} IS NULL OR ${table.interactiveAction} = 'continue'`,
+    ),
+  ],
+);
+
+/** Alerta global de Apolo para eventos inbound que no pueden cruzarse con una Clínica. */
+export const whatsappInboundAlerts = createTable(
+  "whatsapp_inbound_alert",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    inboundMessageId: uuid("inbound_message_id")
+      .notNull()
+      .references(() => whatsappInboundMessages.id, { onDelete: "cascade" }),
+    phoneNumberId: text("phone_number_id").notNull(),
+    customerId: text("customer_id"),
+    reason: text("reason").notNull(),
+    nextAction: text("next_action").notNull(),
+    status: text("status")
+      .$type<WhatsAppInboundAlertStatus>()
+      .default("open")
+      .notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedByIdentityId: text("resolved_by_identity_id").references(
+      () => user.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_inbound_alert_message_unique").on(
+      table.inboundMessageId,
+    ),
+    index("whatsapp_inbound_alert_status_idx").on(
+      table.status,
+      table.updatedAt,
+    ),
+    check(
+      "whatsapp_inbound_alert_reason_not_blank",
+      sql`btrim(${table.reason}) <> ''`,
+    ),
+    check(
+      "whatsapp_inbound_alert_next_action_not_blank",
+      sql`btrim(${table.nextAction}) <> ''`,
+    ),
+    check(
+      "whatsapp_inbound_alert_status",
+      sql`${table.status} IN ('open', 'resolved')`,
+    ),
+    check(
+      "whatsapp_inbound_alert_resolution",
+      sql`${table.status} = 'open' OR ${table.resolvedAt} IS NOT NULL`,
     ),
   ],
 );
@@ -1671,6 +1743,9 @@ export const whatsappInboundReplies = createTable(
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    serviceWindowExpiresAt: timestamp("service_window_expires_at", {
+      withTimezone: true,
+    }),
     providerMessageId: text("provider_message_id"),
     lastError: text("last_error"),
     sentAt: timestamp("sent_at", { withTimezone: true }),
@@ -1940,6 +2015,19 @@ export const conversationEscalations = createTable(
     index("conversation_escalation_clinic_idx").on(
       table.clinicId,
       table.createdAt,
+    ),
+    check(
+      "pg-drizzle_conversation_escalation_trigger_check",
+      sql`${table.trigger} IN (
+        'business-app',
+        'human-request',
+        'frustration',
+        'misunderstanding',
+        'voice-transcription-disabled',
+        'voice-transcription-failed',
+        'guardianship-pending',
+        'unsupported-message'
+      )`,
     ),
     uniqueIndex("conversation_escalation_source_message_unique")
       .on(table.clinicId, table.sourceMessageId)

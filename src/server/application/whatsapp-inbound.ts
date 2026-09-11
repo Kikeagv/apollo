@@ -1,9 +1,13 @@
-import type { KapsoInboundMessage } from "~/domain/whatsapp-inbound";
+import {
+  classifyWhatsAppInboundMessage,
+  type WhatsAppInboundMessage,
+} from "~/domain/whatsapp-inbound";
 import {
   classifyWhatsAppConsentSafeRoute,
   isWhatsAppConsentOptOut,
   type WhatsAppConsentSafeRoute,
 } from "~/domain/whatsapp-consent";
+import type { ConversationEscalationTrigger } from "./conversation-escalations";
 import type { WhatsAppConsentGate } from "./whatsapp-consent";
 
 export type {
@@ -22,7 +26,7 @@ export type WhatsAppInboundEventStatus =
   | "processing"
   | "rejected";
 
-export type WhatsAppInboundEvent = KapsoInboundMessage & {
+export type WhatsAppInboundEvent = WhatsAppInboundMessage & {
   attempts: number;
   eventId: string;
   idempotencyKey: string;
@@ -89,12 +93,21 @@ export type WhatsAppInboundStore = {
     processedAt: Date;
     reason: string;
   }): Promise<void>;
+  recordOperationalAlert(input: {
+    customerReference: string | null;
+    eventId: string;
+    nextAction: string;
+    now: Date;
+    connectionReference: string;
+    reason: string;
+  }): Promise<void>;
   saveAssistantResponse(input: {
     eventId: string;
     leaseToken: string;
     responseText: string;
   }): Promise<void>;
   resolveMessage(input: {
+    mode?: "historical" | "live";
     message: WhatsAppInboundEvent;
   }): Promise<WhatsAppInboundResolution>;
   scheduleRetry(input: {
@@ -141,6 +154,20 @@ export type WhatsAppInboundSafeRoute = {
   }): Promise<{ text: string }>;
 };
 
+export type WhatsAppInboundHumanTakeover = {
+  isActive(input: { clinicId: string; contactId: string }): Promise<boolean>;
+  activate(input: {
+    clinicId: string;
+    contactId: string;
+    messageId: string;
+    now: Date;
+    trigger: Extract<
+      ConversationEscalationTrigger,
+      "business-app" | "unsupported-message"
+    >;
+  }): Promise<void>;
+};
+
 export type WhatsAppInboundReplySender = {
   send(input: {
     buttonLabel?: string;
@@ -148,6 +175,7 @@ export type WhatsAppInboundReplySender = {
     idempotencyKey: string;
     recipientBusinessScopedUserId: string | null;
     recipientPhoneE164: string | null;
+    serviceWindowExpiresAt?: Date | null;
     text: string;
   }): Promise<void>;
 };
@@ -170,7 +198,8 @@ export async function runKapsoInboundWorker(
   assistant: WhatsAppInboundAssistant,
   consentGate: WhatsAppConsentGate,
   replySender: WhatsAppInboundReplySender,
-  safeRoute?: WhatsAppInboundSafeRoute,
+  safeRoute: WhatsAppInboundSafeRoute | undefined,
+  takeover: WhatsAppInboundHumanTakeover,
 ): Promise<KapsoInboundWorkerResult> {
   const events = await store.claimDueMessages({
     limit: input.limit ?? 20,
@@ -197,6 +226,7 @@ export async function runKapsoInboundWorker(
         consentGate,
         replySender,
         safeRoute,
+        takeover,
       });
       result[outcome] += 1;
     } catch (error) {
@@ -223,36 +253,33 @@ async function processInboundEvent(input: {
   replySender: WhatsAppInboundReplySender;
   safeRoute?: WhatsAppInboundSafeRoute;
   store: WhatsAppInboundStore;
+  takeover: WhatsAppInboundHumanTakeover;
 }): Promise<
-  "awaitingConsent" | "conflicts" | "ignored" | "optedOut" | "processed"
+  | "awaitingConsent"
+  | "conflicts"
+  | "ignored"
+  | "optedOut"
+  | "processed"
+  | "rejected"
 > {
   const { event, now, store } = input;
   const leaseToken = requireLeaseToken(event);
+  const handling = classifyWhatsAppInboundMessage(event);
 
-  if (!isInboundConsentEligibleMessage(event)) {
+  if (handling === "not-inbound") {
     await store.markIgnored({
       eventId: event.eventId,
       leaseToken,
       processedAt: now,
-      reason: ineligibilityReason(event),
+      reason: notInboundReason(event),
     });
     return "ignored";
   }
 
-  const serviceWindowExpiresAt = new Date(
-    (event.messageTimestamp ?? event.receivedAt).valueOf() + SERVICE_WINDOW_MS,
-  );
-  if (serviceWindowExpiresAt <= now && !isWhatsAppConsentOptOut(event.text)) {
-    await store.markIgnored({
-      eventId: event.eventId,
-      leaseToken,
-      processedAt: now,
-      reason: "La Ventana de servicio de WhatsApp ya expiró",
-    });
-    return "ignored";
-  }
-
-  const resolved = await store.resolveMessage({ message: event });
+  const resolved = await store.resolveMessage({
+    message: event,
+    mode: handling === "history-sync" ? "historical" : "live",
+  });
   if (resolved.kind === "conflict") {
     await store.markConflict({
       eventId: event.eventId,
@@ -263,6 +290,32 @@ async function processInboundEvent(input: {
     return "conflicts";
   }
   if (resolved.kind !== "matched") {
+    if (
+      resolved.kind === "customer-mismatch" ||
+      resolved.kind === "unknown-connection" ||
+      resolved.kind === "unknown-contact"
+    ) {
+      await store.recordOperationalAlert({
+        customerReference: event.customerReference,
+        eventId: event.eventId,
+        nextAction:
+          resolved.kind === "unknown-connection"
+            ? "Verificar phone_number_id y registrar la Conexión correcta antes de reintentar"
+            : resolved.kind === "customer-mismatch"
+              ? "Verificar el customer de Kapso y la Conexión antes de reintentar"
+              : "Vincular la Identidad de WhatsApp con un Contacto antes de reintentar",
+        now,
+        connectionReference: event.connectionReference,
+        reason: resolved.reason,
+      });
+      await store.markRejected({
+        eventId: event.eventId,
+        leaseToken,
+        processedAt: now,
+        reason: resolved.reason,
+      });
+      return "rejected";
+    }
     await store.markIgnored({
       eventId: event.eventId,
       leaseToken,
@@ -272,16 +325,81 @@ async function processInboundEvent(input: {
     return "ignored";
   }
 
-  await store.suppressPendingReminderDeliveries?.({
-    clinicId: resolved.clinicId,
-    contactId: resolved.contactId,
-    now,
-  });
+  const serviceWindowExpiresAt = new Date(
+    (event.messageTimestamp ?? event.receivedAt).valueOf() + SERVICE_WINDOW_MS,
+  );
+  if (
+    handling === "assistant" &&
+    serviceWindowExpiresAt <= now &&
+    !isWhatsAppConsentOptOut(event.text)
+  ) {
+    await store.markIgnored({
+      eventId: event.eventId,
+      leaseToken,
+      processedAt: now,
+      reason: "La Ventana de servicio de WhatsApp ya expiró",
+    });
+    return "ignored";
+  }
+
+  if (handling !== "history-sync") {
+    await store.suppressPendingReminderDeliveries?.({
+      clinicId: resolved.clinicId,
+      contactId: resolved.contactId,
+      now,
+    });
+  }
+
+  if (handling === "history-sync") {
+    await store.markProcessed({
+      consentReference: null,
+      eventId: event.eventId,
+      leaseToken,
+      processedAt: now,
+    });
+    return "processed";
+  }
 
   return store.withConversationLock({
     clinicId: resolved.clinicId,
     conversationId: `whatsapp-contact:${resolved.contactId}`,
     operation: async () => {
+      if (handling === "business-app" || handling === "unsupported") {
+        await input.takeover.activate({
+          clinicId: resolved.clinicId,
+          contactId: resolved.contactId,
+          messageId: event.id,
+          now,
+          trigger:
+            handling === "business-app"
+              ? "business-app"
+              : "unsupported-message",
+        });
+        await store.markProcessed({
+          consentReference: null,
+          eventId: event.eventId,
+          leaseToken,
+          processedAt: now,
+        });
+        return "processed";
+      }
+
+      if (
+        !isWhatsAppConsentOptOut(event.text) &&
+        (await input.takeover.isActive({
+          clinicId: resolved.clinicId,
+          contactId: resolved.contactId,
+        }))
+      ) {
+        await store.markProcessed({
+          consentReference: null,
+          eventId: event.eventId,
+          leaseToken,
+          processedAt: now,
+        });
+        return "processed";
+      }
+
       const consent = await input.consentGate.check({
         clinicId: resolved.clinicId,
         contactId: resolved.contactId,
@@ -343,6 +461,7 @@ async function processInboundEvent(input: {
               recipientBusinessScopedUserId:
                 resolved.recipientBusinessScopedUserId,
               recipientPhoneE164: resolved.recipientPhoneE164,
+              serviceWindowExpiresAt,
               text: response.text,
             });
           }
@@ -360,6 +479,7 @@ async function processInboundEvent(input: {
           idempotencyKey: event.id,
           recipientBusinessScopedUserId: resolved.recipientBusinessScopedUserId,
           recipientPhoneE164: resolved.recipientPhoneE164,
+          serviceWindowExpiresAt,
           text:
             consent.prompt?.text ??
             "Para continuar, revisa el Aviso de privacidad y las condiciones de la Clínica. Pulsa CONTINUAR para aceptar.",
@@ -435,6 +555,7 @@ async function processInboundEvent(input: {
           idempotencyKey: event.id,
           recipientBusinessScopedUserId: resolved.recipientBusinessScopedUserId,
           recipientPhoneE164: resolved.recipientPhoneE164,
+          serviceWindowExpiresAt,
           text: response.text,
         });
       }
@@ -449,20 +570,10 @@ async function processInboundEvent(input: {
   });
 }
 
-function isInboundConsentEligibleMessage(event: WhatsAppInboundEvent): boolean {
-  return (
-    event.direction === "inbound" &&
-    event.origin === "cloud_api" &&
-    ((event.type === "text" && event.text !== null) ||
-      event.type === "interactive")
-  );
-}
-
-function ineligibilityReason(event: WhatsAppInboundEvent) {
-  if (event.direction !== "inbound") return "El evento Kapso es saliente";
-  if (event.origin !== "cloud_api")
-    return `El origen Kapso ${event.origin} no despierta al asistente`;
-  return `El tipo Kapso ${event.type} no es un mensaje procesable por el gate`;
+function notInboundReason(event: WhatsAppInboundEvent) {
+  return event.direction === "outbound"
+    ? "El evento Kapso es saliente"
+    : "El evento Kapso no confirma una entrada del contacto";
 }
 
 function requireLeaseToken(event: WhatsAppInboundEvent) {

@@ -25,6 +25,10 @@ import {
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
+import {
+  listWhatsAppInboundOperationalAlerts,
+  resolveWhatsAppInboundOperationalAlert,
+} from "~/server/db/whatsapp-inbound-alert-store";
 import { clinicInvitationEmailSender } from "~/server/email/clinic-invitation-email";
 import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboarding";
 import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
@@ -41,6 +45,20 @@ const kapsoReadinessProvider = createKapsoReadinessProvider({
 
 /** Operación comercial de Apolo, separada de los procedimientos de Panacea. */
 export const apoloRouter = {
+  listWhatsAppInboundAlerts: protectedProcedure.query(({ ctx }) =>
+    listWhatsAppInboundOperationalAlerts({ identityId: ctx.session.user.id }),
+  ),
+
+  resolveWhatsAppInboundAlert: protectedProcedure
+    .input(z.object({ alertId: z.string().uuid() }))
+    .mutation(({ ctx, input }) =>
+      resolveWhatsAppInboundOperationalAlert({
+        ...input,
+        identityId: ctx.session.user.id,
+        now: new Date(),
+      }),
+    ),
+
   getWhatsAppRuntimeDiagnostic: protectedProcedure.query(({ ctx }) =>
     getWhatsAppRuntimeDiagnostic(
       { identityId: ctx.session.user.id },

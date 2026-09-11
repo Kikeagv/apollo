@@ -397,6 +397,12 @@ function PendingDetail({
               {formatDate(pending.resolvedAt)}
             </DetailField>
           ) : null}
+          {pending.category === "conversation" &&
+          pending.status === "resolved" ? (
+            <DetailField label="Reanudado por">
+              {pending.resolvedBy?.name ?? "Actor no disponible"}
+            </DetailField>
+          ) : null}
         </dl>
 
         <PendingSpecificDetail pending={pending} />
@@ -466,10 +472,17 @@ function PendingSpecificDetail({ pending }: { pending: PendingCase }) {
         <div className="border-border bg-muted/30 space-y-2 rounded-lg border p-4 text-sm">
           <p className="font-medium">Motivo del Escalamiento</p>
           <p>{conversationTriggerLabel(pending.trigger)}</p>
-          <p className="text-muted-foreground">
-            El diálogo permanece detenido hasta que una persona cierre este
-            Escalamiento.
-          </p>
+          {pending.status === "open" ? (
+            <p className="text-muted-foreground">
+              El diálogo permanece detenido hasta que una persona cierre este
+              Escalamiento; esa acción registra el actor que lo reanuda.
+            </p>
+          ) : (
+            <p className="text-muted-foreground">
+              El diálogo fue reanudado mediante el cierre explícito de este
+              Escalamiento.
+            </p>
+          )}
         </div>
       );
     case "appointment":
@@ -613,6 +626,8 @@ function pendingActionLabel(pending: PendingCase) {
 
 function conversationTriggerLabel(trigger: PendingConversationTrigger) {
   switch (trigger) {
+    case "business-app":
+      return "La persona escribió desde WhatsApp Business App; el asistente de la Clínica permanece en silencio.";
     case "human-request":
       return "La persona solicitó atención humana.";
     case "frustration":
@@ -625,6 +640,8 @@ function conversationTriggerLabel(trigger: PendingConversationTrigger) {
       return "La transcripción de nota de voz está desactivada.";
     case "voice-transcription-failed":
       return "Falló la transcripción de una nota de voz.";
+    case "unsupported-message":
+      return "El tipo de mensaje requiere atención humana y no se interpretó automáticamente.";
   }
 }
 

@@ -4,6 +4,11 @@ import {
   processWhatsAppConsentSafeRoute,
   processWhatsAppTextForContact,
 } from "~/server/application/simulated-whatsapp-booking";
+import {
+  activateWhatsAppHumanTakeover,
+  isWhatsAppHumanTakeoverActive,
+  type WhatsAppHumanTakeoverStore,
+} from "~/server/application/whatsapp-human-takeover";
 import { createWhatsAppConsentGate } from "~/server/application/whatsapp-consent";
 import { drizzleSimulatedWhatsAppBookingStore } from "~/server/db/simulated-whatsapp-booking-store";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
@@ -22,6 +27,24 @@ export async function POST(request: Request) {
   ) {
     return new Response("No autorizado", { status: 401 });
   }
+
+  const inboundReplySender = createKapsoInboundReplySender();
+  const takeoverStore: WhatsAppHumanTakeoverStore = {
+    getConversation: (input) =>
+      drizzleSimulatedWhatsAppBookingStore.getConversation(input),
+    openHumanTakeover: (input) =>
+      drizzleSimulatedWhatsAppBookingStore.openHumanTakeover(input),
+    // El aviso entra a la outbox; el estado de notificación se confirma cuando
+    // el worker outbound recibe la aceptación de Kapso.
+    notifySecretaryOfConversationEscalation: (input) =>
+      inboundReplySender.send({
+        clinicId: input.clinicId,
+        idempotencyKey: `escalation:${input.escalationId}`,
+        recipientBusinessScopedUserId: null,
+        recipientPhoneE164: input.recipientPhoneE164,
+        text: "La Clínica recibió tu solicitud y una persona te contactará pronto.",
+      }),
+  };
 
   const result = await runKapsoInboundWorker(
     { now: new Date() },
@@ -59,6 +82,10 @@ export async function POST(request: Request) {
         );
         return { text: response.text };
       },
+    },
+    {
+      isActive: (input) => isWhatsAppHumanTakeoverActive(input, takeoverStore),
+      activate: (input) => activateWhatsAppHumanTakeover(input, takeoverStore),
     },
   );
   return Response.json(result);

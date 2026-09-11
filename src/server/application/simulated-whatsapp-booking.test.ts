@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  activateWhatsAppHumanTakeover,
   createInMemorySimulatedWhatsAppBookingStore,
   processWhatsAppConsentSafeRoute,
+  processWhatsAppTextForContact,
   processSimulatedWhatsAppVoiceNote,
   processSimulatedWhatsAppMessage,
 } from "./simulated-whatsapp-booking";
@@ -10,6 +12,59 @@ import { createSimulatedAudioTranscriber } from "~/server/integrations/audio-tra
 import type { WhatsAppProvider } from "./whatsapp-provider";
 
 describe("reservar una Cita adulta por WhatsApp simulado", () => {
+  it("abre un takeover una sola vez y conserva el diálogo detenido", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: {
+        escalationNotificationsEnabled: true,
+        escalationSecretaryPhoneE164: "+50370000003",
+        id: "clinic-1",
+        whatsappNumberE164: "+50370000001",
+      },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [],
+      offers: [],
+      options: [],
+      patients: [],
+    });
+    const notify = vi.fn().mockResolvedValue(undefined);
+    store.notifySecretaryOfConversationEscalation = notify;
+    const now = new Date("2026-09-08T12:00:00.000Z");
+
+    await activateWhatsAppHumanTakeover(
+      {
+        clinicId: "clinic-1",
+        contactId: "contact-1",
+        messageId: "business-app-1",
+        now,
+        trigger: "business-app",
+      },
+      store,
+    );
+    await activateWhatsAppHumanTakeover(
+      {
+        clinicId: "clinic-1",
+        contactId: "contact-1",
+        messageId: "unsupported-1",
+        now,
+        trigger: "unsupported-message",
+      },
+      store,
+    );
+
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "business-app" },
+    ]);
+    expect(
+      (
+        await store.getConversation({
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+        })
+      ).escalationId,
+    ).not.toBeNull();
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
   it("envía la respuesta por el WhatsAppProvider con su clave idempotente", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
@@ -188,7 +243,9 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
       },
     ]);
     expect(failedTranscriber.temporaryAudioCount).toBe(0);
-    expect(store.conversationEscalations).toHaveLength(2);
+    expect(store.conversationEscalations).toEqual([
+      { contactId: "contact-1", trigger: "voice-transcription-failed" },
+    ]);
     expect(store.appointments).toEqual([]);
   });
 
@@ -636,6 +693,68 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
     expect(store.reservations).toHaveLength(1);
   });
 
+  it("reintenta una Reserva tras una caída sin crear otra ocupación", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      offers: [
+        {
+          doctorId: "doctor-1",
+          doctorName: "Dra. Sol",
+          id: "offer-1",
+          priceUsd: "25.00",
+          serviceName: "Consulta",
+        },
+      ],
+      options: [new Date("2026-08-17T14:00:00.000Z")],
+      patients: [{ birthDate: "1990-01-01", id: "patient-1", name: "Ana" }],
+      links: [{ contactId: "contact-1", patientId: "patient-1" }],
+    });
+    const now = new Date("2026-08-12T14:00:00.000Z");
+    const context = {
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+    };
+
+    await processWhatsAppTextForContact(
+      { ...context, messageId: "setup-1", text: "paciente patient-1" },
+      store,
+      now,
+    );
+    await processWhatsAppTextForContact(
+      {
+        ...context,
+        messageId: "setup-2",
+        text: "opciones offer-1 2026-08-17",
+      },
+      store,
+      now,
+    );
+
+    const completeMessage = store.completeMessage.bind(store);
+    let firstAttempt = true;
+    store.completeMessage = async (input) => {
+      if (firstAttempt) {
+        firstAttempt = false;
+        throw new Error("caída después de reservar");
+      }
+      return completeMessage(input);
+    };
+    const command = {
+      ...context,
+      messageId: "reserve-after-crash",
+      text: "reservar 2026-08-17T14:00:00.000Z",
+    };
+
+    await expect(
+      processWhatsAppTextForContact(command, store, now),
+    ).rejects.toThrow("caída después de reservar");
+    await expect(
+      processWhatsAppTextForContact(command, store, now),
+    ).resolves.toMatchObject({ kind: "reservation-held" });
+    expect(store.reservations).toHaveLength(1);
+  });
+
   it("requiere declaración y verificación de tutela antes de revelar o reservar un menor", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
@@ -885,7 +1004,7 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
     expect(attempts).toBe(2);
   });
 
-  it("no duplica el aviso humano si la conversación falla después de notificar", async () => {
+  it("persiste el takeover antes del aviso humano", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: {
         escalationNotificationsEnabled: true,
@@ -899,18 +1018,12 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
       patients: [],
       links: [],
     });
-    const saveConversation = store.saveConversation.bind(store);
     const attempts: string[] = [];
-    let failOnce = true;
     store.notifySecretaryOfConversationEscalation = async (input) => {
       attempts.push(input.escalationId);
     };
-    store.saveConversation = async (input) => {
-      if (failOnce) {
-        failOnce = false;
-        throw new Error("fallo transitorio");
-      }
-      await saveConversation(input);
+    store.saveConversation = async () => {
+      throw new Error("El estado del takeover ya debe estar persistido");
     };
     const input = {
       clinicId: "clinic-1",
@@ -920,13 +1033,15 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
       text: "Quiero hablar con una persona",
     };
 
-    await expect(processWhatsAppConsentSafeRoute(input, store)).rejects.toThrow(
-      "fallo transitorio",
-    );
     await expect(
       processWhatsAppConsentSafeRoute(input, store),
     ).resolves.toEqual({ kind: "conversation-silenced", text: "" });
     expect(attempts).toHaveLength(1);
+    const conversation = await store.getConversation({
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+    });
+    expect(conversation.escalationId).not.toBeNull();
   });
 
   it("deriva una solicitud de atención humana pendiente sin entregar datos al diálogo administrativo", async () => {
