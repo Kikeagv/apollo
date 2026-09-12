@@ -14,6 +14,7 @@ export type ConversationEscalation = {
   contact: { id: string; name: string };
   createdAt: Date;
   id: string;
+  sourceMessageType: string | null;
   trigger: ConversationEscalationTrigger;
 };
 

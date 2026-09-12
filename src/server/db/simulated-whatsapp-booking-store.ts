@@ -208,6 +208,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                 id: string;
                 notificationSentAt: Date | null;
                 resolvedAt: Date | null;
+                sourceMessageType: string | null;
                 trigger: ConversationEscalationTrigger;
               }
             | undefined;
@@ -220,6 +221,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                   id: true,
                   notificationSentAt: true,
                   resolvedAt: true,
+                  sourceMessageType: true,
                   trigger: true,
                 },
                 where: and(
@@ -241,6 +243,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                 contactId: input.contactId,
                 createdAt: input.now,
                 sourceMessageId: input.messageId,
+                sourceMessageType: input.messageType,
                 trigger: input.trigger,
               })
               .onConflictDoNothing()
@@ -249,6 +252,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                 id: conversationEscalations.id,
                 notificationSentAt: conversationEscalations.notificationSentAt,
                 resolvedAt: conversationEscalations.resolvedAt,
+                sourceMessageType: conversationEscalations.sourceMessageType,
                 trigger: conversationEscalations.trigger,
               });
             escalation = createdEscalation;
@@ -261,6 +265,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
                     id: true,
                     notificationSentAt: true,
                     resolvedAt: true,
+                    sourceMessageType: true,
                     trigger: true,
                   },
                   where: and(
@@ -405,6 +410,7 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               contactId: input.contactId,
               createdAt: input.now,
               sourceMessageId: input.messageId ?? null,
+              sourceMessageType: input.sourceMessageType ?? null,
               trigger: input.trigger,
             })
             .onConflictDoNothing()
@@ -1189,6 +1195,7 @@ export const drizzleConversationEscalationReader: ConversationEscalationReader =
             contactName: contacts.name,
             createdAt: conversationEscalations.createdAt,
             id: conversationEscalations.id,
+            sourceMessageType: conversationEscalations.sourceMessageType,
             trigger: conversationEscalations.trigger,
           })
           .from(conversationEscalations)

@@ -20,6 +20,7 @@ describe("Escalamientos humanos", () => {
             contact: { id: "contact-1", name: "Ana" },
             createdAt: new Date("2026-08-14T12:00:00.000Z"),
             id: "escalation-1",
+            sourceMessageType: null,
             trigger: "human-request" as const,
           },
         ];

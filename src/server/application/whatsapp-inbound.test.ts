@@ -434,6 +434,7 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
       clinicId: "clinic-1",
       contactId: "contact-1",
       messageId: "other-button-1",
+      messageType: "interactive",
       now: NOW,
       trigger: "unsupported-message",
     });
@@ -668,15 +669,47 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
         leaseToken: "lease-1",
         processedAt: NOW,
       });
-      expect(activate).toHaveBeenCalledWith({
-        clinicId: "clinic-1",
-        contactId: "contact-1",
-        messageId: "message-1",
-        now: NOW,
-        trigger: "unsupported-message",
-      });
+      expect(activate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+          messageId: "message-1",
+          now: NOW,
+          trigger: "unsupported-message",
+        }),
+      );
     },
   );
+
+  it("conserva el tipo de multimedia en el takeover sin entregarlo al asistente", async () => {
+    const fake = fakeStore([
+      event({ id: "image-1", type: "image", text: null }),
+    ]);
+    const acceptedAssistant = assistant();
+    const activate = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        acceptedAssistant,
+        acceptedConsent,
+        { send: vi.fn() },
+        undefined,
+        { activate, isActive: vi.fn().mockResolvedValue(false) },
+      ),
+    ).resolves.toMatchObject({ processed: 1 });
+
+    expect(activate).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      messageId: "image-1",
+      messageType: "image",
+      now: NOW,
+      trigger: "unsupported-message",
+    });
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+  });
 
   it("no responde automáticamente un mensaje no textual fuera de la ventana", async () => {
     const fake = fakeStore([
@@ -795,6 +828,7 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
       clinicId: "clinic-1",
       contactId: "contact-1",
       messageId: "message-1",
+      messageType: "text",
       now: NOW,
       trigger: "business-app",
     });
@@ -831,6 +865,7 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
       clinicId: "clinic-1",
       contactId: "contact-1",
       messageId: "message-1",
+      messageType: "text",
       now: NOW,
       trigger: "business-app",
     });

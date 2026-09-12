@@ -561,6 +561,13 @@
       "when": 1789231216000,
       "tag": "0080_apo78_takeover_notification_worker",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1789231217000,
+      "tag": "0081_apo88_whatsapp_takeover_message_type",
+      "breakpoints": true
     }
   ]
 }

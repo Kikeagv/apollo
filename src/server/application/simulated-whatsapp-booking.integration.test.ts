@@ -977,12 +977,12 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             clinicId: fixture.clinicId,
             contactId: fixture.contactId,
             messageId,
+            messageType: "text",
             now,
             trigger: "business-app",
           },
           drizzleSimulatedWhatsAppBookingStore,
         );
-
         await expect(
           listConversationEscalations(
             fixture,
@@ -1029,6 +1029,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             clinicId: fixture.clinicId,
             contactId: fixture.contactId,
             messageId,
+            messageType: "text",
             now,
             trigger: "business-app",
           },
@@ -1054,6 +1055,77 @@ describe("Reserva simulada de WhatsApp persistente", () => {
   );
 
   databaseTest(
+    "expone el tipo del mensaje escalado en la bandeja sin cruzar Clínicas",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-09-08T12:00:00.000Z");
+      try {
+        await activateWhatsAppHumanTakeover(
+          {
+            clinicId: fixture.clinicId,
+            contactId: fixture.contactId,
+            messageId: `${fixture.clinicId}-audio`,
+            messageType: "audio",
+            now,
+            trigger: "unsupported-message",
+          },
+          drizzleSimulatedWhatsAppBookingStore,
+        );
+        await activateWhatsAppHumanTakeover(
+          {
+            clinicId: fixture.clinicId,
+            contactId: fixture.contactId,
+            messageId: `${fixture.clinicId}-image-after-audio`,
+            messageType: "image",
+            now: new Date(now.valueOf() + 1_000),
+            trigger: "unsupported-message",
+          },
+          drizzleSimulatedWhatsAppBookingStore,
+        );
+
+        await expect(
+          listConversationEscalations(
+            fixture,
+            drizzleConversationEscalationReader,
+          ),
+        ).resolves.toMatchObject([
+          {
+            contact: { id: fixture.contactId },
+            sourceMessageType: "audio",
+            trigger: "unsupported-message",
+          },
+        ]);
+        await expect(
+          listPendingCases(
+            {
+              category: "conversation",
+              clinicId: fixture.clinicId,
+              identityId: fixture.identityId,
+              status: "open",
+            },
+            drizzlePendingStore,
+          ),
+        ).resolves.toMatchObject({
+          items: [
+            {
+              category: "conversation",
+              sourceMessageType: "audio",
+            },
+          ],
+        });
+        await expect(
+          listConversationEscalations(
+            fixture.other,
+            drizzleConversationEscalationReader,
+          ),
+        ).resolves.toEqual([]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
     "confirma el aviso de takeover sólo después de aceptar el envío",
     async () => {
       const fixture = await createFixture();
@@ -1064,6 +1136,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             clinicId: fixture.clinicId,
             contactId: fixture.contactId,
             messageId: `${fixture.clinicId}-business-app-notification`,
+            messageType: "text",
             now,
             trigger: "business-app",
           },

@@ -15,6 +15,7 @@ const openConversation: PendingCase = {
   priority: "high",
   resolvedAt: null,
   resolvedBy: null,
+  sourceMessageType: null,
   status: "open",
   trigger: "human-request",
 };

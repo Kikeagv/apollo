@@ -1998,6 +1998,7 @@ export const conversationEscalations = createTable(
     contactId: uuid("contact_id").notNull(),
     trigger: text("trigger").$type<ConversationEscalationTrigger>().notNull(),
     sourceMessageId: text("source_message_id"),
+    sourceMessageType: text("source_message_type"),
     notificationSentAt: timestamp("notification_sent_at", {
       withTimezone: true,
     }),

@@ -32,6 +32,7 @@ import {
   type PendingPriority,
   type PendingStatus,
 } from "~/domain/pending";
+import { whatsappInboundMessageTypeLabel } from "~/domain/whatsapp-inbound";
 import type { ConversationEscalationResolution } from "~/server/application/conversation-escalations";
 import { api } from "~/trpc/react";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
@@ -423,6 +424,12 @@ function PendingDetail({
               {pending.resolvedBy?.name ?? "Actor no disponible"}
             </DetailField>
           ) : null}
+          {pending.category === "conversation" &&
+          pending.sourceMessageType !== null ? (
+            <DetailField label="Tipo de mensaje">
+              {whatsappInboundMessageTypeLabel(pending.sourceMessageType)}
+            </DetailField>
+          ) : null}
         </dl>
 
         <PendingSpecificDetail pending={pending} />
@@ -491,7 +498,19 @@ function PendingSpecificDetail({ pending }: { pending: PendingCase }) {
       return (
         <div className="border-border bg-muted/30 space-y-2 rounded-lg border p-4 text-sm">
           <p className="font-medium">Motivo del Escalamiento</p>
-          <p>{conversationTriggerLabel(pending.trigger)}</p>
+          <p>
+            {conversationTriggerLabel(
+              pending.trigger,
+              pending.sourceMessageType,
+            )}
+          </p>
+          {pending.sourceMessageType !== null ? (
+            <p className="text-muted-foreground">
+              Tipo de mensaje conservado:{" "}
+              {whatsappInboundMessageTypeLabel(pending.sourceMessageType)}. No
+              se descargó ni interpretó automáticamente.
+            </p>
+          ) : null}
           {pending.status === "open" ? (
             <p className="text-muted-foreground">
               El diálogo permanece detenido hasta que una persona cierre este
@@ -644,7 +663,13 @@ function pendingActionLabel(pending: PendingCase) {
   }
 }
 
-function conversationTriggerLabel(trigger: PendingConversationTrigger) {
+function conversationTriggerLabel(
+  trigger: PendingConversationTrigger,
+  sourceMessageType: string | null,
+) {
+  if (trigger === "unsupported-message" && sourceMessageType !== null) {
+    return `La persona envió un mensaje de tipo ${whatsappInboundMessageTypeLabel(sourceMessageType).toLocaleLowerCase("es-SV")}; no se descargó ni interpretó y requiere atención humana.`;
+  }
   switch (trigger) {
     case "business-app":
       return "La persona escribió desde WhatsApp Business App; el asistente de la Clínica permanece en silencio.";

@@ -71,6 +71,7 @@ async function listConversationCases(
       resolvedAt: conversationEscalations.resolvedAt,
       resolvedById: clinicUsers.id,
       resolvedByName: user.name,
+      sourceMessageType: conversationEscalations.sourceMessageType,
       trigger: conversationEscalations.trigger,
     })
     .from(conversationEscalations)
@@ -110,6 +111,7 @@ async function listConversationCases(
         ? null
         : { id: row.resolvedById, name: row.resolvedByName },
     status: row.resolvedAt === null ? "open" : "resolved",
+    sourceMessageType: row.sourceMessageType,
     trigger: row.trigger,
   }));
 }

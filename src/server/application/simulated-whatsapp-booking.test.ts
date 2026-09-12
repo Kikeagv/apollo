@@ -35,6 +35,7 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
         clinicId: "clinic-1",
         contactId: "contact-1",
         messageId: "business-app-1",
+        messageType: "text",
         now,
         trigger: "business-app",
       },
@@ -45,6 +46,7 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
         clinicId: "clinic-1",
         contactId: "contact-1",
         messageId: "unsupported-1",
+        messageType: "audio",
         now,
         trigger: "unsupported-message",
       },
@@ -52,7 +54,11 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
     );
 
     expect(store.conversationEscalations).toEqual([
-      { contactId: "contact-1", trigger: "business-app" },
+      {
+        contactId: "contact-1",
+        sourceMessageType: "text",
+        trigger: "business-app",
+      },
     ]);
     expect(
       (

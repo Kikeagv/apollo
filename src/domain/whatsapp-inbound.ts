@@ -39,6 +39,26 @@ export type WhatsAppInboundMessage = {
 export type WhatsAppInboundHandling =
   "assistant" | "business-app" | "history-sync" | "not-inbound" | "unsupported";
 
+/** Convierte el tipo del proveedor en una etiqueta apta para la bandeja humana. */
+export function whatsappInboundMessageTypeLabel(type: string | null) {
+  switch (type) {
+    case "audio":
+      return "Audio";
+    case "document":
+      return "Documento";
+    case "image":
+      return "Imagen";
+    case "interactive":
+      return "Interactivo";
+    case "location":
+      return "Ubicación";
+    case "text":
+      return "Texto";
+    default:
+      return "Tipo no soportado";
+  }
+}
+
 /**
  * Decide qué comportamiento permite el origen antes de resolver una Clínica.
  * CONTINUAR es la única excepción interactiva: pertenece al gate de consentimiento.

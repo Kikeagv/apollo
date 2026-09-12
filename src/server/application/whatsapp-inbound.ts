@@ -168,6 +168,7 @@ export type WhatsAppInboundHumanTakeover = {
     clinicId: string;
     contactId: string;
     messageId: string;
+    messageType: string;
     now: Date;
     trigger: Extract<
       ConversationEscalationTrigger,
@@ -377,6 +378,7 @@ async function processInboundEvent(input: {
           clinicId: resolved.clinicId,
           contactId: resolved.contactId,
           messageId: event.id,
+          messageType: event.type,
           now,
           trigger:
             handling === "business-app"

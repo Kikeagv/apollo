@@ -5,6 +5,7 @@ import { useState } from "react";
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
+import { whatsappInboundMessageTypeLabel } from "~/domain/whatsapp-inbound";
 import type {
   ConversationEscalationResolution,
   ConversationEscalationTrigger,
@@ -73,8 +74,22 @@ export function ConversationEscalationsSection() {
                 key={escalation.id}
               >
                 <p>
-                  {escalation.contact.name}: {triggerLabel(escalation.trigger)}.
+                  {escalation.contact.name}:{" "}
+                  {triggerLabel(
+                    escalation.trigger,
+                    escalation.sourceMessageType,
+                  )}
+                  .
                 </p>
+                {escalation.sourceMessageType !== null ? (
+                  <p className="text-muted-foreground">
+                    Tipo de mensaje conservado:{" "}
+                    {whatsappInboundMessageTypeLabel(
+                      escalation.sourceMessageType,
+                    )}
+                    . No se descargó ni interpretó automáticamente.
+                  </p>
+                ) : null}
                 <p className="text-muted-foreground">
                   Recibido: {formatDate(escalation.createdAt)}
                 </p>
@@ -102,7 +117,13 @@ export function ConversationEscalationsSection() {
   );
 }
 
-function triggerLabel(trigger: ConversationEscalationTrigger) {
+function triggerLabel(
+  trigger: ConversationEscalationTrigger,
+  sourceMessageType: string | null,
+) {
+  if (trigger === "unsupported-message" && sourceMessageType !== null) {
+    return `envió un mensaje de tipo ${whatsappInboundMessageTypeLabel(sourceMessageType).toLocaleLowerCase("es-SV")}; requiere atención humana`;
+  }
   switch (trigger) {
     case "business-app":
       return "escribió desde WhatsApp Business App; el asistente de la Clínica permanece en silencio";

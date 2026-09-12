@@ -36,6 +36,7 @@ export type PendingConversationCase = PendingCaseBase & {
   category: "conversation";
   contact: { id: string; name: string };
   resolvedBy: PendingResolutionActor | null;
+  sourceMessageType: string | null;
   trigger: PendingConversationTrigger;
 };
 

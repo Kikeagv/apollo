@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyWhatsAppInboundMessage,
   matchesWhatsAppCustomer,
+  whatsappInboundMessageTypeLabel,
 } from "./whatsapp-inbound";
 import { parseKapsoInboundMessagePayload } from "~/server/whatsapp/kapso-inbound";
 
@@ -34,6 +35,15 @@ const message = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("payloads entrantes de Kapso", () => {
+  it("traduce los tipos conservados a etiquetas seguras para la atención humana", () => {
+    expect(whatsappInboundMessageTypeLabel("audio")).toBe("Audio");
+    expect(whatsappInboundMessageTypeLabel("image")).toBe("Imagen");
+    expect(whatsappInboundMessageTypeLabel("document")).toBe("Documento");
+    expect(whatsappInboundMessageTypeLabel("location")).toBe("Ubicación");
+    expect(whatsappInboundMessageTypeLabel("interactive")).toBe("Interactivo");
+    expect(whatsappInboundMessageTypeLabel("video")).toBe("Tipo no soportado");
+  });
+
   it("normaliza el evento individual y conserva la identidad completa", () => {
     expect(parseKapsoInboundMessagePayload(message())).toMatchObject([
       {

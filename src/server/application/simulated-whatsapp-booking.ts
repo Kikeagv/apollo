@@ -143,6 +143,7 @@ export type SimulatedWhatsAppBookingStore = {
     messageId?: string;
     now: Date;
     lastInboundOrigin?: WhatsAppMessageOrigin;
+    sourceMessageType?: string;
     trigger: ConversationEscalationTrigger;
   }): Promise<{
     created?: boolean;
@@ -154,6 +155,7 @@ export type SimulatedWhatsAppBookingStore = {
     clinicId: string;
     contactId: string;
     messageId: string;
+    messageType: string;
     now: Date;
     trigger: Extract<
       ConversationEscalationTrigger,
@@ -1160,6 +1162,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     {
       id: string;
       secretaryPhoneE164: string | null;
+      sourceMessageType: string | null;
       trigger: ConversationEscalationTrigger;
     }
   >();
@@ -1168,6 +1171,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     {
       id: string;
       secretaryPhoneE164: string | null;
+      sourceMessageType: string | null;
       trigger: ConversationEscalationTrigger;
     }
   >();
@@ -1201,6 +1205,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
   }> = [];
   const conversationEscalations: Array<{
     contactId: string;
+    sourceMessageType?: string;
     trigger: ConversationEscalationTrigger;
   }> = [];
   const conversationEvents: Array<{
@@ -1253,6 +1258,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
       lastInboundOrigin,
       messageId,
       trigger,
+      sourceMessageType,
     }) {
       const conversationKey = `${clinicId}:${contactId}`;
       const conversation = conversations.get(conversationKey) ?? {
@@ -1299,9 +1305,14 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
           input.clinic.escalationNotificationsEnabled === true
             ? (input.clinic.escalationSecretaryPhoneE164 ?? null)
             : null,
+        sourceMessageType: sourceMessageType ?? null,
         trigger,
       };
-      conversationEscalations.push({ contactId, trigger });
+      conversationEscalations.push({
+        contactId,
+        ...(sourceMessageType === undefined ? {} : { sourceMessageType }),
+        trigger,
+      });
       escalationsById.set(escalation.id, escalation);
       if (messageKey !== undefined)
         escalationsByMessage.set(messageKey, escalation);
@@ -1344,6 +1355,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
         contactId: input.contactId,
         messageId: input.messageId,
         now: input.now,
+        sourceMessageType: input.messageType,
         trigger: input.trigger,
       });
       conversations.set(key, {

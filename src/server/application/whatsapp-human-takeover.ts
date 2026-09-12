@@ -4,6 +4,7 @@ export type WhatsAppHumanTakeoverInput = {
   clinicId: string;
   contactId: string;
   messageId: string;
+  messageType: string;
   now: Date;
   trigger: Extract<
     ConversationEscalationTrigger,
