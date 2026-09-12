@@ -46,6 +46,10 @@ export const drizzlePendingResolver: PendingCaseResolver = {
     ),
   resolveConversationEscalation: (input) =>
     drizzleConversationEscalationResolver.resolveConversationEscalation(input),
+  resolveConversationEscalationWithAudit: (input) =>
+    drizzleConversationEscalationResolver.resolveConversationEscalationWithAudit(
+      input,
+    ),
   resolveTransactionalDeliveryAlert: (input) =>
     drizzleTransactionalDeliveryAlertResolver.resolveTransactionalDeliveryAlert(
       input,

@@ -24,6 +24,19 @@ export type ConversationEscalationReader = {
   }): Promise<ConversationEscalation[]>;
 };
 
+export type ConversationEscalationResolution = {
+  resolvedAt: Date;
+  resolvedBy: { id: string; name: string };
+};
+
+export type ConversationEscalationAuditResolver = {
+  resolveConversationEscalationWithAudit(input: {
+    clinicId: string;
+    escalationId: string;
+    identityId: string;
+  }): Promise<ConversationEscalationResolution | null>;
+};
+
 export type ConversationEscalationResolver = {
   resolveConversationEscalation(input: {
     clinicId: string;
@@ -73,6 +86,14 @@ export async function resolveConversationEscalation(
   store: ConversationEscalationResolver,
 ) {
   return store.resolveConversationEscalation(input);
+}
+
+/** Cierra la tarea y devuelve la evidencia de quién reanudó el diálogo. */
+export async function resolveConversationEscalationWithAudit(
+  input: { clinicId: string; escalationId: string; identityId: string },
+  store: ConversationEscalationAuditResolver,
+) {
+  return store.resolveConversationEscalationWithAudit(input);
 }
 
 /** Consulta la configuración del aviso adicional por WhatsApp simulado. */

@@ -386,7 +386,12 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
     ).resolves.toMatchObject({ processed: 1 });
 
     expect(acceptedAssistant.processText).not.toHaveBeenCalled();
-    expect(send).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "other-button-1",
+        text: "Recibimos tu mensaje. Una persona de la Clínica te atenderá pronto.",
+      }),
+    );
     expect(activate).toHaveBeenCalledWith({
       clinicId: "clinic-1",
       contactId: "contact-1",
@@ -610,7 +615,14 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
       ).resolves.toMatchObject({ processed: 1 });
 
       expect(processText).not.toHaveBeenCalled();
-      expect(send).not.toHaveBeenCalled();
+      expect(send).toHaveBeenCalledWith({
+        clinicId: "clinic-1",
+        idempotencyKey: "message-1",
+        recipientBusinessScopedUserId: "US.USER.1",
+        recipientPhoneE164: null,
+        serviceWindowExpiresAt: new Date("2026-09-09T11:59:00.000Z"),
+        text: "Recibimos tu mensaje. Una persona de la Clínica te atenderá pronto.",
+      });
       expect(markIgnored).not.toHaveBeenCalled();
       expect(markProcessed).toHaveBeenCalledWith({
         consentReference: null,
@@ -627,6 +639,35 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
       });
     },
   );
+
+  it("no responde automáticamente un mensaje no textual fuera de la ventana", async () => {
+    const fake = fakeStore([
+      event({
+        messageTimestamp: new Date("2026-09-07T11:59:00.000Z"),
+        type: "audio",
+        text: null,
+      }),
+    ]);
+    const send = vi.fn<WhatsAppInboundReplySender["send"]>();
+    const activate = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        assistant(),
+        acceptedConsent,
+        { send },
+        undefined,
+        { activate, isActive: vi.fn().mockResolvedValue(false) },
+      ),
+    ).resolves.toMatchObject({ processed: 1 });
+
+    expect(send).not.toHaveBeenCalled();
+    expect(activate).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: "unsupported-message" }),
+    );
+  });
 
   it("alerta un business_app sin Contacto sin abrir un takeover cruzado", async () => {
     const fake = fakeStore([event({ origin: "business-app" })]);

@@ -16,7 +16,9 @@ import type {
   AppointmentSelfManagementStore,
 } from "~/server/application/appointment-self-management";
 import type {
+  ConversationEscalationAuditResolver,
   ConversationEscalationReader,
+  ConversationEscalationResolution,
   ConversationEscalationResolver,
   EscalationNotificationSettingsStore,
   ConversationEscalationTrigger,
@@ -53,6 +55,7 @@ import {
   serviceOffers,
   services,
   simulatedWhatsAppMessages,
+  user,
   temporaryReservations,
   whatsappConversations,
 } from "~/server/db/schema";
@@ -1213,68 +1216,92 @@ export const drizzleConversationEscalationReader: ConversationEscalationReader =
     },
   };
 
-export const drizzleConversationEscalationResolver: ConversationEscalationResolver =
-  {
-    async resolveConversationEscalation(input) {
-      return inClinicTransaction(input, async (transaction) => {
-        const actorClinicUserId = await activeClinicUserId(transaction, input);
-        if (actorClinicUserId === undefined) return false;
-        const [target] = await transaction
-          .select({ contactId: conversationEscalations.contactId })
-          .from(conversationEscalations)
-          .where(
-            and(
-              eq(conversationEscalations.clinicId, input.clinicId),
-              eq(conversationEscalations.id, input.escalationId),
-            ),
-          )
-          .limit(1);
-        if (target === undefined) return false;
-        const [conversation] = await transaction
-          .select({ state: whatsappConversations.state })
-          .from(whatsappConversations)
-          .where(
-            and(
-              eq(whatsappConversations.clinicId, input.clinicId),
-              eq(whatsappConversations.contactId, target.contactId),
-            ),
-          )
-          .for("update");
-        const resolvedAt = new Date();
-        const [escalation] = await transaction
-          .update(conversationEscalations)
-          .set({ resolvedAt, resolvedByClinicUserId: actorClinicUserId })
-          .where(
-            and(
-              eq(conversationEscalations.clinicId, input.clinicId),
-              eq(conversationEscalations.id, input.escalationId),
-              isNull(conversationEscalations.resolvedAt),
-            ),
-          )
-          .returning({ contactId: conversationEscalations.contactId });
-        if (escalation === undefined) return false;
-        if (conversation?.state.escalationId === input.escalationId) {
-          await transaction
-            .update(whatsappConversations)
-            .set({
-              state: {
-                ...EMPTY_CONVERSATION,
-                ...conversation.state,
-                escalationId: null,
-              },
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(whatsappConversations.clinicId, input.clinicId),
-                eq(whatsappConversations.contactId, escalation.contactId),
-              ),
-            );
-        }
-        return true;
-      });
-    },
-  };
+export const drizzleConversationEscalationResolver: ConversationEscalationResolver &
+  ConversationEscalationAuditResolver = {
+  async resolveConversationEscalation(input) {
+    return (await resolveConversationEscalationWithAuditRecord(input)) !== null;
+  },
+  resolveConversationEscalationWithAudit:
+    resolveConversationEscalationWithAuditRecord,
+};
+
+async function resolveConversationEscalationWithAuditRecord(input: {
+  clinicId: string;
+  escalationId: string;
+  identityId: string;
+}): Promise<ConversationEscalationResolution | null> {
+  return inClinicTransaction(input, async (transaction) => {
+    const [actor] = await transaction
+      .select({ id: clinicUsers.id, name: user.name })
+      .from(clinicUsers)
+      .innerJoin(user, eq(clinicUsers.identityId, user.id))
+      .where(
+        and(
+          eq(clinicUsers.clinicId, input.clinicId),
+          eq(clinicUsers.identityId, input.identityId),
+          eq(clinicUsers.active, true),
+        ),
+      )
+      .limit(1);
+    if (actor === undefined) return null;
+    const [target] = await transaction
+      .select({ contactId: conversationEscalations.contactId })
+      .from(conversationEscalations)
+      .where(
+        and(
+          eq(conversationEscalations.clinicId, input.clinicId),
+          eq(conversationEscalations.id, input.escalationId),
+        ),
+      )
+      .limit(1);
+    if (target === undefined) return null;
+    const [conversation] = await transaction
+      .select({ state: whatsappConversations.state })
+      .from(whatsappConversations)
+      .where(
+        and(
+          eq(whatsappConversations.clinicId, input.clinicId),
+          eq(whatsappConversations.contactId, target.contactId),
+        ),
+      )
+      .for("update");
+    const resolvedAt = new Date();
+    const [escalation] = await transaction
+      .update(conversationEscalations)
+      .set({ resolvedAt, resolvedByClinicUserId: actor.id })
+      .where(
+        and(
+          eq(conversationEscalations.clinicId, input.clinicId),
+          eq(conversationEscalations.id, input.escalationId),
+          isNull(conversationEscalations.resolvedAt),
+        ),
+      )
+      .returning({ contactId: conversationEscalations.contactId });
+    if (escalation === undefined) return null;
+    if (conversation?.state.escalationId === input.escalationId) {
+      await transaction
+        .update(whatsappConversations)
+        .set({
+          state: {
+            ...EMPTY_CONVERSATION,
+            ...conversation.state,
+            escalationId: null,
+          },
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(whatsappConversations.clinicId, input.clinicId),
+            eq(whatsappConversations.contactId, escalation.contactId),
+          ),
+        );
+    }
+    return {
+      resolvedAt,
+      resolvedBy: { id: actor.id, name: actor.name },
+    };
+  });
+}
 
 /** Configuración RLS del aviso adicional por WhatsApp simulado a secretaria. */
 export const drizzleEscalationNotificationSettingsStore: EscalationNotificationSettingsStore =

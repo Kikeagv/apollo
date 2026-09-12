@@ -5,6 +5,7 @@ import {
   getEscalationNotificationSettings,
   listConversationEscalations,
   resolveConversationEscalation,
+  resolveConversationEscalationWithAudit,
   setEscalationNotificationSettings,
 } from "./conversation-escalations";
 
@@ -48,6 +49,29 @@ describe("Escalamientos humanos", () => {
       ),
     ).resolves.toBe(true);
     expect(calls).toEqual(["list", "resolve"]);
+  });
+
+  it("expone el actor y la fecha de la reanudación explícita", async () => {
+    const resolution = {
+      resolvedAt: new Date("2026-09-12T12:00:00.000Z"),
+      resolvedBy: { id: "clinic-user-1", name: "Dra. Carla" },
+    };
+    const store = {
+      async resolveConversationEscalationWithAudit() {
+        return resolution;
+      },
+    };
+
+    await expect(
+      resolveConversationEscalationWithAudit(
+        {
+          clinicId: "clinic-1",
+          escalationId: "escalation-1",
+          identityId: "identity-1",
+        },
+        store,
+      ),
+    ).resolves.toEqual(resolution);
   });
 });
 

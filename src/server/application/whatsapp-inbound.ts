@@ -16,6 +16,8 @@ export type {
 } from "./whatsapp-consent";
 
 const SERVICE_WINDOW_MS = 24 * 60 * 60_000;
+const UNSUPPORTED_MESSAGE_RESPONSE =
+  "Recibimos tu mensaje. Una persona de la Clínica te atenderá pronto.";
 
 export type WhatsAppInboundEventStatus =
   | "awaiting-consent"
@@ -375,6 +377,17 @@ async function processInboundEvent(input: {
               ? "business-app"
               : "unsupported-message",
         });
+        if (handling === "unsupported" && serviceWindowExpiresAt > now) {
+          await input.replySender.send({
+            clinicId: resolved.clinicId,
+            idempotencyKey: event.id,
+            recipientBusinessScopedUserId:
+              resolved.recipientBusinessScopedUserId,
+            recipientPhoneE164: resolved.recipientPhoneE164,
+            serviceWindowExpiresAt,
+            text: UNSUPPORTED_MESSAGE_RESPONSE,
+          });
+        }
         await store.markProcessed({
           consentReference: null,
           eventId: event.eventId,

@@ -1,17 +1,27 @@
 "use client";
 
+import { useState } from "react";
+
 import { CLINIC_TIMEZONE } from "~/clinic-timezone";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
-import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
+import type {
+  ConversationEscalationResolution,
+  ConversationEscalationTrigger,
+} from "~/server/application/conversation-escalations";
 import { api } from "~/trpc/react";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
 /** Bandeja de Panacea para diálogos que requieren atención humana. */
 export function ConversationEscalationsSection() {
   const escalations = api.panacea.listConversationEscalations.useQuery();
+  const [lastResolution, setLastResolution] =
+    useState<ConversationEscalationResolution | null>(null);
   const resolve = api.panacea.resolveConversationEscalation.useMutation({
-    onSuccess: () => escalations.refetch(),
+    onSuccess: (resolution) => {
+      if (resolution !== null) setLastResolution(resolution);
+      void escalations.refetch();
+    },
   });
 
   return (
@@ -25,6 +35,24 @@ export function ConversationEscalationsSection() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4 pt-6">
+          {lastResolution ? (
+            <div
+              aria-live="polite"
+              className="border-border bg-muted/30 space-y-2 rounded-lg border p-3 text-sm"
+            >
+              <p className="font-medium">Escalamiento reanudado</p>
+              <p className="text-muted-foreground">
+                Reanudado por: {lastResolution.resolvedBy.name}
+              </p>
+              <p className="text-muted-foreground">
+                Fecha de reanudación: {formatDate(lastResolution.resolvedAt)}
+              </p>
+              <p className="text-muted-foreground">
+                Siguiente acción: continuar la conversación; el asistente de la
+                Clínica vuelve a atender mensajes de texto.
+              </p>
+            </div>
+          ) : null}
           {escalations.error ? (
             <PanaceaQueryError
               error={escalations.error}

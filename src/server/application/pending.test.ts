@@ -103,6 +103,36 @@ describe("caso de uso de Pendientes", () => {
     });
   });
 
+  it("devuelve la auditoría cuando resuelve un Escalamiento de conversación", async () => {
+    const resolution = {
+      resolvedAt: new Date("2026-09-12T12:00:00.000Z"),
+      resolvedBy: { id: "clinic-user-1", name: "Dra. Carla" },
+    };
+    const resolveConversationWithAudit = vi.fn().mockResolvedValue(resolution);
+
+    await expect(
+      resolvePendingCase(
+        {
+          category: "conversation",
+          clinicId: "clinic-1",
+          identityId: "identity-1",
+          id: "conversation-1",
+        },
+        {
+          resolveAppointmentSelfManagementEscalation: async () => true,
+          resolveConversationEscalation: async () => true,
+          resolveConversationEscalationWithAudit: resolveConversationWithAudit,
+          resolveTransactionalDeliveryAlert: async () => true,
+        },
+      ),
+    ).resolves.toEqual(resolution);
+    expect(resolveConversationWithAudit).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      escalationId: "conversation-1",
+      identityId: "identity-1",
+    });
+  });
+
   it("rechaza resolver una Entrega sin evidencia de la acción", async () => {
     const resolveDelivery = vi.fn(async () => true);
 

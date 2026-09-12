@@ -24,6 +24,7 @@ import { listPendingCases, resolvePendingCase } from "./pending";
 import {
   listConversationEscalations,
   resolveConversationEscalation,
+  resolveConversationEscalationWithAudit,
 } from "./conversation-escalations";
 import {
   listWhatsAppInboundOperationalAlerts,
@@ -771,11 +772,13 @@ describe("Reserva simulada de WhatsApp persistente", () => {
         )[0];
         if (escalation === undefined) throw new Error("Falta el takeover");
         await expect(
-          resolveConversationEscalation(
+          resolveConversationEscalationWithAudit(
             { ...fixture, escalationId: escalation.id },
             drizzleConversationEscalationResolver,
           ),
-        ).resolves.toBe(true);
+        ).resolves.toMatchObject({
+          resolvedBy: { name: fixture.identityId },
+        });
         await expect(
           processSimulatedWhatsAppMessage(
             message(fixture, "business-app-resumed", "info"),

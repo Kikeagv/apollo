@@ -30,7 +30,7 @@ import {
 import {
   getEscalationNotificationSettings,
   listConversationEscalations,
-  resolveConversationEscalation,
+  resolveConversationEscalationWithAudit,
   setEscalationNotificationSettings,
 } from "~/server/application/conversation-escalations";
 import {
@@ -967,7 +967,7 @@ export const panaceaRouter = {
   resolveConversationEscalation: clinicProcedure
     .input(z.object({ escalationId: z.string().uuid() }))
     .mutation(({ ctx, input }) =>
-      resolveConversationEscalation(
+      resolveConversationEscalationWithAudit(
         {
           ...input,
           clinicId: ctx.clinic.clinicId,

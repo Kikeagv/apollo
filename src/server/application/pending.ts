@@ -6,6 +6,7 @@ import {
   type PendingInbox,
   type PendingStatus,
 } from "~/domain/pending";
+import type { ConversationEscalationResolution } from "./conversation-escalations";
 
 export type PendingCaseReader = {
   listPendingCases(input: {
@@ -26,6 +27,11 @@ export type PendingCaseResolver = {
     escalationId: string;
     identityId: string;
   }): Promise<boolean>;
+  resolveConversationEscalationWithAudit?(input: {
+    clinicId: string;
+    escalationId: string;
+    identityId: string;
+  }): Promise<ConversationEscalationResolution | null>;
   resolveTransactionalDeliveryAlert(input: {
     alertId: string;
     clinicId: string;
@@ -89,23 +95,38 @@ export async function resolvePendingCase(
   input: ResolvePendingCaseInput,
   resolver: PendingCaseResolver,
 ) {
-  const resolved =
-    input.category === "conversation"
-      ? await resolver.resolveConversationEscalation({
-          clinicId: input.clinicId,
-          escalationId: input.id,
-          identityId: input.identityId,
-        })
-      : input.category === "appointment"
-        ? await resolver.resolveAppointmentSelfManagementEscalation({
-            clinicId: input.clinicId,
-            escalationId: input.id,
-            identityId: input.identityId,
-          })
-        : await resolveDeliveryAlert(input, resolver);
+  const resolved = await resolveCase(input, resolver);
 
   if (!resolved) throw new PendingCaseResolutionError(input.category);
-  return true;
+  return resolved;
+}
+
+async function resolveCase(
+  input: ResolvePendingCaseInput,
+  resolver: PendingCaseResolver,
+): Promise<boolean | ConversationEscalationResolution | null> {
+  if (input.category === "conversation") {
+    if (resolver.resolveConversationEscalationWithAudit !== undefined) {
+      return resolver.resolveConversationEscalationWithAudit({
+        clinicId: input.clinicId,
+        escalationId: input.id,
+        identityId: input.identityId,
+      });
+    }
+    return resolver.resolveConversationEscalation({
+      clinicId: input.clinicId,
+      escalationId: input.id,
+      identityId: input.identityId,
+    });
+  }
+  if (input.category === "appointment") {
+    return resolver.resolveAppointmentSelfManagementEscalation({
+      clinicId: input.clinicId,
+      escalationId: input.id,
+      identityId: input.identityId,
+    });
+  }
+  return resolveDeliveryAlert(input, resolver);
 }
 
 async function resolveDeliveryAlert(

@@ -32,6 +32,7 @@ import {
   type PendingPriority,
   type PendingStatus,
 } from "~/domain/pending";
+import type { ConversationEscalationResolution } from "~/server/application/conversation-escalations";
 import { api } from "~/trpc/react";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 
@@ -60,6 +61,8 @@ export function PendingInboxSection() {
     { category: PendingCategory; id: string } | undefined
   >();
   const [resolutionEvidence, setResolutionEvidence] = useState("");
+  const [lastResolution, setLastResolution] =
+    useState<ConversationEscalationResolution | null>(null);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -71,7 +74,10 @@ export function PendingInboxSection() {
 
   const pending = api.panacea.listPendingCases.useQuery({ category, status });
   const resolve = api.panacea.resolvePendingCase.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (resolution) => {
+      if (resolution !== true) {
+        setLastResolution(resolution);
+      }
       await pending.refetch();
       setResolutionTarget(undefined);
       updateUrl({ selected: undefined });
@@ -201,6 +207,20 @@ export function PendingInboxSection() {
           ))}
         </div>
       </div>
+
+      {lastResolution ? (
+        <Alert aria-live="polite">
+          <AlertTitle>Escalamiento reanudado</AlertTitle>
+          <AlertDescription className="space-y-1">
+            <p>Reanudado por: {lastResolution.resolvedBy.name}</p>
+            <p>Fecha de reanudación: {formatDate(lastResolution.resolvedAt)}</p>
+            <p>
+              Siguiente acción: continuar la conversación; el asistente de la
+              Clínica vuelve a atender mensajes de texto.
+            </p>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="grid min-w-0 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
         <Card className="min-w-0" data-pending-list="true">
