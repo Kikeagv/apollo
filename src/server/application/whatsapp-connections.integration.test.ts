@@ -154,6 +154,7 @@ describe("Conexiones de WhatsApp persistentes", () => {
               e2eStatus: "passed",
               numberHealth: "healthy",
               numberHealthCheckedAt: new Date(),
+              numberEnvironment: "production",
               projectId: "project-1",
               projectWebhookId: "project-webhook-1",
               projectWebhookStatus: "ready",

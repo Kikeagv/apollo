@@ -26,9 +26,13 @@ Clínica. Toda operación clínica abre una transacción mediante
 
 ```sh
 npm test
+npm run test:integration
 npm run check
 npm run build
 ```
+
+`npm test` ejecuta la suite rápida; `npm run test:integration` incluye las
+pruebas que requieren PostgreSQL configurado en `DATABASE_URL`.
 
 Las pruebas de casos de uso usan un adaptador de correo simulado y datos
 sintéticos. Las políticas SQL de RLS viven en las migraciones bajo `drizzle/`.
