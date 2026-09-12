@@ -128,6 +128,12 @@ export type WhatsAppInboundStore = {
     contactId: string;
     now: Date;
   }): Promise<number>;
+  reactivatePendingWhatsAppDeliveries?(input: {
+    clinicId: string;
+    consentReference: string;
+    contactId: string;
+    now: Date;
+  }): Promise<number>;
   withConversationLock<T>(input: {
     clinicId: string;
     conversationId: string | null;
@@ -522,6 +528,12 @@ async function processInboundEvent(input: {
       }
 
       if (consent.consume) {
+        await store.reactivatePendingWhatsAppDeliveries?.({
+          clinicId: resolved.clinicId,
+          consentReference: consent.reference,
+          contactId: resolved.contactId,
+          now,
+        });
         await store.markProcessed({
           consentReference: consent.reference,
           eventId: event.eventId,

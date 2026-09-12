@@ -99,6 +99,30 @@ describe("decisión de Entrega transaccional de WhatsApp", () => {
     });
   });
 
+  it("acepta el locale exacto de la plantilla sincronizada del WABA", () => {
+    expect(
+      chooseTransactionalWhatsAppRoute({
+        now,
+        serviceWindowExpiresAt: null,
+        template: {
+          category: "UTILITY",
+          locale: "en_US",
+          name: "appointment_reminder",
+          parameters: ["Ana", "Clínica Central"],
+          providerTemplateId: "template-reminder",
+          status: "APPROVED",
+        },
+        text: "Your appointment is tomorrow at 08:00.",
+      }),
+    ).toEqual({
+      kind: "template",
+      locale: "en_US",
+      name: "appointment_reminder",
+      parameters: ["Ana", "Clínica Central"],
+      providerTemplateId: "template-reminder",
+    });
+  });
+
   it("falla cerrado si fuera de ventana no existe una Utility aprobada", () => {
     expect(() =>
       chooseTransactionalWhatsAppRoute({

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { WhatsAppUtilityTemplateRequiredError } from "~/domain/whatsapp-delivery";
 import {
   captureTransactionalDeliveryCallback,
   retryAt,
@@ -61,6 +62,51 @@ describe("runTransactionalDeliveryWorker", () => {
     expect(retryAt(3, now)).toEqual(new Date("2026-08-14T12:15:00.000Z"));
     expect(retryAt(4, now)).toEqual(new Date("2026-08-14T13:00:00.000Z"));
     expect(retryAt(5, now)).toBeUndefined();
+  });
+
+  it("marca una plantilla Utility inválida como fallo definitivo", async () => {
+    const delivery: TransactionalDelivery = {
+      attempts: 1,
+      clinicId: "clinic-1",
+      id: "delivery-invalid-template",
+      idempotencyKey: "appointment-1:24h:contact-1",
+      kind: "appointment-reminder",
+      payload: {
+        appointmentId: "appointment-1",
+        appointmentStartsAt: new Date("2026-08-15T12:00:00.000Z"),
+        checkpoint: "24h",
+        clinicName: "Clínica Central",
+        recipient: { id: "contact-1", name: "Ana", phoneE164: "+50370000000" },
+      },
+    };
+    const markFailed = vi
+      .fn<NonNullable<TransactionalDeliveryStore["markFailed"]>>()
+      .mockResolvedValue(undefined);
+    const scheduleRetry = vi
+      .fn<TransactionalDeliveryStore["scheduleRetry"]>()
+      .mockResolvedValue(undefined);
+
+    await expect(
+      runTransactionalDeliveryWorker(
+        { now },
+        {
+          claimReadyDeliveries: vi.fn().mockResolvedValue([delivery]),
+          markDelivered: vi.fn(),
+          markFailed,
+          scheduleRetry,
+        },
+        {
+          send: vi
+            .fn()
+            .mockRejectedValue(new WhatsAppUtilityTemplateRequiredError()),
+        },
+      ),
+    ).resolves.toMatchObject({ claimed: 1, failed: 1, retried: 0 });
+
+    expect(markFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ delivery, now }),
+    );
+    expect(scheduleRetry).not.toHaveBeenCalled();
   });
 
   it("mantiene el contenido preparado administrativo, sin detalles clínicos", async () => {

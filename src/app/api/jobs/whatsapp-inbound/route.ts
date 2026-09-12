@@ -13,6 +13,7 @@ import { createWhatsAppConsentGate } from "~/server/application/whatsapp-consent
 import { drizzleSimulatedWhatsAppBookingStore } from "~/server/db/simulated-whatsapp-booking-store";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
 import {
+  reactivatePendingWhatsAppDeliveries,
   suppressPendingReminderDeliveries,
   suppressPendingWhatsAppDeliveries,
 } from "~/server/db/transactional-delivery-store";
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
     { now: new Date() },
     {
       ...drizzleWhatsAppInboundStore,
+      reactivatePendingWhatsAppDeliveries,
       suppressPendingReminderDeliveries,
       suppressPendingWhatsAppDeliveries,
     },

@@ -236,6 +236,44 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
     expect(fake.saveAssistantResponse).not.toHaveBeenCalled();
   });
 
+  it("reactiva las Entregas bloqueadas cuando llega un consentimiento nuevo", async () => {
+    const fake = fakeStore([
+      event({
+        id: "new-consent-1",
+        interactiveAction: "continue",
+        text: "CONTINUAR",
+      }),
+    ]);
+    const reactivate = vi.fn().mockResolvedValue(2);
+    fake.store.reactivatePendingWhatsAppDeliveries = reactivate;
+    const consentGate: WhatsAppInboundConsentGate = {
+      check: vi.fn().mockResolvedValue({
+        consume: true,
+        kind: "accepted",
+        reference: "consent-new-1",
+      }),
+    };
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        assistant(),
+        consentGate,
+        { send: vi.fn() },
+        undefined,
+        inactiveTakeover,
+      ),
+    ).resolves.toMatchObject({ processed: 1 });
+
+    expect(reactivate).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      consentReference: "consent-new-1",
+      now: NOW,
+    });
+  });
+
   it("no despierta al asistente fuera de la ventana de servicio", async () => {
     const fake = fakeStore([
       event({

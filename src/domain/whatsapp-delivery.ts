@@ -31,6 +31,8 @@ export type TransactionalWhatsAppTemplate = {
 };
 
 export class WhatsAppUtilityTemplateRequiredError extends Error {
+  readonly retryable = false;
+
   constructor() {
     super(
       "La Entrega transaccional necesita una plantilla Utility aprobada fuera de la Ventana de servicio",
@@ -55,9 +57,11 @@ export function chooseTransactionalWhatsAppRoute(input: {
 
   if (
     input.template.category !== "UTILITY" ||
-    input.template.locale !== "es" ||
+    input.template.locale.trim() === "" ||
+    input.template.name.trim() === "" ||
     input.template.status !== "APPROVED" ||
-    input.template.providerTemplateId === null
+    input.template.providerTemplateId === null ||
+    input.template.providerTemplateId.trim() === ""
   ) {
     throw new WhatsAppUtilityTemplateRequiredError();
   }

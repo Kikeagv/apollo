@@ -156,6 +156,7 @@ export async function runTransactionalDeliveryWorker(
   const deliveries = await store.claimReadyDeliveries(input);
   let delivered = 0;
   let accepted = 0;
+  let failed = 0;
   let unknown = 0;
   let retried = 0;
   for (const delivery of deliveries) {
@@ -187,7 +188,7 @@ export async function runTransactionalDeliveryWorker(
           error: deliveryError,
           now: input.now,
         });
-        retried += 1;
+        failed += 1;
         continue;
       }
       await store.scheduleRetry({
@@ -227,7 +228,14 @@ export async function runTransactionalDeliveryWorker(
       unknown += 1;
     }
   }
-  return { accepted, claimed: deliveries.length, delivered, retried, unknown };
+  return {
+    accepted,
+    claimed: deliveries.length,
+    delivered,
+    failed,
+    retried,
+    unknown,
+  };
 }
 
 /** Ejecuta mantenimiento, preparación durable, entrega y política de silencio. */

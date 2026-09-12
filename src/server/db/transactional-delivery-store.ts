@@ -1042,6 +1042,85 @@ export async function suppressPendingWhatsAppDeliveries(input: {
   });
 }
 
+/** Un consentimiento explícito nuevo libera solo las Entregas bloqueadas por consentimiento. */
+export async function reactivatePendingWhatsAppDeliveries(input: {
+  clinicId: string;
+  consentReference: string;
+  contactId: string;
+  now: Date;
+}) {
+  return inAppointmentSchedulerTransaction(async (transaction) => {
+    const consent = await readWhatsAppConsentSnapshot(transaction, input);
+    if (
+      consent.decision !== "allowed" ||
+      consent.reference !== input.consentReference
+    ) {
+      return 0;
+    }
+    const rows = await transaction
+      .update(transactionalDeliveries)
+      .set({
+        consentAcceptedAt: consent.acceptedAt,
+        consentDecision: consent.decision,
+        consentPrivacyVersion: consent.privacyVersion,
+        consentReference: consent.reference,
+        consentTermsVersion: consent.termsVersion,
+        consentTextReference: consent.textReference,
+        lastError: null,
+        leaseExpiresAt: null,
+        status: "pending",
+        updatedAt: input.now,
+      })
+      .where(
+        and(
+          eq(transactionalDeliveries.clinicId, input.clinicId),
+          eq(transactionalDeliveries.recipientContactId, input.contactId),
+          inArray(transactionalDeliveries.kind, [
+            "appointment-message",
+            "appointment-reminder",
+          ]),
+          eq(transactionalDeliveries.status, "suppressed"),
+          or(
+            eq(transactionalDeliveries.kind, "appointment-message"),
+            and(
+              eq(transactionalDeliveries.kind, "appointment-reminder"),
+              gte(
+                transactionalDeliveries.nextAttemptAt,
+                new Date(input.now.valueOf() - REMINDER_CATCH_UP_MS),
+              ),
+              sql`${transactionalDeliveries.payload}->>'checkpoint' IN ('20h', '22h', '24h')`,
+              exists(
+                transaction
+                  .select({ id: appointments.id })
+                  .from(appointments)
+                  .where(
+                    and(
+                      eq(
+                        appointments.clinicId,
+                        transactionalDeliveries.clinicId,
+                      ),
+                      eq(
+                        appointments.id,
+                        transactionalDeliveries.appointmentId,
+                      ),
+                      eq(appointments.status, "confirmed"),
+                      gt(appointments.startsAt, input.now),
+                    ),
+                  ),
+              ),
+            ),
+          ),
+          inArray(transactionalDeliveries.lastError, [
+            "Consentimiento de WhatsApp no vigente",
+            "El Contacto revocó el Consentimiento de WhatsApp",
+          ]),
+        ),
+      )
+      .returning({ id: transactionalDeliveries.id });
+    return rows.length;
+  });
+}
+
 export type TransactionalDeliveryAlert = {
   createdAt: Date;
   delivery: {

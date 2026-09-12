@@ -31,10 +31,13 @@ describe("adaptadores de Entrega transaccional", () => {
           name: "Ana",
           phoneE164: "+50370000001",
         },
+        serviceWindowExpiresAt: new Date("2026-09-06T20:00:00.000Z"),
       },
     };
 
-    await transactionalDeliveryAdapter(provider).send(delivery);
+    await transactionalDeliveryAdapter(provider).send(delivery, {
+      now: new Date("2026-09-06T12:00:00.000Z"),
+    });
 
     expect(sendReminder).toHaveBeenCalledWith({
       appointmentId: "appointment-1",
@@ -141,5 +144,123 @@ describe("adaptadores de Entrega transaccional", () => {
         { now: new Date("2026-09-09T12:00:00.000Z") },
       ),
     ).rejects.toThrow("Utility");
+  });
+
+  it("falla cerrado si una ruta libre persistida llega fuera de ventana sin texto estable", async () => {
+    const sendReminder = vi.fn();
+    const provider: WhatsAppProvider = {
+      appointmentMessageSender: { send: vi.fn() },
+      appointmentReminderSender: { send: sendReminder },
+      provider: "kapso",
+      sendConversationReply: vi.fn(),
+      sendConversationEscalationNotification: vi.fn(),
+    };
+
+    await expect(
+      transactionalDeliveryAdapter(provider).send(
+        {
+          attempts: 1,
+          clinicId: "clinic-1",
+          id: "delivery-1",
+          idempotencyKey: "delivery-1",
+          kind: "appointment-reminder",
+          payload: {
+            appointmentId: "appointment-1",
+            appointmentStartsAt: new Date("2026-09-10T12:00:00.000Z"),
+            checkpoint: "24h",
+            clinicName: "Clínica Central",
+            recipient: {
+              id: "contact-1",
+              name: "Ana",
+              phoneE164: "+50370000001",
+            },
+            route: { kind: "text", text: "Ruta no autorizada" },
+            serviceWindowExpiresAt: new Date("2026-09-09T11:00:00.000Z"),
+          },
+        },
+        { now: new Date("2026-09-09T12:00:00.000Z") },
+      ),
+    ).rejects.toThrow("Utility");
+    expect(sendReminder).not.toHaveBeenCalled();
+  });
+
+  it("falla cerrado ante una ventana desconocida aunque haya una ruta libre persistida", async () => {
+    const sendReminder = vi.fn();
+    const provider: WhatsAppProvider = {
+      appointmentMessageSender: { send: vi.fn() },
+      appointmentReminderSender: { send: sendReminder },
+      provider: "kapso",
+      sendConversationReply: vi.fn(),
+      sendConversationEscalationNotification: vi.fn(),
+    };
+
+    await expect(
+      transactionalDeliveryAdapter(provider).send(
+        {
+          attempts: 1,
+          clinicId: "clinic-1",
+          id: "delivery-1",
+          idempotencyKey: "delivery-1",
+          kind: "appointment-reminder",
+          payload: {
+            appointmentId: "appointment-1",
+            appointmentStartsAt: new Date("2026-09-10T12:00:00.000Z"),
+            checkpoint: "24h",
+            clinicName: "Clínica Central",
+            recipient: {
+              id: "contact-1",
+              name: "Ana",
+              phoneE164: "+50370000001",
+            },
+            route: { kind: "text", text: "Ruta no autorizada" },
+          },
+        },
+        { now: new Date("2026-09-09T12:00:00.000Z") },
+      ),
+    ).rejects.toThrow("Utility");
+    expect(sendReminder).not.toHaveBeenCalled();
+  });
+
+  it("falla cerrado ante una plantilla persistida sin catálogo Utility válido", async () => {
+    const sendReminder = vi.fn();
+    const provider: WhatsAppProvider = {
+      appointmentMessageSender: { send: vi.fn() },
+      appointmentReminderSender: { send: sendReminder },
+      provider: "kapso",
+      sendConversationReply: vi.fn(),
+      sendConversationEscalationNotification: vi.fn(),
+    };
+
+    await expect(
+      transactionalDeliveryAdapter(provider).send(
+        {
+          attempts: 1,
+          clinicId: "clinic-1",
+          id: "delivery-1",
+          idempotencyKey: "delivery-1",
+          kind: "appointment-reminder",
+          payload: {
+            appointmentId: "appointment-1",
+            appointmentStartsAt: new Date("2026-09-10T12:00:00.000Z"),
+            checkpoint: "24h",
+            clinicName: "Clínica Central",
+            recipient: {
+              id: "contact-1",
+              name: "Ana",
+              phoneE164: "+50370000001",
+            },
+            route: {
+              kind: "template",
+              locale: "es",
+              name: "appointment_reminder",
+              parameters: [],
+              providerTemplateId: "template-1",
+            },
+          },
+        },
+        { now: new Date("2026-09-09T12:00:00.000Z") },
+      ),
+    ).rejects.toThrow("Utility");
+    expect(sendReminder).not.toHaveBeenCalled();
   });
 });

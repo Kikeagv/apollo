@@ -1,10 +1,25 @@
 import { createDailyAgendaPdf } from "~/server/application/appointment-reminders";
 import type { TransactionalDeliverySender } from "~/server/application/transactional-deliveries";
-import { chooseTransactionalWhatsAppRoute } from "~/domain/whatsapp-delivery";
-import type { TransactionalWhatsAppRoute } from "~/domain/whatsapp-delivery";
+import {
+  chooseTransactionalWhatsAppRoute,
+  WhatsAppUtilityTemplateRequiredError,
+} from "~/domain/whatsapp-delivery";
+import type {
+  TransactionalWhatsAppRoute,
+  TransactionalWhatsAppTemplate,
+} from "~/domain/whatsapp-delivery";
 import type { WhatsAppProvider } from "~/server/application/whatsapp-provider";
 import { sendSimulatedDailyAgenda } from "~/server/email/simulated-identity-email";
 import { whatsAppProviderAdapter } from "~/server/whatsapp/whatsapp-delivery";
+
+const emptyTransactionalWhatsAppTemplate: TransactionalWhatsAppTemplate = {
+  category: null,
+  locale: "",
+  name: "",
+  parameters: [],
+  providerTemplateId: null,
+  status: null,
+};
 
 /** Selecciona los adaptadores del outbox sin alterar el caso de uso. */
 export function transactionalDeliveryAdapter(
@@ -61,30 +76,63 @@ function routeForDelivery(
   payload: {
     route?: TransactionalWhatsAppRoute;
     serviceWindowExpiresAt?: Date | null;
-    template?: {
-      category?: string | null;
-      locale: string;
-      name: string;
-      parameters: string[];
-      providerTemplateId: string | null;
-      status?: string | null;
-    };
+    template?: TransactionalWhatsAppTemplate;
     text?: string;
   },
   now: Date,
 ) {
-  if (payload.text === undefined) return payload.route;
+  if (payload.text === undefined) {
+    const serviceWindowIsOpen =
+      payload.serviceWindowExpiresAt !== undefined &&
+      payload.serviceWindowExpiresAt !== null &&
+      payload.serviceWindowExpiresAt > now;
+
+    if (payload.route?.kind === "template") {
+      validatePersistedTemplateRoute(payload, now);
+      return payload.route;
+    }
+    if (serviceWindowIsOpen) {
+      return payload.route;
+    }
+    throw new WhatsAppUtilityTemplateRequiredError();
+  }
   return chooseTransactionalWhatsAppRoute({
     now,
     serviceWindowExpiresAt: payload.serviceWindowExpiresAt ?? null,
-    template: payload.template ?? {
-      category: null,
-      locale: "",
-      name: "",
-      parameters: [],
-      providerTemplateId: null,
-      status: null,
-    },
+    template: payload.template ?? emptyTransactionalWhatsAppTemplate,
     text: payload.text,
   });
+}
+
+function validatePersistedTemplateRoute(
+  payload: {
+    route?: TransactionalWhatsAppRoute;
+    template?: TransactionalWhatsAppTemplate;
+  },
+  now: Date,
+) {
+  const route = payload.route;
+  if (route?.kind !== "template") {
+    throw new WhatsAppUtilityTemplateRequiredError();
+  }
+  const validated = chooseTransactionalWhatsAppRoute({
+    now,
+    serviceWindowExpiresAt: null,
+    template: payload.template ?? emptyTransactionalWhatsAppTemplate,
+    text: "",
+  });
+  if (validated.kind !== "template") {
+    throw new WhatsAppUtilityTemplateRequiredError();
+  }
+  if (
+    validated.locale !== route.locale ||
+    validated.name !== route.name ||
+    validated.providerTemplateId !== route.providerTemplateId ||
+    validated.parameters.length !== route.parameters.length ||
+    validated.parameters.some(
+      (parameter, index) => parameter !== route.parameters[index],
+    )
+  ) {
+    throw new WhatsAppUtilityTemplateRequiredError();
+  }
 }
