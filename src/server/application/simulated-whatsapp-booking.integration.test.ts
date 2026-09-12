@@ -494,6 +494,50 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             return createdTutor;
           },
         );
+        await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+          );
+          const termsContract =
+            await transaction.query.clinicTermsContract.findFirst({
+              columns: { currentVersion: true },
+              where: eq(clinicTermsContract.id, true),
+            });
+          if (termsContract === undefined) {
+            throw new Error("Falta el Contrato de términos de prueba");
+          }
+          const policy = buildWhatsAppConsentPolicy(
+            termsContract.currentVersion,
+          );
+          const [whatsappIdentity] = await transaction
+            .insert(whatsappIdentities)
+            .values({
+              clinicId: fixture.clinicId,
+              contactId: tutor.id,
+              phoneE164: "+50370000003",
+              phoneNumberId: `simulated-${fixture.clinicId}`,
+              status: "active",
+            })
+            .returning({ id: whatsappIdentities.id });
+          if (whatsappIdentity === undefined) {
+            throw new Error("Falta la Identidad de WhatsApp del Tutor");
+          }
+          await transaction.insert(whatsappContactConsents).values({
+            acceptedAt: new Date("2026-08-12T12:00:00.000Z"),
+            acceptedRole: "tutor",
+            clinicId: fixture.clinicId,
+            contactId: tutor.id,
+            identityId: whatsappIdentity.id,
+            interactionId: `fixture-tutor-consent-${fixture.clinicId}`,
+            patientId: null,
+            phoneE164: "+50370000003",
+            privacyVersion: policy.privacyVersion,
+            provider: "kapso",
+            scope: "channel",
+            termsVersion: policy.termsVersion,
+            textReference: policy.immutableTextReference,
+          });
+        });
         const reminder = await sendAppointmentReminder(
           {
             appointmentId: confirmed.id,

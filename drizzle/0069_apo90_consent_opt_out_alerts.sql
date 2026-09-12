@@ -8,7 +8,14 @@ ALTER TABLE "pg-drizzle_whatsapp_contact_consent"
 DROP INDEX IF EXISTS "whatsapp_contact_consent_channel_version_unique";
 --> statement-breakpoint
 ALTER TABLE "pg-drizzle_transactional_delivery_alert"
-  ADD COLUMN "resolution_evidence" text,
+  ADD COLUMN "resolution_evidence" text;
+--> statement-breakpoint
+UPDATE "pg-drizzle_transactional_delivery_alert"
+SET "resolution_evidence" = 'Resolución histórica migrada; no existía evidencia registrada antes de APO-90.'
+WHERE "resolved_at" IS NOT NULL
+  AND btrim(COALESCE("resolution_evidence", '')) = '';
+--> statement-breakpoint
+ALTER TABLE "pg-drizzle_transactional_delivery_alert"
   ADD CONSTRAINT "transactional_delivery_alert_resolution_evidence"
     CHECK (
       "resolved_at" IS NULL
