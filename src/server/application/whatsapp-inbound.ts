@@ -9,6 +9,11 @@ import {
 } from "~/domain/whatsapp-consent";
 import type { ConversationEscalationTrigger } from "./conversation-escalations";
 import type { WhatsAppConsentGate } from "./whatsapp-consent";
+import {
+  persistWhatsAppOperationalMetric,
+  type WhatsAppOperationalObserver,
+} from "./whatsapp-circuit-breaker";
+import { WhatsAppCircuitBreakerOpenError } from "./whatsapp-provider";
 
 export type {
   WhatsAppConsentDecision as WhatsAppInboundConsentDecision,
@@ -48,6 +53,7 @@ export type WhatsAppInboundResolution =
     }
   | {
       kind:
+        | "circuit-open"
         | "connection-not-ready"
         | "customer-mismatch"
         | "unknown-connection"
@@ -89,6 +95,14 @@ export type WhatsAppInboundStore = {
     leaseToken: string;
     processedAt: Date;
   }): Promise<void>;
+  deferForCircuit?(input: {
+    eventId: string;
+    leaseToken: string;
+    now: Date;
+    reason: string;
+  }): Promise<void>;
+  /** Revalida el circuito justo antes de invocar al asistente. */
+  assertCircuitClosed?(input: { clinicId: string }): Promise<void>;
   markRejected(input: {
     eventId: string;
     leaseToken: string;
@@ -193,6 +207,7 @@ export type KapsoInboundWorkerResult = {
   awaitingConsent: number;
   claimed: number;
   conflicts: number;
+  deferred: number;
   ignored: number;
   optedOut: number;
   processed: number;
@@ -209,6 +224,7 @@ export async function runKapsoInboundWorker(
   replySender: WhatsAppInboundReplySender,
   safeRoute: WhatsAppInboundSafeRoute | undefined,
   takeover: WhatsAppInboundHumanTakeover,
+  observer?: WhatsAppOperationalObserver,
 ): Promise<KapsoInboundWorkerResult> {
   const events = await store.claimDueMessages({
     limit: input.limit ?? 20,
@@ -218,6 +234,7 @@ export async function runKapsoInboundWorker(
     awaitingConsent: 0,
     claimed: events.length,
     conflicts: 0,
+    deferred: 0,
     ignored: 0,
     optedOut: 0,
     processed: 0,
@@ -236,11 +253,25 @@ export async function runKapsoInboundWorker(
         replySender,
         safeRoute,
         takeover,
+        observer,
       });
       result[outcome] += 1;
     } catch (error) {
       const reason = errorMessage(error);
       const leaseToken = requireLeaseToken(event);
+      if (
+        error instanceof WhatsAppCircuitBreakerOpenError &&
+        store.deferForCircuit !== undefined
+      ) {
+        await store.deferForCircuit({
+          eventId: event.eventId,
+          leaseToken,
+          now: input.now,
+          reason,
+        });
+        result.deferred += 1;
+        continue;
+      }
       await store.scheduleRetry({
         eventId: event.eventId,
         leaseToken,
@@ -254,6 +285,44 @@ export async function runKapsoInboundWorker(
   return result;
 }
 
+async function observeInbound(input: {
+  clinicId: string;
+  event: WhatsAppInboundEvent;
+  now: Date;
+  observer?: WhatsAppOperationalObserver;
+  outcome: "accepted" | "failed";
+}) {
+  if (input.observer === undefined) return;
+  await persistWhatsAppOperationalMetric(input.observer, {
+    clinicId: input.clinicId,
+    errorCode: input.outcome === "failed" ? "inbound-rejected" : null,
+    idempotencyKey: `inbound:${input.event.idempotencyKey}`,
+    latencyMs: Math.max(0, Date.now() - input.event.receivedAt.valueOf()),
+    metric: {
+      category: inboundMetricCategory(input.event),
+      direction: "inbound",
+    },
+    occurredAt: input.now,
+    operation: "inbound-message",
+    outcome: input.outcome,
+    workerKind: "inbound",
+  });
+}
+
+function inboundMetricCategory(event: WhatsAppInboundEvent) {
+  if (event.type === "reaction") return "reaction" as const;
+  if (
+    event.type === "audio" ||
+    event.type === "document" ||
+    event.type === "image" ||
+    event.type === "video"
+  ) {
+    return "media" as const;
+  }
+  if (event.interactiveAction !== null) return "interactive" as const;
+  return "message" as const;
+}
+
 async function processInboundEvent(input: {
   assistant: WhatsAppInboundAssistant;
   consentGate: WhatsAppConsentGate;
@@ -263,9 +332,11 @@ async function processInboundEvent(input: {
   safeRoute?: WhatsAppInboundSafeRoute;
   store: WhatsAppInboundStore;
   takeover: WhatsAppInboundHumanTakeover;
+  observer?: WhatsAppOperationalObserver;
 }): Promise<
   | "awaitingConsent"
   | "conflicts"
+  | "deferred"
   | "ignored"
   | "optedOut"
   | "processed"
@@ -299,6 +370,24 @@ async function processInboundEvent(input: {
     return "conflicts";
   }
   if (resolved.kind !== "matched") {
+    if (resolved.kind === "circuit-open") {
+      if (store.deferForCircuit === undefined) {
+        await store.scheduleRetry({
+          eventId: event.eventId,
+          leaseToken,
+          now,
+          reason: resolved.reason,
+        });
+      } else {
+        await store.deferForCircuit({
+          eventId: event.eventId,
+          leaseToken,
+          now,
+          reason: resolved.reason,
+        });
+      }
+      return "deferred";
+    }
     if (
       resolved.kind === "customer-mismatch" ||
       resolved.kind === "unknown-connection" ||
@@ -333,6 +422,14 @@ async function processInboundEvent(input: {
     });
     return "ignored";
   }
+
+  await observeInbound({
+    clinicId: resolved.clinicId,
+    event,
+    now,
+    observer: input.observer,
+    outcome: "accepted",
+  });
 
   const serviceWindowExpiresAt = new Date(
     (event.messageTimestamp ?? event.receivedAt).valueOf() + SERVICE_WINDOW_MS,
@@ -459,14 +556,16 @@ async function processInboundEvent(input: {
           });
           const response =
             persistedResponse === null
-              ? await input.safeRoute.process({
-                  clinicId: resolved.clinicId,
-                  contactId: resolved.contactId,
-                  messageId: event.id,
-                  now,
-                  route: safeRouteKind,
-                  text: event.text ?? "",
-                })
+              ? await runWithCircuitCheck(input.store, resolved.clinicId, () =>
+                  input.safeRoute!.process({
+                    clinicId: resolved.clinicId,
+                    contactId: resolved.contactId,
+                    messageId: event.id,
+                    now,
+                    route: safeRouteKind,
+                    text: event.text ?? "",
+                  }),
+                )
               : { text: persistedResponse };
           if (persistedResponse === null) {
             await store.saveAssistantResponse({
@@ -561,13 +660,15 @@ async function processInboundEvent(input: {
       });
       const response =
         persistedResponse === null
-          ? await input.assistant.processText({
-              clinicId: resolved.clinicId,
-              contactId: resolved.contactId,
-              messageId: event.id,
-              now,
-              text,
-            })
+          ? await runWithCircuitCheck(input.store, resolved.clinicId, () =>
+              input.assistant.processText({
+                clinicId: resolved.clinicId,
+                contactId: resolved.contactId,
+                messageId: event.id,
+                now,
+                text,
+              }),
+            )
           : { text: persistedResponse };
       if (persistedResponse === null) {
         await store.saveAssistantResponse({
@@ -612,4 +713,13 @@ function requireLeaseToken(event: WhatsAppInboundEvent) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Error desconocido";
+}
+
+async function runWithCircuitCheck<T>(
+  store: WhatsAppInboundStore,
+  clinicId: string,
+  operation: () => Promise<T>,
+) {
+  await store.assertCircuitClosed?.({ clinicId });
+  return operation();
 }

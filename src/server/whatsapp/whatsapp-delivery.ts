@@ -7,6 +7,7 @@ import { assertWhatsAppRuntimeReady } from "~/domain/whatsapp-runtime";
 import type { WhatsAppProvider } from "~/server/application/whatsapp-provider";
 import { env } from "~/env";
 import { requireWhatsAppConnectionReady } from "~/server/db/whatsapp-connection-store";
+import { drizzleWhatsAppBillingCapacityStore } from "~/server/db/whatsapp-billing-capacity-store";
 import {
   sendSimulatedConversationEscalationNotification,
   sendSimulatedConversationReply,
@@ -76,7 +77,9 @@ let kapsoCache: WhatsAppSenderBundle | undefined;
 export function whatsAppProviderAdapter(): WhatsAppProvider {
   if (env.WHATSAPP_DELIVERY === "simulated") return simulatedBundle;
   if (kapsoCache === undefined) {
-    const senders = createKapsoWhatsAppSenders();
+    const senders = createKapsoWhatsAppSenders({
+      reserveCapacity: drizzleWhatsAppBillingCapacityStore,
+    });
     kapsoCache = {
       appointmentMessageSender: senders.appointmentMessageSender,
       appointmentReminderSender: senders.appointmentReminderSender,

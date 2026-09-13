@@ -5,7 +5,12 @@ import { env } from "~/env";
 import type { AppointmentReminderSender } from "~/server/application/appointment-reminders";
 import type { ManualAppointmentTransactionalMessage } from "~/server/application/manual-appointments";
 import type { WhatsAppInboundReplySender } from "~/server/application/whatsapp-inbound";
+import type {
+  WhatsAppBillingCapacityReservationResult,
+  WhatsAppBillingCapacityStore,
+} from "~/server/application/whatsapp-billing-capacity";
 import {
+  WhatsAppCircuitBreakerOpenError,
   WhatsAppConnectionRequiredError,
   type WhatsAppProvider,
   type WhatsAppSendResult,
@@ -14,7 +19,10 @@ import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store"
 import { requireWhatsAppConnectionReady } from "~/server/db/whatsapp-connection-store";
 import { reserveWhatsAppSendSlot } from "~/server/db/whatsapp-rate-limit-store";
 
-export { WhatsAppConnectionRequiredError } from "~/server/application/whatsapp-provider";
+export {
+  WhatsAppCircuitBreakerOpenError,
+  WhatsAppConnectionRequiredError,
+} from "~/server/application/whatsapp-provider";
 
 const KAPSO_META_API_URL = "https://api.kapso.ai/meta/whatsapp/v24.0";
 const KAPSO_REQUEST_TIMEOUT_MS = 10_000;
@@ -55,6 +63,7 @@ type KapsoWhatsAppOptions = {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  reserveCapacity?: WhatsAppBillingCapacityStore;
   requireConnection?: typeof requireWhatsAppConnectionReady;
   reserveSendSlot?: typeof reserveWhatsAppSendSlot;
 };
@@ -75,6 +84,7 @@ export function createKapsoWhatsAppSenders(
   const requireConnection =
     options.requireConnection ?? requireWhatsAppConnectionReady;
   const reserveSendSlot = options.reserveSendSlot ?? reserveWhatsAppSendSlot;
+  const reserveCapacity = options.reserveCapacity;
 
   return {
     appointmentMessageSender: {
@@ -85,6 +95,7 @@ export function createKapsoWhatsAppSenders(
           message,
           now,
           requireConnection,
+          reserveCapacity,
           reserveSendSlot,
         }),
     },
@@ -96,6 +107,7 @@ export function createKapsoWhatsAppSenders(
           input,
           now,
           requireConnection,
+          reserveCapacity,
           reserveSendSlot,
         }),
     },
@@ -110,6 +122,7 @@ export function createKapsoWhatsAppSenders(
           input.recipientBusinessScopedUserId ?? null,
         recipientPhoneE164: input.recipientPhoneE164,
         requireConnection,
+        reserveCapacity,
         reserveSendSlot,
         route:
           input.buttonLabel === undefined
@@ -130,6 +143,7 @@ export function createKapsoWhatsAppSenders(
         recipientBusinessScopedUserId: null,
         recipientPhoneE164: input.recipientPhoneE164,
         requireConnection,
+        reserveCapacity,
         reserveSendSlot,
         route: {
           kind: "text",
@@ -144,6 +158,7 @@ async function sendAppointmentMessage(input: {
   fetchImpl: typeof fetch;
   message: ManualAppointmentTransactionalMessage;
   now: () => Date;
+  reserveCapacity?: WhatsAppBillingCapacityStore;
   requireConnection: typeof requireWhatsAppConnectionReady;
   reserveSendSlot: typeof reserveWhatsAppSendSlot;
 }) {
@@ -168,6 +183,7 @@ async function sendAppointmentMessage(input: {
       input.message.recipientBusinessScopedUserId ?? null,
     recipientPhoneE164: input.message.recipient.phoneE164,
     requireConnection: input.requireConnection,
+    reserveCapacity: input.reserveCapacity,
     reserveSendSlot: input.reserveSendSlot,
     route,
   });
@@ -178,6 +194,7 @@ async function sendReminder(input: {
   fetchImpl: typeof fetch;
   input: Parameters<AppointmentReminderSender["send"]>[0];
   now: () => Date;
+  reserveCapacity?: WhatsAppBillingCapacityStore;
   requireConnection: typeof requireWhatsAppConnectionReady;
   reserveSendSlot: typeof reserveWhatsAppSendSlot;
 }) {
@@ -197,6 +214,7 @@ async function sendReminder(input: {
       input.input.recipientBusinessScopedUserId ?? null,
     recipientPhoneE164: input.input.recipient.phoneE164,
     requireConnection: input.requireConnection,
+    reserveCapacity: input.reserveCapacity,
     reserveSendSlot: input.reserveSendSlot,
     route,
   });
@@ -210,6 +228,7 @@ async function sendKapsoMessage(input: {
   now: () => Date;
   recipientBusinessScopedUserId?: string | null;
   recipientPhoneE164: string | null;
+  reserveCapacity?: WhatsAppBillingCapacityStore;
   requireConnection: typeof requireWhatsAppConnectionReady;
   reserveSendSlot: typeof reserveWhatsAppSendSlot;
   route: TransactionalWhatsAppRoute;
@@ -224,12 +243,51 @@ async function sendKapsoMessage(input: {
   if (connection.phoneNumberId === null) {
     throw new WhatsAppConnectionRequiredError();
   }
-  const waitMs = await input.reserveSendSlot({
-    clinicId: input.clinicId,
-    now: input.now(),
-    phoneNumberId: connection.phoneNumberId,
+  const body = requestBody({
+    idempotencyKey: input.idempotencyKey,
+    recipientBusinessScopedUserId: input.recipientBusinessScopedUserId,
+    recipientPhoneE164: input.recipientPhoneE164,
+    route: input.route,
   });
-  if (waitMs > 0) await waitForRateLimit(waitMs);
+  let capacityReserved = false;
+  if (input.reserveCapacity !== undefined) {
+    const reservation = await input.reserveCapacity.reserve({
+      clinicId: input.clinicId,
+      now: input.now(),
+      reservationKey: input.idempotencyKey,
+    });
+    if (!reservation.reserved) {
+      if (reservation.reason === "circuit-open") {
+        throw new WhatsAppCircuitBreakerOpenError(input.clinicId);
+      }
+      throw new KapsoWhatsAppProviderError({
+        ambiguous: false,
+        message: capacityErrorMessage(reservation.reason),
+        retryable: true,
+        status: 429,
+      });
+    }
+    capacityReserved = true;
+  }
+  let waitMs: number;
+  try {
+    waitMs = await input.reserveSendSlot({
+      clinicId: input.clinicId,
+      now: input.now(),
+      phoneNumberId: connection.phoneNumberId,
+    });
+    if (waitMs > 0) await waitForRateLimit(waitMs);
+  } catch (error) {
+    await settleCapacity({
+      capacityReserved,
+      clinicId: input.clinicId,
+      now: input.now(),
+      outcome: "failed",
+      reservationKey: input.idempotencyKey,
+      reserveCapacity: input.reserveCapacity,
+    });
+    throw error;
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(
@@ -241,14 +299,7 @@ async function sendKapsoMessage(input: {
     response = await input.fetchImpl(
       `${KAPSO_META_API_URL}/${encodeURIComponent(connection.phoneNumberId)}/messages`,
       {
-        body: JSON.stringify(
-          requestBody({
-            idempotencyKey: input.idempotencyKey,
-            recipientBusinessScopedUserId: input.recipientBusinessScopedUserId,
-            recipientPhoneE164: input.recipientPhoneE164,
-            route: input.route,
-          }),
-        ),
+        body: JSON.stringify(body),
         headers: {
           "Content-Type": "application/json",
           "X-API-Key": input.apiKey,
@@ -259,6 +310,14 @@ async function sendKapsoMessage(input: {
       },
     );
   } catch (error) {
+    await settleCapacity({
+      capacityReserved,
+      clinicId: input.clinicId,
+      now: input.now(),
+      outcome: "unknown",
+      reservationKey: input.idempotencyKey,
+      reserveCapacity: input.reserveCapacity,
+    });
     throw new KapsoWhatsAppProviderError({
       ambiguous: true,
       message:
@@ -273,7 +332,20 @@ async function sendKapsoMessage(input: {
   }
 
   const rateLimit = readRateLimit(response.headers);
-  const text = await readResponseText(response);
+  let text: string;
+  try {
+    text = await readResponseText(response);
+  } catch (error) {
+    await settleCapacity({
+      capacityReserved,
+      clinicId: input.clinicId,
+      now: input.now(),
+      outcome: "unknown",
+      reservationKey: input.idempotencyKey,
+      reserveCapacity: input.reserveCapacity,
+    });
+    throw error;
+  }
   const payload = parseJson(text);
   if (!response.ok) {
     const retryable =
@@ -281,7 +353,7 @@ async function sendKapsoMessage(input: {
       response.status === 429 ||
       response.status === 408 ||
       response.status >= 500;
-    throw new KapsoWhatsAppProviderError({
+    const providerError = new KapsoWhatsAppProviderError({
       ambiguous: false,
       message: readProviderError(payload),
       nextAttemptAt:
@@ -292,19 +364,91 @@ async function sendKapsoMessage(input: {
       retryable,
       status: response.status,
     });
+    await settleCapacity({
+      capacityReserved,
+      clinicId: input.clinicId,
+      now: input.now(),
+      outcome: "failed",
+      reservationKey: input.idempotencyKey,
+      reserveCapacity: input.reserveCapacity,
+    });
+    throw providerError;
   }
 
   const providerMessageId = readMessageId(payload);
   if (providerMessageId === null) {
-    throw new KapsoWhatsAppProviderError({
+    const providerError = new KapsoWhatsAppProviderError({
       ambiguous: true,
       message: "Kapso aceptó la solicitud sin devolver el ID del mensaje",
       rateLimit,
       retryable: false,
       status: response.status,
     });
+    await settleCapacity({
+      capacityReserved,
+      clinicId: input.clinicId,
+      now: input.now(),
+      outcome: "unknown",
+      reservationKey: input.idempotencyKey,
+      reserveCapacity: input.reserveCapacity,
+    });
+    throw providerError;
   }
+  await settleCapacity({
+    capacityReserved,
+    clinicId: input.clinicId,
+    now: input.now(),
+    outcome: "accepted",
+    reservationKey: input.idempotencyKey,
+    reserveCapacity: input.reserveCapacity,
+  });
   return { providerMessageId, status: "accepted" };
+}
+
+async function settleCapacity(input: {
+  capacityReserved: boolean;
+  clinicId: string;
+  now: Date;
+  outcome: "accepted" | "delivered" | "failed" | "unknown";
+  reservationKey: string;
+  reserveCapacity?: WhatsAppBillingCapacityStore;
+}) {
+  if (!input.capacityReserved || input.reserveCapacity === undefined) return;
+  try {
+    await input.reserveCapacity.settle({
+      clinicId: input.clinicId,
+      now: input.now,
+      outcome: input.outcome,
+      reservationKey: input.reservationKey,
+    });
+  } catch {
+    // La Reserva sigue `reserved`; el outbox debe volver a intentar con la
+    // misma clave hasta que Kapso y la liquidación converjan.
+    throw new KapsoWhatsAppProviderError({
+      ambiguous: false,
+      message: "No se pudo liquidar la capacidad reservada de Kapso",
+      retryable: true,
+      status: 503,
+    });
+  }
+}
+
+function capacityErrorMessage(
+  reason: Extract<
+    WhatsAppBillingCapacityReservationResult,
+    { reserved: false }
+  >["reason"],
+) {
+  switch (reason) {
+    case "circuit-open":
+      return "La Conexión de WhatsApp está pausada por el circuit breaker";
+    case "credit-exhausted":
+      return "La reserva de crédito de Kapso está agotada";
+    case "quota-exhausted":
+      return "La cuota mensual de mensajes de Kapso está agotada";
+    case "billing-not-ready":
+      return "El billing de Kapso todavía no está verificado";
+  }
 }
 
 function requestBody(input: {

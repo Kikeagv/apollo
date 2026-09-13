@@ -16,6 +16,12 @@ import {
   getWhatsAppReadiness,
   retryWhatsAppReadiness,
 } from "~/server/application/whatsapp-readiness";
+import {
+  getWhatsAppCircuitBreaker,
+  getWhatsAppOperationalMetrics,
+  openWhatsAppCircuitBreaker,
+  reactivateWhatsAppCircuitBreaker,
+} from "~/server/application/whatsapp-circuit-breaker";
 import { protectedProcedure } from "~/server/api/trpc";
 import {
   drizzleSubscriptionSupportStore,
@@ -25,6 +31,7 @@ import {
 import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
+import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
 import {
   listWhatsAppInboundOperationalAlerts,
   resolveWhatsAppInboundOperationalAlert,
@@ -137,10 +144,240 @@ export const apoloRouter = {
         { ...input, actorIdentityId: ctx.session.user.id },
         {
           provider: kapsoReadinessProvider,
+          circuitBreaker: drizzleWhatsAppCircuitBreakerStore,
           store: drizzleWhatsAppReadinessStore,
         },
       ),
     ),
+
+  getWhatsAppCircuitBreaker: protectedProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      getWhatsAppCircuitBreaker(
+        {
+          access: "superadmin",
+          actorIdentityId: ctx.session.user.id,
+          clinicId: input.clinicId,
+        },
+        drizzleWhatsAppCircuitBreakerStore,
+      ),
+    ),
+
+  getWhatsAppOperationalMetrics: protectedProcedure
+    .input(
+      z.object({
+        clinicId: z.string().uuid(),
+        from: z.coerce.date().optional(),
+        to: z.coerce.date().optional(),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      getWhatsAppOperationalMetrics(
+        {
+          actorIdentityId: ctx.session.user.id,
+          clinicId: input.clinicId,
+          from: input.from,
+          to: input.to,
+        },
+        drizzleWhatsAppCircuitBreakerStore,
+      ),
+    ),
+
+  openWhatsAppCircuitBreaker: protectedProcedure
+    .input(
+      z.object({
+        cause: z.enum([
+          "webhook-paused",
+          "high-failure-rate",
+          "credit-exhausted",
+          "quota-exhausted",
+          "provider-error",
+          "meta-error",
+          "legal-block",
+        ]),
+        clinicId: z.string().uuid(),
+        reason: z.string().trim().min(1).max(500),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      openWhatsAppCircuitBreaker(
+        {
+          ...input,
+          actorIdentityId: ctx.session.user.id,
+          actorKind: "superadmin",
+          now: new Date(),
+        },
+        drizzleWhatsAppCircuitBreakerStore,
+      ),
+    ),
+
+  reactivateWhatsAppCircuitBreaker: protectedProcedure
+    .input(
+      z.object({
+        causeFixed: z.literal(true),
+        clinicId: z.string().uuid(),
+        manualConfirmation: z.literal(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actorIdentityId = ctx.session.user.id;
+      const readiness = await getWhatsAppReadiness(
+        {
+          access: "superadmin",
+          actorIdentityId,
+          clinicId: input.clinicId,
+        },
+        drizzleWhatsAppReadinessStore,
+      );
+      const circuit = await getWhatsAppCircuitBreaker(
+        {
+          access: "superadmin",
+          actorIdentityId,
+          clinicId: input.clinicId,
+        },
+        drizzleWhatsAppCircuitBreakerStore,
+      );
+      let latestReadiness = readiness;
+      const connection = latestReadiness.connection;
+      if (
+        circuit.status !== "open" ||
+        connection?.phoneNumberId == null ||
+        readiness.projectWebhook.remoteId === null
+      ) {
+        throw new Error(
+          "La Conexión no tiene evidencia suficiente para ejecutar la prueba sintética",
+        );
+      }
+      const causeGate =
+        circuit.cause === "webhook-paused"
+          ? "webhooks"
+          : circuit.cause === "credit-exhausted"
+            ? "billing"
+            : circuit.cause === "quota-exhausted"
+              ? "billing"
+              : null;
+      const blockedGate = latestReadiness.readiness.gates.find(
+        (gate) =>
+          gate.status !== "ready" &&
+          gate.code !== "number" &&
+          gate.code !== "e2e" &&
+          gate.code !== causeGate,
+      );
+      if (blockedGate !== undefined) {
+        throw new Error(
+          `El gate ${blockedGate.code} todavía no está listo: ${blockedGate.message}`,
+        );
+      }
+      if (circuit.cause === "webhook-paused") {
+        if (
+          latestReadiness.projectWebhook.status !== "ready" ||
+          latestReadiness.phoneNumberWebhook.status !== "ready"
+        ) {
+          throw new Error("Los webhooks de la Conexión todavía están pausados");
+        }
+      } else if (
+        circuit.cause === "credit-exhausted" ||
+        circuit.cause === "quota-exhausted"
+      ) {
+        latestReadiness = await retryWhatsAppReadiness(
+          {
+            action: "billing",
+            actorIdentityId,
+            clinicId: input.clinicId,
+          },
+          {
+            provider: kapsoReadinessProvider,
+            circuitBreaker: drizzleWhatsAppCircuitBreakerStore,
+            store: drizzleWhatsAppReadinessStore,
+          },
+        );
+        const billing = latestReadiness.billing;
+        if (
+          billing.status !== "ready" ||
+          billing.creditCents <= (billing.creditReserveCents ?? 0) ||
+          (circuit.cause === "quota-exhausted" &&
+            billing.kapsoMonthlyQuota !== null &&
+            (billing.kapsoQuotaConsumed ?? 0) +
+              (billing.kapsoQuotaReserved ?? 0) +
+              (billing.kapsoQuotaInFlight ?? 0) >=
+              (billing.kapsoMonthlyQuota ?? 0))
+        ) {
+          throw new Error(
+            circuit.cause === "quota-exhausted"
+              ? "La cuota mensual de Kapso todavía no fue repuesta"
+              : "El crédito de Kapso todavía no fue repuesto",
+          );
+        }
+      } else if (circuit.cause !== "legal-block") {
+        latestReadiness = await retryWhatsAppReadiness(
+          {
+            action: "reactivate",
+            actorIdentityId,
+            clinicId: input.clinicId,
+          },
+          {
+            provider: kapsoReadinessProvider,
+            circuitBreaker: drizzleWhatsAppCircuitBreakerStore,
+            store: drizzleWhatsAppReadinessStore,
+          },
+        );
+        if (latestReadiness.numberHealth !== "healthy") {
+          throw new Error("La salud del número todavía no está recuperada");
+        }
+      }
+      const latestConnection = latestReadiness.connection;
+      if (
+        latestConnection?.phoneNumberId == null ||
+        latestReadiness.projectWebhook.remoteId === null
+      ) {
+        throw new Error(
+          "La Conexión perdió evidencia mientras se verificaba la reactivación",
+        );
+      }
+      const provisioningEventId =
+        latestReadiness.provisioningEventId ??
+        latestConnection.metadata.provisioningEventId ??
+        null;
+      return reactivateWhatsAppCircuitBreaker(
+        {
+          ...input,
+          actorIdentityId,
+          now: new Date(),
+          phoneNumberId: latestConnection.phoneNumberId,
+          projectWebhookId: latestReadiness.projectWebhook.remoteId,
+          connectionEvidence: {
+            connectionUpdatedAt: latestConnection.updatedAt,
+            provisioningEventId,
+            readinessRevision: latestReadiness.revision ?? 0,
+          },
+        },
+        {
+          provider: {
+            runSyntheticTest: async (testInput) => {
+              try {
+                const evidence = await kapsoReadinessProvider.runE2ETest({
+                  phoneNumberId: testInput.phoneNumberId,
+                  projectWebhookId: testInput.projectWebhookId,
+                });
+                return {
+                  evidence: evidence.evidence,
+                  passed: evidence.evidenceScope === "message-roundtrip",
+                };
+              } catch (error) {
+                return {
+                  evidence:
+                    error instanceof Error
+                      ? error.message
+                      : "Prueba sintética fallida",
+                  passed: false,
+                };
+              }
+            },
+          },
+          store: drizzleWhatsAppCircuitBreakerStore,
+        },
+      );
+    }),
 
   prepareKapsoWhatsAppOnboarding: protectedProcedure
     .input(

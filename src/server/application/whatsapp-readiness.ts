@@ -12,10 +12,15 @@ import {
   type WhatsAppWebhookSnapshot,
 } from "~/domain/whatsapp-readiness";
 import {
+  evaluateWhatsAppBillingHealth,
+  type WhatsAppBillingHealth,
+} from "~/domain/whatsapp-circuit-breaker";
+import {
   type WhatsAppConnectionAlert,
   type WhatsAppConnectionAlertGate,
 } from "~/domain/whatsapp-connection-alert";
 import type { WhatsAppConnection } from "~/domain/whatsapp-connection";
+import type { WhatsAppCircuitBreakerStore } from "./whatsapp-circuit-breaker";
 
 export type WhatsAppReadinessAction =
   "templates" | "billing" | "e2e" | "webhooks" | "reactivate";
@@ -64,6 +69,7 @@ export type WhatsAppReadinessRecord = {
 };
 
 export type WhatsAppReadinessSnapshot = WhatsAppReadinessRecord & {
+  billingHealth: WhatsAppBillingHealth;
   readiness: WhatsAppReadinessResult;
 };
 
@@ -108,7 +114,7 @@ export type WhatsAppReadinessProvisioningStore = {
     phoneNumberId: string;
     projectId: string;
     state: WhatsAppReadinessRecord;
-  }): Promise<void>;
+  }): Promise<WhatsAppReadinessRecord>;
   syncAlerts(input: WhatsAppReadinessAlertSyncInput): Promise<void>;
 };
 
@@ -121,7 +127,7 @@ export type WhatsAppReadinessStore = {
     expectedRevision: number;
     expectedConnectionUpdatedAt: Date | null;
     state: WhatsAppReadinessRecord;
-  }): Promise<void>;
+  }): Promise<WhatsAppReadinessRecord>;
   readForProvisioning?: WhatsAppReadinessProvisioningStore["readForProvisioning"];
   saveForProvisioning?: WhatsAppReadinessProvisioningStore["saveForProvisioning"];
   openAlert?: WhatsAppReadinessProvisioningStore["openAlert"];
@@ -219,6 +225,7 @@ export async function retryWhatsAppReadiness(
     now?: Date;
     provider: WhatsAppReadinessProvider;
     store: WhatsAppReadinessStore;
+    circuitBreaker?: WhatsAppCircuitBreakerStore;
   },
 ): Promise<WhatsAppReadinessSnapshot> {
   const access: WhatsAppReadinessAccess = {
@@ -263,7 +270,7 @@ export async function retryWhatsAppReadiness(
     if (!(error instanceof WhatsAppReadinessBlockedError)) {
       next = markActionFailed(next, input.action, error, now);
     }
-    next = withDerivedState(next, now, false);
+    next = withDerivedState(next, now, false, true);
     if (next.connection !== null) {
       await dependencies.store.save({
         access: "superadmin",
@@ -277,12 +284,23 @@ export async function retryWhatsAppReadiness(
         access: "superadmin",
         actorIdentityId: input.actorIdentityId,
       });
+      if (
+        dependencies.circuitBreaker !== undefined &&
+        !(error instanceof WhatsAppReadinessBlockedError)
+      ) {
+        await dependencies.circuitBreaker.recordFailure({
+          cause: "provider-error",
+          clinicId: input.clinicId,
+          now,
+          reason: toErrorMessage(error),
+        });
+      }
     }
     throw error;
   }
 
-  next = withDerivedState(next, now, input.action === "reactivate");
-  await dependencies.store.save({
+  next = withDerivedState(next, now, input.action === "reactivate", true);
+  next = await dependencies.store.save({
     access: "superadmin",
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
@@ -294,6 +312,21 @@ export async function retryWhatsAppReadiness(
     access: "superadmin",
     actorIdentityId: input.actorIdentityId,
   });
+  await openCreditCircuitIfExhausted({
+    action: input.action,
+    actorIdentityId: input.actorIdentityId,
+    circuitBreaker: dependencies.circuitBreaker,
+    clinicId: input.clinicId,
+    now,
+    state: next,
+  });
+  if (
+    input.action === "billing" &&
+    dependencies.circuitBreaker !== undefined &&
+    isCreditExhausted(next.billing)
+  ) {
+    return getWhatsAppReadiness(access, dependencies.store);
+  }
   return toSnapshot(next, now);
 }
 
@@ -310,6 +343,7 @@ export async function provisionWhatsAppReadiness(
   dependencies: {
     provider: WhatsAppReadinessProvider;
     store: WhatsAppReadinessProvisioningStore;
+    circuitBreaker?: WhatsAppCircuitBreakerStore;
   },
 ): Promise<WhatsAppReadinessSnapshot> {
   const state = await dependencies.store.readForProvisioning(input);
@@ -323,9 +357,9 @@ export async function provisionWhatsAppReadiness(
   }
 
   const now = input.now;
-  let next = withDerivedState(cloneState(state), now, true);
+  let next = withDerivedState(cloneState(state), now, true, true);
   let retryableFailure: string | null = null;
-  await saveProvisioningReadiness(next, input, dependencies.store);
+  next = await saveProvisioningReadiness(next, input, dependencies.store);
 
   for (const action of ["templates", "billing", "e2e"] as const) {
     try {
@@ -344,8 +378,16 @@ export async function provisionWhatsAppReadiness(
         }
       }
     }
-    next = withDerivedState(next, now, true);
-    await saveProvisioningReadiness(next, input, dependencies.store);
+    next = withDerivedState(next, now, true, true);
+    next = await saveProvisioningReadiness(next, input, dependencies.store);
+    await openCreditCircuitIfExhausted({
+      action,
+      circuitBreaker: dependencies.circuitBreaker,
+      clinicId: input.clinicId,
+      now,
+      state: next,
+      workerKind: "provisioning",
+    });
   }
 
   if (retryableFailure !== null && next.technicalStatus !== "blocked") {
@@ -367,7 +409,7 @@ async function saveProvisioningReadiness(
   },
   store: WhatsAppReadinessProvisioningStore,
 ) {
-  await store.saveForProvisioning({
+  const persisted = await store.saveForProvisioning({
     clinicId: input.clinicId,
     eventId: input.eventId,
     leaseToken: input.leaseToken,
@@ -375,10 +417,11 @@ async function saveProvisioningReadiness(
     projectId: input.projectId,
     state,
   });
-  await syncReadinessAlerts(store, state, input.now, {
+  await syncReadinessAlerts(store, persisted, input.now, {
     access: "provisioning-worker",
     leaseToken: input.leaseToken,
   });
+  return persisted;
 }
 
 async function syncReadinessAlerts(
@@ -452,6 +495,50 @@ function assertConnectionForAction(
       "Kapso todavía no confirmó el Business Account de la Clínica",
     );
   }
+}
+
+async function openCreditCircuitIfExhausted(input: {
+  action: WhatsAppReadinessAction;
+  actorIdentityId?: string;
+  circuitBreaker?: WhatsAppCircuitBreakerStore;
+  clinicId: string;
+  now: Date;
+  state: WhatsAppReadinessRecord;
+  workerKind?: "provisioning";
+}) {
+  if (input.action !== "billing" || input.circuitBreaker === undefined) return;
+  const cause = isCreditExhausted(input.state.billing)
+    ? "credit-exhausted"
+    : isQuotaExhausted(input.state.billing)
+      ? "quota-exhausted"
+      : null;
+  if (cause === null) return;
+  await input.circuitBreaker.open({
+    actorIdentityId: input.actorIdentityId ?? null,
+    actorKind: input.workerKind === undefined ? "superadmin" : "worker",
+    cause,
+    clinicId: input.clinicId,
+    now: input.now,
+    reason: "La reserva de crédito de Kapso está agotada",
+    workerKind: input.workerKind,
+  });
+}
+
+function isCreditExhausted(billing: WhatsAppReadinessBilling) {
+  return (
+    billing.status === "ready" &&
+    billing.creditCents <= (billing.creditReserveCents ?? 0)
+  );
+}
+
+function isQuotaExhausted(billing: WhatsAppReadinessBilling) {
+  return (
+    billing.kapsoMonthlyQuota !== null &&
+    (billing.kapsoQuotaConsumed ?? 0) +
+      (billing.kapsoQuotaReserved ?? 0) +
+      (billing.kapsoQuotaInFlight ?? 0) >=
+      (billing.kapsoMonthlyQuota ?? 0)
+  );
 }
 
 async function applyAction(
@@ -663,6 +750,7 @@ function withDerivedState(
   state: WhatsAppReadinessRecord,
   now: Date,
   allowConnectionRecovery = false,
+  touchConnection = false,
 ): WhatsAppReadinessRecord {
   const readiness = evaluateWhatsAppReadiness(
     toEvaluationInput(state, allowConnectionRecovery, now),
@@ -691,7 +779,7 @@ function withDerivedState(
             state.connection.status,
             readiness.status,
           ),
-          updatedAt: now,
+          updatedAt: touchConnection ? now : state.connection.updatedAt,
         };
 
   return {
@@ -758,6 +846,16 @@ function toSnapshot(
 ): WhatsAppReadinessSnapshot {
   return {
     ...state,
+    billingHealth: evaluateWhatsAppBillingHealth({
+      creditCents: state.billing.creditCents,
+      creditLimitCents: state.billing.creditLimitCents ?? null,
+      criticalAutonomyDays: state.billing.criticalAutonomyDays,
+      criticalBalancePercent: state.billing.criticalBalancePercent,
+      estimatedDailyConsumptionCents:
+        state.billing.estimatedDailyConsumptionCents ?? 0,
+      warningAutonomyDays: state.billing.warningAutonomyDays,
+      warningBalancePercent: state.billing.warningBalancePercent,
+    }),
     readiness: evaluateWhatsAppReadiness(toEvaluationInput(state, false, now)),
   };
 }

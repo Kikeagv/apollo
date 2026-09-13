@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { WhatsAppOutboundReplyStore } from "./whatsapp-outbound";
 import { runWhatsAppOutboundReplyWorker } from "./whatsapp-outbound";
+import { WhatsAppCircuitBreakerOpenError } from "./whatsapp-provider";
 
 const reply = {
   attempts: 1,
@@ -16,6 +17,42 @@ const reply = {
 };
 
 describe("worker outbound de respuestas WhatsApp", () => {
+  it("conserva la respuesta pendiente si el circuito se abre antes de Kapso", async () => {
+    const deferReplyForCircuit = vi
+      .fn<NonNullable<WhatsAppOutboundReplyStore["deferReplyForCircuit"]>>()
+      .mockResolvedValue(undefined);
+    const scheduleReplyRetry = vi
+      .fn<WhatsAppOutboundReplyStore["scheduleReplyRetry"]>()
+      .mockResolvedValue(undefined);
+    const store = {
+      claimDueReplies: vi.fn().mockResolvedValue([reply]),
+      deferReplyForCircuit,
+      markAcceptedReply: vi.fn(),
+      markFailedReply: vi.fn(),
+      markUnknownReply: vi.fn(),
+      scheduleReplyRetry,
+    };
+
+    await expect(
+      runWhatsAppOutboundReplyWorker(
+        { now: new Date("2026-09-09T12:00:00.000Z") },
+        store,
+        {
+          send: vi
+            .fn()
+            .mockRejectedValue(new WhatsAppCircuitBreakerOpenError("clinic-1")),
+        },
+      ),
+    ).resolves.toMatchObject({ claimed: 1, retried: 1 });
+
+    const deferredCall = deferReplyForCircuit.mock.calls[0]?.[0];
+    expect(deferredCall?.id).toBe("reply-1");
+    expect(deferredCall?.leaseToken).toBe("lease-1");
+    expect(deferredCall?.now).toEqual(new Date("2026-09-09T12:00:00.000Z"));
+    expect(deferredCall?.reason).toContain("circuit breaker");
+    expect(scheduleReplyRetry).not.toHaveBeenCalled();
+  });
+
   it("persiste el ID de Kapso y no reenvía desde el worker de estado", async () => {
     const store = {
       claimDueReplies: vi.fn().mockResolvedValue([reply]),

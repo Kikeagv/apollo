@@ -568,6 +568,13 @@
       "when": 1789231217000,
       "tag": "0081_apo88_whatsapp_takeover_message_type",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1789231218000,
+      "tag": "0082_apo91_circuit_breaker_metrics",
+      "breakpoints": true
     }
   ]
 }

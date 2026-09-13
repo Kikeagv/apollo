@@ -272,6 +272,65 @@ describe("adaptador de provisión de Kapso", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("detecta un webhook remoto pausado aunque Kapso acepte la reparación", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                active: false,
+                buffer_enabled: false,
+                events: ["whatsapp.phone_number.created"],
+                id: "phone-webhook-paused",
+                kind: "kapso",
+                phone_number_id: "phone-1",
+                url: "https://app.usepraxia.com/api/webhooks/kapso",
+              },
+            ],
+            meta: { total_pages: 1 },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              active: true,
+              buffer_enabled: false,
+              events: [
+                "whatsapp.message.received",
+                "whatsapp.message.sent",
+                "whatsapp.message.delivered",
+                "whatsapp.message.read",
+                "whatsapp.message.failed",
+                "whatsapp.conversation.created",
+                "whatsapp.conversation.ended",
+                "whatsapp.conversation.inactive",
+                "whatsapp.contact.identity_changed",
+              ],
+              id: "phone-webhook-paused",
+              kind: "kapso",
+              phone_number_id: "phone-1",
+              url: "https://app.usepraxia.com/api/webhooks/kapso",
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    const provider = createKapsoProvisioningProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+      secretKey: "webhook-secret",
+      webhookUrl: "https://app.usepraxia.com/api/webhooks/kapso",
+    });
+
+    await expect(provider.ensurePhoneNumberWebhook("phone-1")).resolves.toEqual(
+      { remoteId: "phone-webhook-paused", wasPaused: true },
+    );
+  });
+
   it("convierte un 503 en un error clasificable para reintento", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

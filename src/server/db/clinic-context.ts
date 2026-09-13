@@ -267,6 +267,35 @@ export async function inWhatsAppOutboundWorkerTransaction<T>(
   });
 }
 
+/** Fija la Clínica de una fila ya seleccionada por un worker multi-Clínica. */
+export async function setWhatsAppWorkerClinicContext(
+  transaction: ClinicTransaction,
+  clinicId: string,
+) {
+  await transaction.execute(
+    sql`select set_config('app.clinic_id', ${clinicId}, true)`,
+  );
+  const clinic = await transaction.query.clinics.findFirst({
+    columns: { subscriptionStatus: true },
+    where: eq(clinics.id, clinicId),
+  });
+  if (clinic === undefined) return false;
+  await transaction.execute(
+    sql`select set_config('app.subscription_status', ${clinic.subscriptionStatus}, true)`,
+  );
+  return clinic.subscriptionStatus === "active";
+}
+
+/** Serializa las transiciones del circuito con las reservas de capacidad. */
+export async function lockWhatsAppCircuit(
+  transaction: ClinicTransaction,
+  clinicId: string,
+) {
+  await transaction.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${"whatsapp-circuit:" + clinicId}))`,
+  );
+}
+
 /** Contexto separado para reclamar únicamente estados de entrega de Kapso. */
 export async function inWhatsAppDeliveryStatusWorkerTransaction<T>(
   operation: (transaction: ClinicTransaction) => Promise<T>,

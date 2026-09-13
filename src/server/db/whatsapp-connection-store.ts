@@ -10,7 +10,10 @@ import {
 } from "~/domain/whatsapp-readiness";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 import type { WhatsAppConnectionReader } from "~/server/application/whatsapp-connections";
-import { WhatsAppConnectionRequiredError } from "~/server/application/whatsapp-provider";
+import {
+  WhatsAppCircuitBreakerOpenError,
+  WhatsAppConnectionRequiredError,
+} from "~/server/application/whatsapp-provider";
 import {
   inClinicTransaction,
   inWhatsAppProviderTransaction,
@@ -18,6 +21,7 @@ import {
 import {
   clinicUsers,
   whatsappConnections,
+  whatsappCircuitBreakers,
   whatsappBilling,
   whatsappCriticalTemplates,
   whatsappReadiness,
@@ -67,7 +71,7 @@ export async function requireWhatsAppConnectionReady(input: {
       });
       if (connection === undefined) return undefined;
       if (input.provider === "kapso") {
-        const [readiness, billing, templates] = await Promise.all([
+        const [readiness, billing, templates, circuit] = await Promise.all([
           transaction.query.whatsappReadiness.findFirst({
             where: eq(whatsappReadiness.clinicId, input.clinicId),
           }),
@@ -77,7 +81,16 @@ export async function requireWhatsAppConnectionReady(input: {
           transaction.query.whatsappCriticalTemplates.findMany({
             where: eq(whatsappCriticalTemplates.clinicId, input.clinicId),
           }),
+          transaction.query.whatsappCircuitBreakers.findFirst({
+            where: eq(whatsappCircuitBreakers.clinicId, input.clinicId),
+          }),
         ]);
+        if (circuit?.status === "open") {
+          throw new WhatsAppCircuitBreakerOpenError(
+            input.clinicId,
+            circuit.reason,
+          );
+        }
         const billingStatus =
           readiness?.billingSyncStatus === "failed" ||
           billing?.status === "failed"
@@ -93,6 +106,18 @@ export async function requireWhatsAppConnectionReady(input: {
             chargesSeparated: billing?.chargesSeparated ?? false,
             consumedCents: billing?.consumedCents ?? 0,
             creditCents: billing?.creditCents ?? 0,
+            creditLimitCents: billing?.creditLimitCents ?? null,
+            creditReserveCents: billing?.creditReserveCents ?? null,
+            estimatedDailyConsumptionCents:
+              billing?.estimatedDailyConsumptionCents ?? 0,
+            warningBalancePercent: billing?.warningBalancePercent ?? 20,
+            criticalBalancePercent: billing?.criticalBalancePercent ?? 10,
+            warningAutonomyDays: billing?.warningAutonomyDays ?? 7,
+            criticalAutonomyDays: billing?.criticalAutonomyDays ?? 3,
+            kapsoMonthlyQuota: billing?.kapsoMonthlyQuota ?? null,
+            kapsoQuotaPeriod: billing?.kapsoQuotaPeriod ?? null,
+            kapsoQuotaConsumed: billing?.kapsoQuotaConsumed ?? 0,
+            kapsoQuotaReserved: billing?.kapsoQuotaReserved ?? 0,
             metaChargesCents: billing?.metaChargesCents ?? null,
             mode: billing?.mode ?? "unknown",
             platformChargesCents: billing?.platformChargesCents ?? null,

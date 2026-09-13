@@ -12,16 +12,19 @@ import {
   isWhatsAppOperationalFailure,
   type WhatsAppConnectionAlert,
 } from "~/domain/whatsapp-connection-alert";
+import { reconcileWhatsAppQuotaConsumption } from "~/domain/whatsapp-circuit-breaker";
 import {
   inClinicTransaction,
   inWhatsAppProvisioningWorkerTransaction,
   inSuperadminTransaction,
+  lockWhatsAppCircuit,
   type ClinicTransaction,
 } from "~/server/db/clinic-context";
 import {
   clinics,
   clinicUsers,
   whatsappBilling,
+  whatsappCircuitBreakers,
   whatsappConnections,
   whatsappConnectionAlerts,
   whatsappCriticalTemplates,
@@ -136,6 +139,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
         await transaction
           .update(whatsappWebhookEvents)
           .set({
+            attempts: 0,
             lastError: null,
             leaseExpiresAt: null,
             leaseToken: null,
@@ -166,7 +170,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
     }
     const stateConnection = input.state.connection;
 
-    await inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+    return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
       await assertActiveProvisioningLease(
         transaction,
         input.eventId,
@@ -186,6 +190,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
         input.clinicId,
         clinic.subscriptionStatus,
       );
+      await lockWhatsAppCircuit(transaction, input.clinicId);
 
       const [persistedConnection] = await transaction
         .select()
@@ -208,12 +213,15 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
             persistedConnection.metadata,
             stateConnection.metadata,
           ),
-          status: stateConnection.status,
+          status: (await isCircuitOpen(transaction, input.clinicId))
+            ? "blocked"
+            : stateConnection.status,
           updatedAt: stateConnection.updatedAt,
         })
         .where(eq(whatsappConnections.clinicId, input.clinicId));
 
       await persistReadinessState(transaction, input.state);
+      return readRecord(transaction, input.clinicId, false);
     });
   },
 
@@ -247,7 +255,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
       await inWhatsAppProvisioningWorkerTransaction(operation);
       return;
     }
-    await inSuperadminTransaction(input.actorIdentityId, operation);
+    return inSuperadminTransaction(input.actorIdentityId, operation);
   },
 
   async save(input) {
@@ -255,9 +263,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
       throw new Error("El estado de readiness no pertenece a la Clínica");
     }
     const operation = async (transaction: ClinicTransaction) => {
-      await transaction.execute(
-        sql`select pg_advisory_xact_lock(hashtext(${input.clinicId}))`,
-      );
+      await lockWhatsAppCircuit(transaction, input.clinicId);
       const persistedReadiness =
         await transaction.query.whatsappReadiness.findFirst({
           where: eq(whatsappReadiness.clinicId, input.clinicId),
@@ -329,18 +335,21 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
         .set({
           lastTestAt: connection.lastTestAt,
           metadata,
-          status: connection.status,
+          status: (await isCircuitOpen(transaction, input.clinicId))
+            ? "blocked"
+            : connection.status,
           updatedAt: connection.updatedAt,
         })
         .where(eq(whatsappConnections.clinicId, input.clinicId));
 
       await persistReadinessState(transaction, input.state);
+      return readRecord(transaction, input.clinicId, false);
     };
 
     if (input.access !== "superadmin") {
       throw new Error("Solo un superadmin puede actualizar readiness");
     }
-    await inSuperadminTransaction(input.actorIdentityId, operation);
+    return inSuperadminTransaction(input.actorIdentityId, operation);
   },
 };
 
@@ -498,10 +507,96 @@ function mergeOperationalMetadata(
   return publicWhatsAppConnectionMetadata({ ...current, ...next });
 }
 
+async function isCircuitOpen(transaction: ClinicTransaction, clinicId: string) {
+  const circuit = await transaction.query.whatsappCircuitBreakers.findFirst({
+    columns: { status: true },
+    where: eq(whatsappCircuitBreakers.clinicId, clinicId),
+  });
+  return circuit?.status === "open";
+}
+
 async function persistReadinessState(
   transaction: ClinicTransaction,
   state: WhatsAppReadinessRecord,
 ) {
+  await lockWhatsAppCircuit(transaction, state.clinicId);
+  const [persistedBilling] = await transaction
+    .select()
+    .from(whatsappBilling)
+    .where(eq(whatsappBilling.clinicId, state.clinicId))
+    .for("update");
+  const incomingBillingSnapshotIsOlder =
+    persistedBilling !== undefined &&
+    persistedBilling.lastSyncedAt !== null &&
+    (state.billing.lastSyncedAt === null ||
+      persistedBilling.lastSyncedAt > state.billing.lastSyncedAt);
+  const localConsumedSinceSnapshot =
+    persistedBilling !== undefined &&
+    state.billing.consumedCents < persistedBilling.consumedCents
+      ? persistedBilling.consumedCents - state.billing.consumedCents
+      : 0;
+  const creditCents =
+    incomingBillingSnapshotIsOlder && persistedBilling !== undefined
+      ? persistedBilling.creditCents
+      : Math.max(0, state.billing.creditCents - localConsumedSinceSnapshot);
+  const billingSnapshotValues =
+    incomingBillingSnapshotIsOlder && persistedBilling !== undefined
+      ? {
+          alertThresholdCents: persistedBilling.alertThresholdCents,
+          chargesSeparated: persistedBilling.chargesSeparated,
+          creditLimitCents: persistedBilling.creditLimitCents,
+          creditReserveCents: persistedBilling.creditReserveCents,
+          estimatedDailyConsumptionCents:
+            persistedBilling.estimatedDailyConsumptionCents,
+          warningBalancePercent: persistedBilling.warningBalancePercent,
+          criticalBalancePercent: persistedBilling.criticalBalancePercent,
+          warningAutonomyDays: persistedBilling.warningAutonomyDays,
+          criticalAutonomyDays: persistedBilling.criticalAutonomyDays,
+          kapsoMonthlyQuota: persistedBilling.kapsoMonthlyQuota,
+          kapsoQuotaPeriod: persistedBilling.kapsoQuotaPeriod,
+          kapsoQuotaReserved: persistedBilling.kapsoQuotaReserved,
+          lastError: persistedBilling.lastError,
+          lastSyncedAt: persistedBilling.lastSyncedAt,
+          metaChargesCents: persistedBilling.metaChargesCents,
+          mode: persistedBilling.mode,
+          platformChargesCents: persistedBilling.platformChargesCents,
+          status: persistedBilling.status,
+        }
+      : {
+          alertThresholdCents: state.billing.alertThresholdCents,
+          chargesSeparated: state.billing.chargesSeparated,
+          creditLimitCents: state.billing.creditLimitCents ?? null,
+          creditReserveCents: state.billing.creditReserveCents ?? null,
+          estimatedDailyConsumptionCents:
+            state.billing.estimatedDailyConsumptionCents ?? 0,
+          warningBalancePercent: state.billing.warningBalancePercent ?? 20,
+          criticalBalancePercent: state.billing.criticalBalancePercent ?? 10,
+          warningAutonomyDays: state.billing.warningAutonomyDays ?? 7,
+          criticalAutonomyDays: state.billing.criticalAutonomyDays ?? 3,
+          kapsoMonthlyQuota: state.billing.kapsoMonthlyQuota ?? null,
+          kapsoQuotaPeriod:
+            state.billing.kapsoQuotaPeriod ??
+            persistedBilling?.kapsoQuotaPeriod ??
+            null,
+          kapsoQuotaReserved: state.billing.kapsoQuotaReserved ?? 0,
+          lastError: state.billing.lastError,
+          lastSyncedAt: state.billing.lastSyncedAt,
+          metaChargesCents: state.billing.metaChargesCents ?? null,
+          mode: state.billing.mode,
+          platformChargesCents: state.billing.platformChargesCents ?? null,
+          status: state.billing.status,
+        };
+  const billingUpdatedAt =
+    incomingBillingSnapshotIsOlder && persistedBilling !== undefined
+      ? persistedBilling.updatedAt
+      : new Date();
+  const kapsoQuotaConsumed = reconcileWhatsAppQuotaConsumption({
+    incomingConsumed: state.billing.kapsoQuotaConsumed ?? 0,
+    incomingPeriod: state.billing.kapsoQuotaPeriod,
+    incomingSnapshotIsOlder: incomingBillingSnapshotIsOlder,
+    persistedConsumed: persistedBilling?.kapsoQuotaConsumed ?? 0,
+    persistedPeriod: persistedBilling?.kapsoQuotaPeriod,
+  });
   await transaction
     .insert(whatsappReadiness)
     .values(toReadinessRow(state))
@@ -571,33 +666,28 @@ async function persistReadinessState(
   await transaction
     .insert(whatsappBilling)
     .values({
-      alertThresholdCents: state.billing.alertThresholdCents,
-      chargesSeparated: state.billing.chargesSeparated,
+      ...billingSnapshotValues,
       clinicId: state.clinicId,
       consumedCents: state.billing.consumedCents,
-      creditCents: state.billing.creditCents,
-      metaChargesCents: state.billing.metaChargesCents ?? null,
-      lastError: state.billing.lastError,
-      lastSyncedAt: state.billing.lastSyncedAt,
-      mode: state.billing.mode,
-      platformChargesCents: state.billing.platformChargesCents ?? null,
-      status: state.billing.status,
-      updatedAt: new Date(),
+      creditCents,
+      kapsoQuotaConsumed,
+      updatedAt: billingUpdatedAt,
     })
     .onConflictDoUpdate({
       target: whatsappBilling.clinicId,
       set: {
-        alertThresholdCents: state.billing.alertThresholdCents,
-        chargesSeparated: state.billing.chargesSeparated,
-        consumedCents: state.billing.consumedCents,
-        creditCents: state.billing.creditCents,
-        metaChargesCents: state.billing.metaChargesCents ?? null,
-        lastError: state.billing.lastError,
-        lastSyncedAt: state.billing.lastSyncedAt,
-        mode: state.billing.mode,
-        platformChargesCents: state.billing.platformChargesCents ?? null,
-        status: state.billing.status,
-        updatedAt: new Date(),
+        ...billingSnapshotValues,
+        consumedCents: sql`greatest(${whatsappBilling.consumedCents}, ${state.billing.consumedCents})`,
+        creditCents,
+        kapsoQuotaConsumed,
+        metaChargesCents:
+          incomingBillingSnapshotIsOlder && persistedBilling !== undefined
+            ? persistedBilling.metaChargesCents
+            : state.billing.metaChargesCents === null ||
+                state.billing.metaChargesCents === undefined
+              ? whatsappBilling.metaChargesCents
+              : sql`greatest(coalesce(${whatsappBilling.metaChargesCents}, 0), ${state.billing.metaChargesCents})`,
+        updatedAt: billingUpdatedAt,
       },
     });
 }
@@ -752,6 +842,20 @@ function toRecord(input: {
       chargesSeparated: input.billing?.chargesSeparated ?? false,
       consumedCents: input.billing?.consumedCents ?? 0,
       creditCents: input.billing?.creditCents ?? 0,
+      creditInFlightCents: input.billing?.creditInFlightCents ?? 0,
+      creditLimitCents: input.billing?.creditLimitCents ?? null,
+      creditReserveCents: input.billing?.creditReserveCents ?? null,
+      estimatedDailyConsumptionCents:
+        input.billing?.estimatedDailyConsumptionCents ?? 0,
+      warningBalancePercent: input.billing?.warningBalancePercent ?? 20,
+      criticalBalancePercent: input.billing?.criticalBalancePercent ?? 10,
+      warningAutonomyDays: input.billing?.warningAutonomyDays ?? 7,
+      criticalAutonomyDays: input.billing?.criticalAutonomyDays ?? 3,
+      kapsoMonthlyQuota: input.billing?.kapsoMonthlyQuota ?? null,
+      kapsoQuotaPeriod: input.billing?.kapsoQuotaPeriod ?? null,
+      kapsoQuotaConsumed: input.billing?.kapsoQuotaConsumed ?? 0,
+      kapsoQuotaReserved: input.billing?.kapsoQuotaReserved ?? 0,
+      kapsoQuotaInFlight: input.billing?.kapsoQuotaInFlight ?? 0,
       lastError: input.billing?.lastError ?? null,
       lastSyncedAt: input.billing?.lastSyncedAt ?? null,
       metaChargesCents: input.billing?.metaChargesCents ?? null,

@@ -1,4 +1,10 @@
 import type { WhatsAppInboundReplySender } from "./whatsapp-inbound";
+import {
+  persistWhatsAppOperationalMetric,
+  WhatsAppOperationalMetricPersistenceError,
+  type WhatsAppOperationalObserver,
+} from "./whatsapp-circuit-breaker";
+import { WhatsAppCircuitBreakerOpenError } from "./whatsapp-provider";
 import type { WhatsAppSendResult } from "./whatsapp-provider";
 
 export type WhatsAppOutboundReply = Parameters<
@@ -32,6 +38,12 @@ export type WhatsAppOutboundReplyStore = {
     now: Date;
     reason: string;
   }): Promise<void>;
+  deferReplyForCircuit?(input: {
+    id: string;
+    leaseToken: string;
+    now: Date;
+    reason: string;
+  }): Promise<void>;
   scheduleReplyRetry(input: {
     id: string;
     leaseToken: string;
@@ -57,6 +69,7 @@ export async function runWhatsAppOutboundReplyWorker(
   input: { limit?: number; now: Date },
   store: WhatsAppOutboundReplyStore,
   provider: WhatsAppOutboundReplyProvider,
+  observer?: WhatsAppOperationalObserver,
 ) {
   const replies = await store.claimDueReplies({
     limit: input.limit ?? 50,
@@ -67,6 +80,7 @@ export async function runWhatsAppOutboundReplyWorker(
   let retried = 0;
   let unknown = 0;
   for (const reply of replies) {
+    const startedAt = Date.now();
     const leaseToken = requireLeaseToken(reply);
     if (
       reply.serviceWindowExpiresAt !== undefined &&
@@ -87,6 +101,59 @@ export async function runWhatsAppOutboundReplyWorker(
       result = await provider.send(reply);
     } catch (error) {
       const outboundError = toOutboundError(error);
+      if (outboundError instanceof WhatsAppCircuitBreakerOpenError) {
+        if (store.deferReplyForCircuit === undefined) {
+          await store.scheduleReplyRetry({
+            id: reply.id,
+            leaseToken,
+            nextAttemptAt: nextReplyAttemptAt(
+              outboundError,
+              input.now,
+              reply.attempts,
+            ),
+            reason: outboundError.message,
+            retriedAt: input.now,
+          });
+        } else {
+          await store.deferReplyForCircuit({
+            id: reply.id,
+            leaseToken,
+            now: input.now,
+            reason: outboundError.message,
+          });
+        }
+        retried += 1;
+        continue;
+      }
+      try {
+        await observeReply({
+          error: outboundError,
+          now: input.now,
+          observer,
+          outcome: outboundError.ambiguous === true ? "unknown" : "failed",
+          reply,
+          startedAt,
+        });
+      } catch (observationError) {
+        if (
+          observationError instanceof WhatsAppOperationalMetricPersistenceError
+        ) {
+          await store.scheduleReplyRetry({
+            id: reply.id,
+            leaseToken,
+            nextAttemptAt: nextReplyAttemptAt(
+              observationError,
+              input.now,
+              reply.attempts,
+            ),
+            reason: observationError.message,
+            retriedAt: input.now,
+          });
+          retried += 1;
+          continue;
+        }
+        throw observationError;
+      }
       if (outboundError.ambiguous === true) {
         await store.markUnknownReply({
           id: reply.id,
@@ -121,6 +188,13 @@ export async function runWhatsAppOutboundReplyWorker(
     }
 
     try {
+      await observeReply({
+        now: input.now,
+        observer,
+        outcome: "accepted",
+        reply,
+        startedAt,
+      });
       await store.markAcceptedReply({
         id: reply.id,
         leaseToken,
@@ -129,8 +203,30 @@ export async function runWhatsAppOutboundReplyWorker(
       });
       accepted += 1;
     } catch (error) {
+      if (error instanceof WhatsAppOperationalMetricPersistenceError) {
+        await store.scheduleReplyRetry({
+          id: reply.id,
+          leaseToken,
+          nextAttemptAt: nextReplyAttemptAt(error, input.now, reply.attempts),
+          reason: error.message,
+          retriedAt: input.now,
+        });
+        retried += 1;
+        continue;
+      }
       // Kapso ya pudo enviar; reintentar por un fallo de persistencia duplicaría
       // la respuesta. Se deja en reconciliación por el callback del proveedor.
+      await observeReply({
+        error:
+          error instanceof Error
+            ? error
+            : new Error("No se pudo persistir el resultado del proveedor"),
+        now: input.now,
+        observer,
+        outcome: "unknown",
+        reply,
+        startedAt,
+      });
       await store.markUnknownReply({
         id: reply.id,
         leaseToken,
@@ -173,4 +269,40 @@ function toOutboundError(error: unknown): WhatsAppOutboundError {
     return error;
   }
   return new Error("No se pudo enviar la respuesta de WhatsApp");
+}
+
+async function observeReply(input: {
+  error?: Error;
+  now: Date;
+  observer?: WhatsAppOperationalObserver;
+  outcome: "accepted" | "failed" | "unknown";
+  reply: WhatsAppOutboundReply;
+  startedAt: number;
+}) {
+  if (input.observer === undefined) return;
+  const errorCode = input.error?.name ?? null;
+  await persistWhatsAppOperationalMetric(input.observer, {
+    clinicId: input.reply.clinicId,
+    errorCode,
+    idempotencyKey: `reply:${input.reply.idempotencyKey}:${input.reply.attempts}:${input.outcome}`,
+    latencyMs: Math.max(0, Date.now() - input.startedAt),
+    metric: {
+      category:
+        input.reply.buttonLabel === undefined ? "message" : "interactive",
+      direction: "outbound",
+    },
+    occurredAt: input.now,
+    operation: "inbound-reply",
+    outcome: input.outcome,
+    workerKind: "outbound",
+  });
+  if (input.error !== undefined && input.outcome !== "accepted") {
+    await input.observer.recordFailure({
+      cause: "high-failure-rate",
+      clinicId: input.reply.clinicId,
+      now: input.now,
+      reason: input.error.message,
+      workerKind: "outbound",
+    });
+  }
 }

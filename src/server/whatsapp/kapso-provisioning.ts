@@ -103,6 +103,7 @@ export function createKapsoProvisioningProvider(
         );
         return {
           remoteId: parseWebhookResponse(updated).id,
+          ...(existing.active === false ? { wasPaused: true } : {}),
         };
       }
 
@@ -161,6 +162,7 @@ export function createKapsoProvisioningProvider(
         );
         return {
           remoteId: parseWebhookResponse(updated).id,
+          ...(existing.active === false ? { wasPaused: true } : {}),
         };
       }
 

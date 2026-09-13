@@ -85,6 +85,110 @@ describe("worker de estados de Entrega transaccional", () => {
     });
   });
 
+  it("publica el estado persistido como métrica operacional", async () => {
+    const event = {
+      attempts: 1,
+      eventName: "whatsapp.message.delivered",
+      id: "event-1",
+      idempotencyKey: "kapso-event-1",
+      leaseToken: "lease-1",
+      payload: {
+        message: { id: "wamid-1" },
+        phone_number_id: "phone-1",
+      },
+      status: "processing" as const,
+    };
+    const queue = {
+      claimDueStatusEvents: vi.fn().mockResolvedValue([event]),
+      markStatusProcessed: vi.fn().mockResolvedValue(undefined),
+      markStatusRejected: vi.fn(),
+      scheduleStatusRetry: vi.fn(),
+    };
+    const callback = vi.fn().mockResolvedValue({
+      clinicId: "clinic-1",
+      errorCode: null,
+      idempotencyKey: "delivery-status:event-1",
+      metric: { category: "template", direction: "outbound" },
+      operation: "transactional-delivery-status",
+      outcome: "delivered",
+      templateName: "appointment_reminder",
+    });
+    const observer = {
+      recordFailure: vi.fn().mockResolvedValue(undefined),
+      recordMetric: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await runTransactionalDeliveryStatusWorker(
+      { now: new Date("2026-09-09T12:00:00.000Z") },
+      queue,
+      { recordProviderCallback: callback },
+      observer,
+    );
+
+    expect(observer.recordMetric).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      errorCode: null,
+      idempotencyKey: "delivery-status:event-1",
+      latencyMs: null,
+      metric: { category: "template", direction: "outbound" },
+      occurredAt: new Date("2026-09-09T12:00:00.000Z"),
+      operation: "transactional-delivery-status",
+      outcome: "delivered",
+      templateName: "appointment_reminder",
+      workerKind: "delivery-status",
+    });
+    expect(observer.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it("registra los recibos de lectura sin contarlos como mensajes facturables", async () => {
+    const event = {
+      attempts: 1,
+      eventName: "whatsapp.message.read",
+      id: "event-read-1",
+      idempotencyKey: "kapso-event-read-1",
+      leaseToken: "lease-read-1",
+      payload: {
+        message: { id: "wamid-read-1" },
+        phone_number_id: "phone-1",
+      },
+      status: "processing" as const,
+    };
+    const queue = {
+      claimDueStatusEvents: vi.fn().mockResolvedValue([event]),
+      markStatusProcessed: vi.fn().mockResolvedValue(undefined),
+      markStatusRejected: vi.fn(),
+      scheduleStatusRetry: vi.fn(),
+    };
+    const callback = vi.fn().mockResolvedValue({
+      clinicId: "clinic-1",
+      errorCode: null,
+      idempotencyKey: "delivery-status:event-read-1",
+      metric: { category: "read-receipt", direction: "outbound" },
+      operation: "transactional-delivery-status",
+      outcome: "read",
+      templateName: null,
+    });
+    const observer = {
+      recordFailure: vi.fn().mockResolvedValue(undefined),
+      recordMetric: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await runTransactionalDeliveryStatusWorker(
+      { now: new Date("2026-09-09T12:00:00.000Z") },
+      queue,
+      { recordProviderCallback: callback },
+      observer,
+    );
+
+    expect(observer.recordMetric).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metric: { category: "read-receipt", direction: "outbound" },
+        outcome: "read",
+      }),
+    );
+    expect(observer.recordFailure).not.toHaveBeenCalled();
+  });
+
   it("reintenta un estado que no pudo persistirse sin llamar de nuevo al proveedor", async () => {
     const queue = {
       claimDueStatusEvents: vi.fn().mockResolvedValue([
@@ -120,6 +224,77 @@ describe("worker de estados de Entrega transaccional", () => {
       expect.objectContaining({ eventId: "event-1", leaseToken: "lease-1" }),
     );
     expect(queue.markStatusRejected).not.toHaveBeenCalled();
+  });
+
+  it("reintenta la métrica de un callback duplicado sin volver a contar el fallo", async () => {
+    const event = {
+      attempts: 2,
+      eventName: "whatsapp.message.failed" as const,
+      id: "event-1",
+      idempotencyKey: "kapso-event-1",
+      leaseToken: "lease-1",
+      payload: {
+        message: { id: "wamid-1" },
+        phone_number_id: "phone-1",
+      },
+      status: "processing" as const,
+    };
+    const queue = {
+      claimDueStatusEvents: vi.fn().mockResolvedValue([event]),
+      markStatusProcessed: vi.fn().mockResolvedValue(undefined),
+      markStatusRejected: vi.fn(),
+      scheduleStatusRetry: vi.fn().mockResolvedValue(undefined),
+    };
+    const callback = vi.fn().mockResolvedValueOnce({
+      clinicId: "clinic-1",
+      errorCode: "provider-error",
+      idempotencyKey: "delivery-status:event-1",
+      isNew: true,
+      metric: { category: "message", direction: "outbound" },
+      operation: "transactional-delivery-status",
+      outcome: "failed",
+      templateName: null,
+    });
+    const retryCallback = {
+      clinicId: "clinic-1",
+      errorCode: "provider-error",
+      idempotencyKey: "delivery-status:event-1",
+      isNew: false,
+      metric: { category: "message", direction: "outbound" },
+      operation: "transactional-delivery-status",
+      outcome: "failed" as const,
+      templateName: null,
+    };
+    callback.mockResolvedValueOnce(retryCallback);
+    const observer = {
+      recordFailure: vi.fn().mockResolvedValue(undefined),
+      recordMetric: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("métrica temporalmente no disponible"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const now = new Date("2026-09-09T12:00:00.000Z");
+
+    await expect(
+      runTransactionalDeliveryStatusWorker(
+        { now },
+        queue,
+        { recordProviderCallback: callback },
+        observer,
+      ),
+    ).resolves.toMatchObject({ claimed: 1, processed: 0, retried: 1 });
+    await expect(
+      runTransactionalDeliveryStatusWorker(
+        { now },
+        queue,
+        { recordProviderCallback: callback },
+        observer,
+      ),
+    ).resolves.toMatchObject({ claimed: 1, processed: 1, retried: 0 });
+
+    expect(callback).toHaveBeenCalledTimes(2);
+    expect(observer.recordMetric).toHaveBeenCalledTimes(2);
+    expect(observer.recordFailure).not.toHaveBeenCalled();
   });
 
   it("reintenta un estado que llegó antes que la Entrega", async () => {

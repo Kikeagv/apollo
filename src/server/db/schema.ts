@@ -44,6 +44,11 @@ import type {
   WhatsAppConnectionStatus,
   WhatsAppConnectionType,
 } from "~/domain/whatsapp-connection";
+import type {
+  WhatsAppCircuitBreakerCause,
+  WhatsAppCircuitBreakerStatus,
+  WhatsAppUsageMetric,
+} from "~/domain/whatsapp-circuit-breaker";
 import type { KapsoWebhookEventPayload } from "~/domain/whatsapp-kapso-provisioning";
 import type {
   WhatsAppCriticalTemplateKind,
@@ -553,8 +558,29 @@ export const whatsappBilling = createTable(
       .default("unknown")
       .notNull(),
     creditCents: integer("credit_cents").default(0).notNull(),
+    creditLimitCents: integer("credit_limit_cents"),
+    creditReserveCents: integer("credit_reserve_cents"),
+    creditInFlightCents: integer("credit_in_flight_cents").default(0).notNull(),
     consumedCents: integer("consumed_cents").default(0).notNull(),
     alertThresholdCents: integer("alert_threshold_cents"),
+    estimatedDailyConsumptionCents: integer("estimated_daily_consumption_cents")
+      .default(0)
+      .notNull(),
+    warningBalancePercent: integer("warning_balance_percent")
+      .default(20)
+      .notNull(),
+    criticalBalancePercent: integer("critical_balance_percent")
+      .default(10)
+      .notNull(),
+    warningAutonomyDays: integer("warning_autonomy_days").default(7).notNull(),
+    criticalAutonomyDays: integer("critical_autonomy_days")
+      .default(3)
+      .notNull(),
+    kapsoMonthlyQuota: integer("kapso_monthly_quota"),
+    kapsoQuotaPeriod: text("kapso_quota_period"),
+    kapsoQuotaConsumed: integer("kapso_quota_consumed").default(0).notNull(),
+    kapsoQuotaReserved: integer("kapso_quota_reserved").default(0).notNull(),
+    kapsoQuotaInFlight: integer("kapso_quota_in_flight").default(0).notNull(),
     metaChargesCents: integer("meta_charges_cents"),
     platformChargesCents: integer("platform_charges_cents"),
     chargesSeparated: boolean("charges_separated").default(false).notNull(),
@@ -582,7 +608,23 @@ export const whatsappBilling = createTable(
     ),
     check(
       "whatsapp_billing_non_negative",
-      sql`${table.creditCents} >= 0 AND ${table.consumedCents} >= 0`,
+      sql`${table.creditCents} >= 0 AND ${table.consumedCents} >= 0 AND ${table.estimatedDailyConsumptionCents} >= 0 AND ${table.creditInFlightCents} >= 0 AND ${table.kapsoQuotaConsumed} >= 0 AND ${table.kapsoQuotaReserved} >= 0 AND ${table.kapsoQuotaInFlight} >= 0`,
+    ),
+    check(
+      "whatsapp_billing_credit_limit_non_negative",
+      sql`(${table.creditLimitCents} IS NULL OR ${table.creditLimitCents} >= 0) AND (${table.creditReserveCents} IS NULL OR ${table.creditReserveCents} >= 0)`,
+    ),
+    check(
+      "whatsapp_billing_quota_non_negative",
+      sql`${table.kapsoMonthlyQuota} IS NULL OR ${table.kapsoMonthlyQuota} >= 0`,
+    ),
+    check(
+      "whatsapp_billing_threshold_percent",
+      sql`${table.warningBalancePercent} BETWEEN 0 AND 100 AND ${table.criticalBalancePercent} BETWEEN 0 AND 100 AND ${table.criticalBalancePercent} <= ${table.warningBalancePercent}`,
+    ),
+    check(
+      "whatsapp_billing_autonomy_days_non_negative",
+      sql`${table.warningAutonomyDays} >= 0 AND ${table.criticalAutonomyDays} >= 0 AND ${table.criticalAutonomyDays} <= ${table.warningAutonomyDays}`,
     ),
     check(
       "whatsapp_billing_alert_threshold_non_negative",
@@ -591,6 +633,286 @@ export const whatsappBilling = createTable(
     check(
       "whatsapp_billing_charges_non_negative",
       sql`(${table.metaChargesCents} IS NULL OR ${table.metaChargesCents} >= 0) AND (${table.platformChargesCents} IS NULL OR ${table.platformChargesCents} >= 0)`,
+    ),
+  ],
+);
+
+/** Reserva idempotente de capacidad antes de cruzar el límite de Kapso. */
+export const whatsappBillingReservations = createTable(
+  "whatsapp_billing_reservation",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    reservationKey: text("reservation_key").notNull(),
+    quotaUnits: integer("quota_units").default(1).notNull(),
+    creditCents: integer("credit_cents").default(1).notNull(),
+    status: text("status")
+      .$type<"reserved" | "settled" | "released">()
+      .default("reserved")
+      .notNull(),
+    outcome: text("outcome").$type<
+      "accepted" | "delivered" | "failed" | "unknown" | null
+    >(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    reservedAt: timestamp("reserved_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    retainUntil: timestamp("retain_until", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    unique("whatsapp_billing_reservation_clinic_key_unique").on(
+      table.clinicId,
+      table.reservationKey,
+    ),
+    index("whatsapp_billing_reservation_clinic_status_idx").on(
+      table.clinicId,
+      table.status,
+      table.createdAt,
+    ),
+    check(
+      "whatsapp_billing_reservation_non_negative",
+      sql`${table.quotaUnits} > 0 AND ${table.creditCents} >= 0`,
+    ),
+    check(
+      "whatsapp_billing_reservation_status",
+      sql`${table.status} IN ('reserved', 'settled', 'released')`,
+    ),
+  ],
+);
+
+/** Corte operativo por Clínica; no cambia ni elimina eventos pendientes. */
+export const whatsappCircuitBreakers = createTable(
+  "whatsapp_circuit_breaker",
+  {
+    clinicId: uuid("clinic_id")
+      .primaryKey()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    status: text("status")
+      .$type<WhatsAppCircuitBreakerStatus>()
+      .default("closed")
+      .notNull(),
+    cause: text("cause").$type<WhatsAppCircuitBreakerCause | null>(),
+    reason: text("reason").default("Circuito cerrado").notNull(),
+    nextAction: text("next_action")
+      .default("La Conexión opera normalmente")
+      .notNull(),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    lastTransitionAt: timestamp("last_transition_at", {
+      withTimezone: true,
+    })
+      .defaultNow()
+      .notNull(),
+    failureCount: integer("failure_count").default(0).notNull(),
+    failureWindowStartedAt: timestamp("failure_window_started_at", {
+      withTimezone: true,
+    }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    lastSyntheticTestAt: timestamp("last_synthetic_test_at", {
+      withTimezone: true,
+    }),
+    lastSyntheticTestStatus: text("last_synthetic_test_status").$type<
+      "passed" | "failed" | null
+    >(),
+    lastSyntheticEvidence: text("last_synthetic_evidence"),
+    lastReactivatedAt: timestamp("last_reactivated_at", {
+      withTimezone: true,
+    }),
+    lastReactivatedByIdentityId: text(
+      "last_reactivated_by_identity_id",
+    ).references(() => user.id, { onDelete: "set null" }),
+    revision: integer("revision").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "whatsapp_circuit_breaker_status",
+      sql`${table.status} IN ('closed', 'open')`,
+    ),
+    check(
+      "whatsapp_circuit_breaker_cause",
+      sql`${table.status} = 'closed' OR ${table.cause} IS NOT NULL`,
+    ),
+    check(
+      "whatsapp_circuit_breaker_reason_not_blank",
+      sql`btrim(${table.reason}) <> '' AND btrim(${table.nextAction}) <> ''`,
+    ),
+    check(
+      "whatsapp_circuit_breaker_failure_count",
+      sql`${table.failureCount} >= 0 AND ${table.revision} >= 0`,
+    ),
+    check(
+      "whatsapp_circuit_breaker_synthetic_status",
+      sql`${table.lastSyntheticTestStatus} IS NULL OR ${table.lastSyntheticTestStatus} IN ('passed', 'failed')`,
+    ),
+    index("whatsapp_circuit_breaker_status_idx").on(
+      table.status,
+      table.updatedAt,
+    ),
+  ],
+);
+
+/** Alerta durable y resoluble asociada al corte vigente de una Clínica. */
+export const whatsappCircuitBreakerAlerts = createTable(
+  "whatsapp_circuit_breaker_alert",
+  {
+    clinicId: uuid("clinic_id")
+      .primaryKey()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    status: text("status")
+      .$type<"open" | "resolved">()
+      .default("open")
+      .notNull(),
+    cause: text("cause").$type<WhatsAppCircuitBreakerCause>().notNull(),
+    reason: text("reason").notNull(),
+    nextAction: text("next_action").notNull(),
+    openedAt: timestamp("opened_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("whatsapp_circuit_breaker_alert_status_idx").on(
+      table.status,
+      table.updatedAt,
+    ),
+    check(
+      "whatsapp_circuit_breaker_alert_status",
+      sql`${table.status} IN ('open', 'resolved')`,
+    ),
+    check(
+      "whatsapp_circuit_breaker_alert_reason_not_blank",
+      sql`btrim(${table.reason}) <> '' AND btrim(${table.nextAction}) <> ''`,
+    ),
+    check(
+      "whatsapp_circuit_breaker_alert_resolution",
+      sql`${table.status} = 'open' OR ${table.resolvedAt} IS NOT NULL`,
+    ),
+  ],
+);
+
+/** Eventos administrativos inmutables del circuito y sus pruebas. */
+export const whatsappCircuitBreakerAudits = createTable(
+  "whatsapp_circuit_breaker_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    actorIdentityId: text("actor_identity_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    actorKind: text("actor_kind")
+      .$type<"superadmin" | "system" | "worker">()
+      .notNull(),
+    action: text("action")
+      .$type<"failure-recorded" | "opened" | "synthetic-test" | "reactivated">()
+      .notNull(),
+    fromStatus: text("from_status").$type<WhatsAppCircuitBreakerStatus>(),
+    toStatus: text("to_status").$type<WhatsAppCircuitBreakerStatus>().notNull(),
+    cause: text("cause").$type<WhatsAppCircuitBreakerCause | null>(),
+    reason: text("reason").notNull(),
+    evidence: text("evidence"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    retainUntil: timestamp("retain_until", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("whatsapp_circuit_breaker_audit_clinic_idx").on(
+      table.clinicId,
+      table.occurredAt,
+    ),
+    check(
+      "whatsapp_circuit_breaker_audit_reason_not_blank",
+      sql`btrim(${table.reason}) <> ''`,
+    ),
+    check(
+      "whatsapp_circuit_breaker_audit_action",
+      sql`${table.action} IN ('failure-recorded', 'opened', 'synthetic-test', 'reactivated')`,
+    ),
+  ],
+);
+
+/** Métrica idempotente de Kapso/Meta; nunca guarda payload, teléfono o texto. */
+export const whatsappUsageMetrics = createTable(
+  "whatsapp_usage_metric",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    direction: text("direction")
+      .$type<WhatsAppUsageMetric["direction"]>()
+      .notNull(),
+    category: text("category")
+      .$type<WhatsAppUsageMetric["category"]>()
+      .notNull(),
+    operation: text("operation").notNull(),
+    outcome: text("outcome")
+      .$type<"accepted" | "delivered" | "failed" | "read" | "unknown">()
+      .notNull(),
+    templateName: text("template_name"),
+    latencyMs: integer("latency_ms"),
+    errorCode: text("error_code"),
+    metaChargesCents: integer("meta_charges_cents").default(0).notNull(),
+    platformChargesCents: integer("platform_charges_cents")
+      .default(0)
+      .notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    retainUntil: timestamp("retain_until", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    unique("whatsapp_usage_metric_clinic_key_unique").on(
+      table.clinicId,
+      table.idempotencyKey,
+    ),
+    index("whatsapp_usage_metric_clinic_occurred_idx").on(
+      table.clinicId,
+      table.occurredAt,
+    ),
+    index("whatsapp_usage_metric_template_idx").on(
+      table.clinicId,
+      table.templateName,
+      table.occurredAt,
+    ),
+    check(
+      "whatsapp_usage_metric_direction",
+      sql`${table.direction} IN ('inbound', 'outbound')`,
+    ),
+    check(
+      "whatsapp_usage_metric_category",
+      sql`${table.category} IN ('message', 'media', 'template', 'interactive', 'reaction', 'read-receipt')`,
+    ),
+    check(
+      "whatsapp_usage_metric_outcome",
+      sql`${table.outcome} IN ('accepted', 'delivered', 'failed', 'read', 'unknown')`,
+    ),
+    check(
+      "whatsapp_usage_metric_non_negative",
+      sql`${table.latencyMs} IS NULL OR ${table.latencyMs} >= 0`,
+    ),
+    check(
+      "whatsapp_usage_metric_charges_non_negative",
+      sql`${table.metaChargesCents} >= 0 AND ${table.platformChargesCents} >= 0`,
     ),
   ],
 );
@@ -1747,6 +2069,7 @@ export const whatsappInboundReplies = createTable(
       withTimezone: true,
     }),
     providerMessageId: text("provider_message_id"),
+    lastProviderEventId: text("last_provider_event_id"),
     lastError: text("last_error"),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })

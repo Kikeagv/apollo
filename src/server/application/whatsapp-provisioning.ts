@@ -17,6 +17,7 @@ import type {
   WhatsAppConnectionStatus,
   WhatsAppConnectionType,
 } from "~/domain/whatsapp-connection";
+import type { WhatsAppCircuitBreakerState } from "~/domain/whatsapp-circuit-breaker";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 import {
   provisionWhatsAppReadiness,
@@ -24,6 +25,10 @@ import {
   type WhatsAppReadinessProvider,
   type WhatsAppReadinessProvisioningStore,
 } from "~/server/application/whatsapp-readiness";
+import type { WhatsAppCircuitBreakerStore } from "./whatsapp-circuit-breaker";
+
+export const KAPSO_PROVISIONING_MAX_ATTEMPTS = 3;
+export const KAPSO_PROVISIONING_RETRY_DELAYS_MS = [10_000, 40_000] as const;
 
 export type KapsoProvisioningEventStatus =
   "pending" | "processing" | "processed" | "rejected" | "ignored";
@@ -32,7 +37,9 @@ export type KapsoProvisioningEvent = {
   attempts: number;
   id: string;
   idempotencyKey: string;
+  leaseRecovered: boolean;
   leaseToken: string | null;
+  leaseExpiresAt: Date | null;
   nextAttemptAt: Date | null;
   payload: KapsoPhoneNumberLifecycleEvent;
   receivedAt: Date;
@@ -100,6 +107,12 @@ export type KapsoProvisioningStore = {
     reason: string;
     rejectedAt: Date;
   }) => Promise<void>;
+  pauseForCircuit: (input: {
+    eventId: string;
+    leaseToken: string;
+    pausedAt: Date;
+    reason: string;
+  }) => Promise<void>;
   resolveConnection: (input: {
     event: KapsoPhoneNumberLifecycleEvent;
   }) => Promise<
@@ -152,14 +165,18 @@ export type KapsoProvisioningPhoneNumber = {
 export type KapsoProvisioningProvider = {
   ensurePhoneNumberWebhook: (
     phoneNumberId: string,
-  ) => Promise<{ remoteId: string }>;
-  ensureProjectWebhook: () => Promise<{ remoteId: string }>;
+  ) => Promise<{ remoteId: string; wasPaused?: boolean }>;
+  ensureProjectWebhook: () => Promise<{
+    remoteId: string;
+    wasPaused?: boolean;
+  }>;
   getPhoneNumber: (
     phoneNumberId: string,
   ) => Promise<KapsoProvisioningPhoneNumber | undefined>;
 };
 
 export type KapsoProvisioningReadiness = {
+  circuitBreaker?: WhatsAppCircuitBreakerStore;
   provider: WhatsAppReadinessProvider;
   store: WhatsAppReadinessProvisioningStore;
 };
@@ -182,9 +199,18 @@ class KapsoProvisioningRejectedError extends Error {
 }
 
 class KapsoProvisioningRetryError extends Error {
-  constructor(message: string) {
+  readonly cause: "provider-error" | "webhook-paused";
+  readonly openImmediately: boolean;
+
+  constructor(
+    message: string,
+    cause: "provider-error" | "webhook-paused" = "provider-error",
+    openImmediately = false,
+  ) {
     super(message);
     this.name = "KapsoProvisioningRetryError";
+    this.cause = cause;
+    this.openImmediately = openImmediately;
   }
 }
 
@@ -385,6 +411,7 @@ export async function runKapsoProvisioningWorker(
   store: KapsoProvisioningStore,
   provider: KapsoProvisioningProvider,
   readiness?: KapsoProvisioningReadiness,
+  circuitBreaker?: WhatsAppCircuitBreakerStore,
 ): Promise<KapsoProvisioningWorkerResult> {
   const events = await store.claimDueEvents({
     limit: input.limit ?? 20,
@@ -399,6 +426,43 @@ export async function runKapsoProvisioningWorker(
 
   for (const event of events) {
     try {
+      if (
+        event.leaseRecovered &&
+        event.attempts >= KAPSO_PROVISIONING_MAX_ATTEMPTS
+      ) {
+        const clinicId =
+          circuitBreaker === undefined
+            ? null
+            : await clinicIdForProvisioningEvent(event, store);
+        const failure = await recordProvisioningFailure({
+          cause: "provider-error",
+          circuitBreaker,
+          clinicId,
+          now: input.now,
+          reason:
+            "Se recuperó un lease de provisioning vencido en el tercer intento",
+        });
+        if (failure?.opened || failure?.state.status === "open") {
+          await store.pauseForCircuit({
+            eventId: event.id,
+            leaseToken: requireLeaseToken(event),
+            pausedAt: input.now,
+            reason:
+              "Se recuperó un lease de provisioning vencido en el tercer intento",
+          });
+          result.retried += 1;
+        } else {
+          await store.markRejected({
+            eventId: event.id,
+            leaseToken: requireLeaseToken(event),
+            reason:
+              "El lease de provisioning venció después del máximo de intentos",
+            rejectedAt: input.now,
+          });
+          result.rejected += 1;
+        }
+        continue;
+      }
       await processEvent(event, input.now, store, provider, readiness);
       await store.markProcessed({
         eventId: event.id,
@@ -411,14 +475,54 @@ export async function runKapsoProvisioningWorker(
         error instanceof KapsoProvisioningRetryError ||
         error instanceof WhatsAppReadinessRetryError
       ) {
-        await store.scheduleRetry({
+        const clinicId =
+          circuitBreaker === undefined
+            ? null
+            : await clinicIdForProvisioningEvent(event, store);
+        const failure = await recordProvisioningFailure({
+          circuitBreaker,
+          clinicId,
+          cause:
+            error instanceof KapsoProvisioningRetryError
+              ? error.cause
+              : "provider-error",
+          openImmediately:
+            error instanceof KapsoProvisioningRetryError &&
+            error.openImmediately,
+          now: input.now,
+          reason: error.message,
+        });
+        if (failure?.opened || failure?.state.status === "open") {
+          await store.pauseForCircuit({
+            eventId: event.id,
+            leaseToken: requireLeaseToken(event),
+            pausedAt: input.now,
+            reason: error.message,
+          });
+          result.retried += 1;
+          continue;
+        }
+        if (event.attempts < KAPSO_PROVISIONING_MAX_ATTEMPTS) {
+          await store.scheduleRetry({
+            eventId: event.id,
+            leaseToken: requireLeaseToken(event),
+            nextAttemptAt: nextKapsoProvisioningAttemptAt(
+              input.now,
+              event.attempts,
+            ),
+            reason: error.message,
+            retriedAt: input.now,
+          });
+          result.retried += 1;
+          continue;
+        }
+        await store.markRejected({
           eventId: event.id,
           leaseToken: requireLeaseToken(event),
-          nextAttemptAt: nextAttemptAt(input.now, event.attempts),
           reason: error.message,
-          retriedAt: input.now,
+          rejectedAt: input.now,
         });
-        result.retried += 1;
+        result.rejected += 1;
         continue;
       }
 
@@ -730,7 +834,10 @@ async function processCreatedEvent(
       reason: toErrorMessage(error),
     });
     if (retryable) {
-      throw new KapsoProvisioningRetryError(toErrorMessage(error));
+      throw new KapsoProvisioningRetryError(
+        toErrorMessage(error),
+        gateCode === "webhooks" ? "webhook-paused" : "provider-error",
+      );
     }
     throw error;
   }
@@ -760,7 +867,7 @@ async function ensureStep(input: {
   event: KapsoProvisioningEvent;
   leaseToken: string;
   now: Date;
-  providerCall: () => Promise<{ remoteId: string }>;
+  providerCall: () => Promise<{ remoteId: string; wasPaused?: boolean }>;
   step: "phone-number-webhook" | "project-webhook";
   store: KapsoProvisioningStore;
 }) {
@@ -780,6 +887,13 @@ async function ensureStep(input: {
           ? "project"
           : `phone:${input.event.payload.phoneNumberId}`,
     });
+    if (result.wasPaused === true) {
+      throw new KapsoProvisioningRetryError(
+        "Kapso pausó el webhook; se requiere reactivación manual",
+        "webhook-paused",
+        true,
+      );
+    }
     await input.store.saveStep({
       clinicId: input.clinicId,
       eventId: input.event.id,
@@ -857,9 +971,52 @@ function isRetryableProviderError(error: unknown) {
   return true;
 }
 
-function nextAttemptAt(now: Date, attempts: number) {
-  const delaySeconds = Math.min(300, 5 * 2 ** Math.max(0, attempts - 1));
-  return new Date(now.getTime() + delaySeconds * 1000);
+async function clinicIdForProvisioningEvent(
+  event: KapsoProvisioningEvent,
+  store: KapsoProvisioningStore,
+) {
+  const resolved = await store.resolveConnection({ event: event.payload });
+  return resolved.kind === "matched" ? resolved.connection.clinicId : null;
+}
+
+async function recordProvisioningFailure(input: {
+  cause: "provider-error" | "webhook-paused";
+  circuitBreaker?: WhatsAppCircuitBreakerStore;
+  clinicId: string | null;
+  now: Date;
+  openImmediately?: boolean;
+  reason: string;
+}): Promise<
+  { opened: boolean; state: WhatsAppCircuitBreakerState } | undefined
+> {
+  if (input.circuitBreaker === undefined || input.clinicId === null) {
+    return undefined;
+  }
+  if (input.openImmediately) {
+    const state = await input.circuitBreaker.open({
+      actorKind: "worker",
+      cause: input.cause,
+      clinicId: input.clinicId,
+      now: input.now,
+      reason: input.reason,
+      workerKind: "provisioning",
+    });
+    return { opened: state.status === "open", state };
+  }
+  return input.circuitBreaker.recordFailure({
+    cause: input.cause,
+    clinicId: input.clinicId,
+    now: input.now,
+    reason: input.reason,
+    workerKind: "provisioning",
+  });
+}
+
+export function nextKapsoProvisioningAttemptAt(now: Date, attempts: number) {
+  const delay =
+    KAPSO_PROVISIONING_RETRY_DELAYS_MS[attempts - 1] ??
+    KAPSO_PROVISIONING_RETRY_DELAYS_MS.at(-1)!;
+  return new Date(now.valueOf() + delay);
 }
 
 function requireLeaseToken(event: KapsoProvisioningEvent) {

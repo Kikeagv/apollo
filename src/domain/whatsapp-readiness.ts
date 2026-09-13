@@ -148,6 +148,19 @@ export type WhatsAppBillingSnapshot = {
   chargesSeparated: boolean;
   consumedCents: number;
   creditCents: number;
+  creditInFlightCents?: number;
+  creditLimitCents?: number | null;
+  creditReserveCents?: number | null;
+  estimatedDailyConsumptionCents?: number;
+  warningBalancePercent?: number;
+  criticalBalancePercent?: number;
+  warningAutonomyDays?: number;
+  criticalAutonomyDays?: number;
+  kapsoMonthlyQuota?: number | null;
+  kapsoQuotaPeriod?: string | null;
+  kapsoQuotaConsumed?: number;
+  kapsoQuotaReserved?: number;
+  kapsoQuotaInFlight?: number;
   metaChargesCents?: number | null;
   platformChargesCents?: number | null;
   mode: "partner_managed" | "customer_managed" | "unknown";
@@ -509,7 +522,8 @@ function evaluateBilling(input: WhatsAppReadinessInput): WhatsAppReadinessGate {
       "Configurar un umbral de alerta antes de habilitar envíos",
     );
   }
-  if (input.billing.creditCents <= 0) {
+  const creditReserveCents = input.billing.creditReserveCents ?? 0;
+  if (input.billing.creditCents <= creditReserveCents) {
     return gate(
       "billing",
       "blocked",

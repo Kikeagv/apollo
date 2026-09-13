@@ -23,6 +23,7 @@ import {
 } from "~/server/application/appointment-reminders";
 import {
   retryAt,
+  type TransactionalDeliveryCallbackObservation,
   type TransactionalDeliveryError,
   type TransactionalDeliveryCallbackStore,
   type TransactionalDelivery,
@@ -54,6 +55,7 @@ import {
   inWhatsAppOutboundWorkerTransaction,
 } from "~/server/db/clinic-context";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
+import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
 import type { db } from "~/server/db";
 import {
   appointmentEvents,
@@ -82,6 +84,7 @@ const HOUR_MS = 60 * 60_000;
 const LEASE_MS = 10 * 60_000;
 const RETAIN_MS = 365 * 24 * HOUR_MS;
 const REMINDER_CATCH_UP_MS = 15 * 60_000;
+const CIRCUIT_RETRY_DELAY_MS = 60_000;
 
 export function shouldSuppressWhatsAppReminder(input: {
   hasCurrentConsent: boolean;
@@ -116,6 +119,17 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
         );
       const claimed: TransactionalDelivery[] = [];
       for (const candidate of candidates) {
+        if (
+          isWhatsAppDeliveryKind(candidate.kind) &&
+          (await isWhatsAppCircuitOpenInTransaction(
+            transaction,
+            candidate.clinicId,
+          ))
+        ) {
+          // El estado queda pending/processing para conservar la outbox y
+          // permitir que la reactivación manual la drene después.
+          continue;
+        }
         const consentSnapshot =
           isWhatsAppDeliveryKind(candidate.kind) &&
           candidate.recipientContactId !== null
@@ -397,6 +411,28 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
       await insertDeliveryAlert(transaction, delivery, now);
     });
   },
+
+  async deferForCircuit({ delivery, error, now }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      await transaction
+        .update(transactionalDeliveries)
+        .set({
+          attempts: sql`greatest(0, ${transactionalDeliveries.attempts} - 1)`,
+          lastError: error.message.slice(0, 1_000),
+          leaseExpiresAt: null,
+          nextAttemptAt: new Date(now.valueOf() + CIRCUIT_RETRY_DELAY_MS),
+          status: "pending",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(transactionalDeliveries.id, delivery.id),
+            eq(transactionalDeliveries.status, "processing"),
+            eq(transactionalDeliveries.attempts, delivery.attempts),
+          ),
+        );
+    });
+  },
 };
 
 export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCallbackStore =
@@ -468,7 +504,7 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
             );
             await insertDeliveryAlert(transaction, delivery, callbackNow);
           }
-          return;
+          return callbackMetricObservation(delivery, input, callbackInserted);
         }
 
         const reply = await findReplyForCallback(transaction, input);
@@ -478,6 +514,10 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
             currentStatus,
             input.status,
           );
+          const isNewProviderEvent =
+            input.providerEventId !== undefined &&
+            input.providerEventId !== null &&
+            reply.lastProviderEventId !== input.providerEventId;
           await transaction
             .update(whatsappInboundReplies)
             .set({
@@ -487,6 +527,8 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
                   : null,
               providerMessageId:
                 input.providerMessageId ?? reply.providerMessageId,
+              lastProviderEventId:
+                input.providerEventId ?? reply.lastProviderEventId,
               sentAt:
                 reconciledStatus === "sent" ||
                 reconciledStatus === "delivered" ||
@@ -496,7 +538,11 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
               status: reconciledStatus,
             })
             .where(eq(whatsappInboundReplies.id, reply.id));
-          return;
+          return replyCallbackMetricObservation(
+            reply,
+            input,
+            isNewProviderEvent,
+          );
         }
 
         throw new TransactionalDeliveryStatusNotFoundError();
@@ -1451,6 +1497,94 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function callbackMetricObservation(
+  delivery: Pick<
+    typeof transactionalDeliveries.$inferSelect,
+    "clinicId" | "payload"
+  >,
+  input: {
+    error?: string | null;
+    providerEventId?: string | null;
+    status: "accepted" | "sent" | "delivered" | "read" | "failed";
+  },
+  isNew: boolean,
+): TransactionalDeliveryCallbackObservation | undefined {
+  if (
+    input.providerEventId === undefined ||
+    input.providerEventId === null ||
+    (input.status !== "delivered" &&
+      input.status !== "failed" &&
+      input.status !== "read")
+  ) {
+    return undefined;
+  }
+  const route = asRecord(delivery.payload.route);
+  const routeKind = route.kind;
+  const category =
+    input.status === "read"
+      ? ("read-receipt" as const)
+      : routeKind === "template"
+        ? ("template" as const)
+        : routeKind === "interactive"
+          ? ("interactive" as const)
+          : ("message" as const);
+  return {
+    clinicId: delivery.clinicId,
+    errorCode:
+      input.error === null || input.error === undefined
+        ? null
+        : "provider-error",
+    idempotencyKey: `delivery-status:${input.providerEventId}`,
+    isNew,
+    metric: { category, direction: "outbound" },
+    operation: "transactional-delivery-status",
+    outcome: input.status,
+    templateName:
+      category === "template" && typeof route.name === "string"
+        ? route.name
+        : null,
+  };
+}
+
+function replyCallbackMetricObservation(
+  reply: Pick<
+    typeof whatsappInboundReplies.$inferSelect,
+    "clinicId" | "buttonLabel"
+  >,
+  input: {
+    error?: string | null;
+    providerEventId?: string | null;
+    status: "accepted" | "sent" | "delivered" | "read" | "failed";
+  },
+  isNew: boolean,
+): TransactionalDeliveryCallbackObservation | undefined {
+  if (
+    input.providerEventId === undefined ||
+    input.providerEventId === null ||
+    (input.status !== "delivered" &&
+      input.status !== "failed" &&
+      input.status !== "read")
+  ) {
+    return undefined;
+  }
+  return {
+    clinicId: reply.clinicId,
+    errorCode:
+      input.error === null || input.error === undefined
+        ? null
+        : "provider-error",
+    idempotencyKey: `inbound-reply-status:${input.providerEventId}`,
+    isNew,
+    metric: {
+      category: reply.buttonLabel === null ? "message" : "interactive",
+      direction: "outbound",
+    },
+    operation: "inbound-reply",
+    outcome: input.status,
+    templateName: null,
+  };
+}
+
 function whatsappStatusFromDelivery(
   status: typeof transactionalDeliveries.$inferSelect.status,
 ): WhatsAppDeliveryStatus | null {
@@ -1573,15 +1707,20 @@ async function findReplyForCallback(
         ]),
   ];
   if (predicates.length === 0) return undefined;
-  return transaction.query.whatsappInboundReplies.findFirst({
-    columns: {
-      id: true,
-      providerMessageId: true,
-      sentAt: true,
-      status: true,
-    },
-    where: and(...predicates),
-  });
+  const [reply] = await transaction
+    .select({
+      buttonLabel: whatsappInboundReplies.buttonLabel,
+      clinicId: whatsappInboundReplies.clinicId,
+      id: whatsappInboundReplies.id,
+      lastProviderEventId: whatsappInboundReplies.lastProviderEventId,
+      providerMessageId: whatsappInboundReplies.providerMessageId,
+      sentAt: whatsappInboundReplies.sentAt,
+      status: whatsappInboundReplies.status,
+    })
+    .from(whatsappInboundReplies)
+    .where(and(...predicates))
+    .for("update");
+  return reply;
 }
 
 async function latestServiceWindowExpiry(

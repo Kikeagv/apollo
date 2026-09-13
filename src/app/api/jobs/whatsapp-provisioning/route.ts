@@ -2,6 +2,7 @@ import { env } from "~/env";
 import { runKapsoProvisioningWorker } from "~/server/application/whatsapp-provisioning";
 import { drizzleWhatsAppProvisioningStore } from "~/server/db/whatsapp-provisioning-store";
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
+import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
 import { createKapsoProvisioningProvider } from "~/server/whatsapp/kapso-provisioning";
 import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
 
@@ -40,9 +41,11 @@ export async function POST(request: Request) {
     drizzleWhatsAppProvisioningStore,
     provider,
     {
+      circuitBreaker: drizzleWhatsAppCircuitBreakerStore,
       provider: readinessProvider,
       store: drizzleWhatsAppReadinessStore,
     },
+    drizzleWhatsAppCircuitBreakerStore,
   );
   return Response.json({ ...result, projectWebhook });
 }

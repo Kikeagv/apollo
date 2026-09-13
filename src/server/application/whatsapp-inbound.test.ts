@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { WhatsAppInboundMessage } from "~/domain/whatsapp-inbound";
+import { WhatsAppCircuitBreakerOpenError } from "./whatsapp-provider";
 import {
   runKapsoInboundWorker,
   type WhatsAppInboundAssistant,
@@ -9,6 +10,7 @@ import {
   type WhatsAppInboundReplySender,
   type WhatsAppInboundStore,
 } from "./whatsapp-inbound";
+import type { WhatsAppOperationalObserver } from "./whatsapp-circuit-breaker";
 
 const NOW = new Date("2026-09-08T12:00:00.000Z");
 
@@ -154,6 +156,66 @@ function assistant() {
 }
 
 describe("worker de mensajes entrantes de WhatsApp", () => {
+  it("devuelve a pendiente el evento si el circuito se abre antes del asistente", async () => {
+    const fake = fakeStore([event()]);
+    const deferForCircuit =
+      vi.fn<NonNullable<WhatsAppInboundStore["deferForCircuit"]>>();
+    fake.store.assertCircuitClosed = vi
+      .fn<NonNullable<WhatsAppInboundStore["assertCircuitClosed"]>>()
+      .mockRejectedValue(new WhatsAppCircuitBreakerOpenError("clinic-1"));
+    fake.store.deferForCircuit = deferForCircuit;
+    const acceptedAssistant = assistant();
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        acceptedAssistant,
+        acceptedConsent,
+        { send: vi.fn() },
+        undefined,
+        inactiveTakeover,
+      ),
+    ).resolves.toMatchObject({ deferred: 1, processed: 0, retried: 0 });
+
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+    const deferredCall = deferForCircuit.mock.calls[0]?.[0];
+    expect(deferredCall?.eventId).toBe("queue-1");
+    expect(deferredCall?.leaseToken).toBe("lease-1");
+    expect(deferredCall?.now).toEqual(NOW);
+    expect(deferredCall?.reason).toContain("circuit breaker");
+    expect(fake.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("reintenta el evento si no puede persistir su métrica operativa", async () => {
+    const fake = fakeStore([event()]);
+    const acceptedAssistant = assistant();
+    const observer: WhatsAppOperationalObserver = {
+      recordFailure: vi.fn(),
+      recordMetric: vi
+        .fn()
+        .mockRejectedValue(new Error("Métricas temporalmente indisponibles")),
+    };
+
+    await expect(
+      runKapsoInboundWorker(
+        { now: NOW },
+        fake.store,
+        acceptedAssistant,
+        acceptedConsent,
+        { send: vi.fn() },
+        undefined,
+        inactiveTakeover,
+        observer,
+      ),
+    ).resolves.toMatchObject({ claimed: 1, processed: 0, retried: 1 });
+
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+    const retry = fake.scheduleRetry.mock.calls[0]?.[0];
+    expect(retry?.eventId).toBe("queue-1");
+    expect(retry?.reason).toContain("No se pudo persistir la métrica");
+  });
+
   it("resuelve un BSUID sin teléfono, conserva la evidencia y despierta al asistente dentro de la ventana", async () => {
     const {
       outcomes,

@@ -108,6 +108,7 @@ function fakeStore(initial = record()) {
   const read = vi.fn<WhatsAppReadinessStore["read"]>(async () => current);
   const save = vi.fn<WhatsAppReadinessStore["save"]>(async ({ state }) => {
     current = { ...state, revision: (state.revision ?? 0) + 1 };
+    return current;
   });
   const retryWebhooks = vi.fn<
     NonNullable<WhatsAppReadinessStore["retryWebhooks"]>
@@ -179,6 +180,41 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
       access: "clinic-owner",
       actorIdentityId: "owner-1",
       clinicId: "clinic-1",
+    });
+  });
+
+  it("expone la salud de crédito usando el primer umbral crítico", async () => {
+    const fake = fakeStore(
+      record({
+        billing: {
+          alertThresholdCents: 1_000,
+          chargesSeparated: true,
+          consumedCents: 2_000,
+          creditCents: 800,
+          creditLimitCents: 10_000,
+          estimatedDailyConsumptionCents: 100,
+          lastError: null,
+          lastSyncedAt: now,
+          mode: "partner_managed",
+          status: "ready",
+        },
+      }),
+    );
+
+    const result = await getWhatsAppReadiness(
+      {
+        access: "superadmin",
+        actorIdentityId: "superadmin-1",
+        clinicId: "clinic-1",
+      },
+      fake.store,
+    );
+
+    expect(result.billingHealth).toEqual({
+      autonomyDays: 8,
+      balancePercent: 8,
+      level: "critical",
+      reason: "balance",
     });
   });
 

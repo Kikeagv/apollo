@@ -43,6 +43,14 @@ export function ApoloOperations() {
     { clinicId },
     { enabled: Boolean(clinicId) },
   );
+  const circuitBreaker = api.apolo.getWhatsAppCircuitBreaker.useQuery(
+    { clinicId },
+    { enabled: Boolean(clinicId) },
+  );
+  const operationalMetrics = api.apolo.getWhatsAppOperationalMetrics.useQuery(
+    { clinicId },
+    { enabled: Boolean(clinicId) },
+  );
   const [clinicName, setClinicName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -62,6 +70,18 @@ export function ApoloOperations() {
     "confirmed" | "not-confirmed"
   >("not-confirmed");
   const [qrDeviceAvailable, setQrDeviceAvailable] = useState(false);
+  const [causeFixed, setCauseFixed] = useState(false);
+  const [manualConfirmation, setManualConfirmation] = useState(false);
+  const [openCause, setOpenCause] = useState<
+    | "webhook-paused"
+    | "high-failure-rate"
+    | "credit-exhausted"
+    | "quota-exhausted"
+    | "provider-error"
+    | "meta-error"
+    | "legal-block"
+  >("provider-error");
+  const [openReason, setOpenReason] = useState("");
   const createClinic = api.apolo.createManualClinic.useMutation({
     onSuccess: (clinic) => {
       setClinicId(clinic.id);
@@ -77,9 +97,35 @@ export function ApoloOperations() {
     onSuccess: () => onboarding.refetch(),
   });
   const retryReadiness = api.apolo.retryWhatsAppReadiness.useMutation({
-    onSuccess: () => void readiness.refetch(),
-    onError: () => void readiness.refetch(),
+    onSuccess: () => {
+      void readiness.refetch();
+      void circuitBreaker.refetch();
+    },
+    onError: () => {
+      void readiness.refetch();
+      void circuitBreaker.refetch();
+    },
   });
+  const openCircuitBreaker = api.apolo.openWhatsAppCircuitBreaker.useMutation({
+    onSuccess: () => {
+      setOpenReason("");
+      void circuitBreaker.refetch();
+      void readiness.refetch();
+    },
+  });
+  const reactivateCircuitBreaker =
+    api.apolo.reactivateWhatsAppCircuitBreaker.useMutation({
+      onSuccess: () => {
+        setCauseFixed(false);
+        setManualConfirmation(false);
+        void circuitBreaker.refetch();
+        void readiness.refetch();
+        void operationalMetrics.refetch();
+      },
+      onError: () => {
+        void circuitBreaker.refetch();
+      },
+    });
   const recordPayment = api.apolo.recordTransferPayment.useMutation();
   const setSubscription = api.apolo.changeSubscriptionStatus.useMutation({
     onSuccess: () => clinics.refetch(),
@@ -233,6 +279,241 @@ export function ApoloOperations() {
           ))}
         </select>
       </label>
+      <section
+        aria-labelledby="whatsapp-circuit-breaker-title"
+        className="space-y-4 rounded-xl border border-amber-500/70 p-5"
+        data-whatsapp-circuit-breaker="true"
+      >
+        <div>
+          <h2
+            className="text-xl font-semibold"
+            id="whatsapp-circuit-breaker-title"
+          >
+            Circuit breaker, crédito y métricas
+          </h2>
+          <p className="mt-1 text-sm text-slate-300">
+            El corte es por Clínica. Pausa el agente y la outbox de WhatsApp,
+            conserva los eventos pendientes y deja disponible la WhatsApp
+            Business App para continuidad manual.
+          </p>
+        </div>
+        {!clinicId ? (
+          <p className="text-sm text-slate-400">
+            Selecciona una Clínica para consultar su operación.
+          </p>
+        ) : circuitBreaker.isLoading ? (
+          <p className="text-sm text-slate-300" role="status">
+            Consultando el circuito…
+          </p>
+        ) : circuitBreaker.error ? (
+          <p className="text-sm text-amber-200" role="alert">
+            {circuitBreaker.error.message}
+          </p>
+        ) : circuitBreaker.data ? (
+          <>
+            <dl className="grid gap-3 text-sm sm:grid-cols-3">
+              <DiagnosticValue
+                label="Estado"
+                value={
+                  circuitBreaker.data.status === "open" ? "Abierto" : "Cerrado"
+                }
+              />
+              <DiagnosticValue
+                label="Causa"
+                value={circuitBreaker.data.cause ?? "—"}
+              />
+              <DiagnosticValue
+                label="Última transición"
+                value={formatDateTime(circuitBreaker.data.lastTransitionAt)}
+              />
+            </dl>
+            <p className="text-sm text-slate-300">
+              {circuitBreaker.data.reason} · Siguiente acción:{" "}
+              {circuitBreaker.data.nextAction}
+            </p>
+            <div className="grid gap-3 text-sm sm:grid-cols-3">
+              <MetricValue
+                label="Crédito Kapso"
+                value={
+                  readiness.data === undefined
+                    ? "—"
+                    : `${formatCents(readiness.data.billing.creditCents)} · reserva ${formatCents(readiness.data.billing.creditReserveCents ?? 0)} · en vuelo ${formatCents(readiness.data.billing.creditInFlightCents ?? 0)}`
+                }
+              />
+              <MetricValue
+                label="Salud de crédito"
+                value={
+                  readiness.data === undefined
+                    ? "—"
+                    : `${billingHealthLabel(readiness.data.billingHealth.level)} · ${readiness.data.billingHealth.balancePercent === null ? "saldo sin límite" : `${readiness.data.billingHealth.balancePercent}%`} · ${readiness.data.billingHealth.autonomyDays === null ? "autonomía no estimada" : `${readiness.data.billingHealth.autonomyDays} días`}`
+                }
+              />
+              <MetricValue
+                label="Consumo cuota"
+                value={
+                  readiness.data === undefined
+                    ? `${operationalMetrics.data?.quotaMessages ?? 0} mensajes`
+                    : `${readiness.data.billing.kapsoQuotaConsumed ?? operationalMetrics.data?.quotaMessages ?? 0} + ${readiness.data.billing.kapsoQuotaInFlight ?? 0} en vuelo / ${readiness.data.billing.kapsoMonthlyQuota ?? "∞"} mensajes`
+                }
+              />
+              <MetricValue
+                label="Latencia media"
+                value={
+                  operationalMetrics.data?.averageLatencyMs === null ||
+                  operationalMetrics.data?.averageLatencyMs === undefined
+                    ? "—"
+                    : `${operationalMetrics.data.averageLatencyMs} ms`
+                }
+              />
+              <MetricValue
+                label="Errores"
+                value={String(operationalMetrics.data?.errors ?? 0)}
+              />
+              <MetricValue
+                label="Entregas intentadas"
+                value={String(
+                  operationalMetrics.data?.deliveries.attempted ?? 0,
+                )}
+              />
+              <MetricValue
+                label="Entregas aceptadas / entregadas"
+                value={`${operationalMetrics.data?.deliveries.accepted ?? 0} / ${operationalMetrics.data?.deliveries.delivered ?? 0}`}
+              />
+              <MetricValue
+                label="Entregas fallidas / desconocidas"
+                value={`${operationalMetrics.data?.deliveries.failed ?? 0} / ${operationalMetrics.data?.deliveries.unknown ?? 0}`}
+              />
+              <MetricValue
+                label="Meta / plataforma (billing)"
+                value={`${readiness.data?.billing.metaChargesCents ?? operationalMetrics.data?.metaChargesCents ?? 0} / ${readiness.data?.billing.platformChargesCents ?? operationalMetrics.data?.platformChargesCents ?? 0} centavos`}
+              />
+            </div>
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <MetricValue
+                label="Inbound / outbound"
+                value={`${operationalMetrics.data?.inboundMessages ?? 0} / ${operationalMetrics.data?.outboundMessages ?? 0}`}
+              />
+              <MetricValue
+                label="Media / plantillas / interactivos / reacciones"
+                value={`${operationalMetrics.data?.mediaMessages ?? 0} / ${operationalMetrics.data?.templateMessages ?? 0} / ${operationalMetrics.data?.interactiveMessages ?? 0} / ${operationalMetrics.data?.reactionMessages ?? 0}`}
+              />
+              <MetricValue
+                label="Recibos de lectura"
+                value={String(operationalMetrics.data?.readReceipts ?? 0)}
+              />
+            </div>
+            {operationalMetrics.data?.templates.length ? (
+              <div>
+                <h3 className="font-medium">Plantillas</h3>
+                <ul className="mt-2 space-y-1 text-sm text-slate-300">
+                  {operationalMetrics.data.templates.map((template) => (
+                    <li key={template.name}>
+                      {template.name}: {template.attempted} intentos ·{" "}
+                      {template.failed} fallos
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {circuitBreaker.data.status === "open" ? (
+              <div className="space-y-2 rounded-lg border border-amber-500/50 bg-amber-950/30 p-3 text-sm">
+                <p>
+                  La reactivación ejecutará una prueba sintética contra el
+                  webhook y cerrará el circuito solo si la evidencia es válida.
+                </p>
+                <label className="flex items-center gap-2">
+                  <input
+                    checked={causeFixed}
+                    onChange={(event) => setCauseFixed(event.target.checked)}
+                    type="checkbox"
+                  />
+                  Confirmo que la causa del corte fue corregida.
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    checked={manualConfirmation}
+                    onChange={(event) =>
+                      setManualConfirmation(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  Confirmo manualmente la reactivación de esta Clínica.
+                </label>
+                <button
+                  className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                  disabled={
+                    !causeFixed ||
+                    !manualConfirmation ||
+                    reactivateCircuitBreaker.isPending
+                  }
+                  onClick={() =>
+                    reactivateCircuitBreaker.mutate({
+                      causeFixed: true,
+                      clinicId,
+                      manualConfirmation: true,
+                    })
+                  }
+                  type="button"
+                >
+                  Ejecutar prueba y reactivar
+                </button>
+              </div>
+            ) : null}
+            {reactivateCircuitBreaker.error ? (
+              <p className="text-sm text-amber-200" role="alert">
+                {reactivateCircuitBreaker.error.message}
+              </p>
+            ) : null}
+            <div className="space-y-2 border-t border-slate-700 pt-3">
+              <p className="text-sm font-medium">Abrir corte operativo</p>
+              <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
+                <select
+                  className="rounded border border-slate-700 bg-slate-900 p-2 text-sm"
+                  onChange={(event) =>
+                    setOpenCause(event.target.value as typeof openCause)
+                  }
+                  value={openCause}
+                >
+                  <option value="provider-error">Error persistente</option>
+                  <option value="webhook-paused">Webhook pausado</option>
+                  <option value="high-failure-rate">Tasa alta de fallos</option>
+                  <option value="credit-exhausted">Crédito agotado</option>
+                  <option value="quota-exhausted">Cuota agotada</option>
+                  <option value="meta-error">Error de Meta</option>
+                  <option value="legal-block">Bloqueo legal</option>
+                </select>
+                <input
+                  className="rounded border border-slate-700 bg-slate-900 p-2 text-sm"
+                  onChange={(event) => setOpenReason(event.target.value)}
+                  placeholder="Motivo operativo"
+                  value={openReason}
+                />
+              </div>
+              <button
+                className="rounded border border-amber-300 px-3 py-2 text-sm text-amber-200 disabled:opacity-50"
+                disabled={
+                  openReason.trim() === "" || openCircuitBreaker.isPending
+                }
+                onClick={() =>
+                  openCircuitBreaker.mutate({
+                    cause: openCause,
+                    clinicId,
+                    reason: openReason.trim(),
+                  })
+                }
+                type="button"
+              >
+                Abrir circuito para esta Clínica
+              </button>
+              {openCircuitBreaker.error ? (
+                <p className="text-sm text-amber-200" role="alert">
+                  {openCircuitBreaker.error.message}
+                </p>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+      </section>
       <section className="space-y-3 rounded-xl border border-teal-500/70 p-5">
         <div>
           <h2 className="text-xl font-semibold">Alta manual de Clínica</h2>
@@ -490,6 +771,46 @@ export function ApoloOperations() {
                     <dt className="inline">Crédito: </dt>
                     <dd className="inline">
                       {formatCents(readiness.data.billing.creditCents)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Reserva de crédito: </dt>
+                    <dd className="inline">
+                      {formatCents(
+                        readiness.data.billing.creditReserveCents ?? 0,
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Crédito en vuelo: </dt>
+                    <dd className="inline">
+                      {formatCents(
+                        readiness.data.billing.creditInFlightCents ?? 0,
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Salud: </dt>
+                    <dd className="inline">
+                      {billingHealthLabel(readiness.data.billingHealth.level)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Autonomía estimada: </dt>
+                    <dd className="inline">
+                      {readiness.data.billingHealth.autonomyDays === null
+                        ? "No estimada"
+                        : `${readiness.data.billingHealth.autonomyDays} días`}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="inline">Cuota Kapso: </dt>
+                    <dd className="inline">
+                      {readiness.data.billing.kapsoQuotaConsumed} /{" "}
+                      {readiness.data.billing.kapsoMonthlyQuota ?? "∞"} mensajes
+                      {readiness.data.billing.kapsoQuotaInFlight === undefined
+                        ? ""
+                        : ` · ${readiness.data.billing.kapsoQuotaInFlight} en vuelo`}
                     </dd>
                   </div>
                   <div>
@@ -1109,6 +1430,14 @@ function formatCents(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+function billingHealthLabel(level: "normal" | "warning" | "critical") {
+  return {
+    critical: "Crítica",
+    normal: "Normal",
+    warning: "Advertencia",
+  }[level];
+}
+
 function DiagnosticValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
@@ -1116,6 +1445,15 @@ function DiagnosticValue({ label, value }: { label: string; value: string }) {
         {label}
       </dt>
       <dd className="mt-1 font-medium text-slate-100">{value}</dd>
+    </div>
+  );
+}
+
+function MetricValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+      <p className="text-xs tracking-wide text-slate-400 uppercase">{label}</p>
+      <p className="mt-1 font-medium text-slate-100">{value}</p>
     </div>
   );
 }

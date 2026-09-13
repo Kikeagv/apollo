@@ -8,10 +8,58 @@ import {
   type TransactionalDelivery,
   type TransactionalDeliveryStore,
 } from "./transactional-deliveries";
+import { WhatsAppCircuitBreakerOpenError } from "./whatsapp-provider";
 
 const now = new Date("2026-08-14T12:00:00.000Z");
 
 describe("runTransactionalDeliveryWorker", () => {
+  it("conserva la Entrega pendiente si el circuito se abre antes de Kapso", async () => {
+    const delivery: TransactionalDelivery = {
+      attempts: 1,
+      clinicId: "clinic-1",
+      id: "delivery-circuit-open",
+      idempotencyKey: "appointment-1:24h:contact-1",
+      kind: "appointment-reminder",
+      payload: {
+        appointmentId: "appointment-1",
+        appointmentStartsAt: new Date("2026-08-15T12:00:00.000Z"),
+        checkpoint: "24h",
+        clinicName: "Clínica Central",
+        recipient: { id: "contact-1", name: "Ana", phoneE164: "+50370000000" },
+      },
+    };
+    const deferForCircuit = vi
+      .fn<NonNullable<TransactionalDeliveryStore["deferForCircuit"]>>()
+      .mockResolvedValue(undefined);
+    const scheduleRetry = vi
+      .fn<TransactionalDeliveryStore["scheduleRetry"]>()
+      .mockResolvedValue(undefined);
+
+    await expect(
+      runTransactionalDeliveryWorker(
+        { now },
+        {
+          claimReadyDeliveries: vi.fn().mockResolvedValue([delivery]),
+          deferForCircuit,
+          markFailed: vi.fn(),
+          markDelivered: vi.fn(),
+          scheduleRetry,
+        },
+        {
+          send: vi
+            .fn()
+            .mockRejectedValue(new WhatsAppCircuitBreakerOpenError("clinic-1")),
+        },
+      ),
+    ).resolves.toMatchObject({ claimed: 1, retried: 1 });
+
+    const deferredCall = deferForCircuit.mock.calls[0]?.[0];
+    expect(deferredCall?.delivery).toEqual(delivery);
+    expect(deferredCall?.error).toBeInstanceOf(WhatsAppCircuitBreakerOpenError);
+    expect(deferredCall?.now).toEqual(now);
+    expect(scheduleRetry).not.toHaveBeenCalled();
+  });
+
   it("reintenta tras vencer la concesión sin cambiar la clave de idempotencia", async () => {
     const delivery: TransactionalDelivery = {
       attempts: 0,

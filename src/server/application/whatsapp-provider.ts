@@ -10,6 +10,22 @@ export class WhatsAppConnectionRequiredError extends Error {
   }
 }
 
+export class WhatsAppCircuitBreakerOpenError extends Error {
+  readonly circuitOpen = true;
+  readonly clinicId: string;
+  readonly retryable = true;
+
+  constructor(clinicId: string, reason?: string) {
+    super(
+      reason === undefined
+        ? "La Conexión de WhatsApp está pausada por el circuit breaker"
+        : `La Conexión de WhatsApp está pausada: ${reason}`,
+    );
+    this.clinicId = clinicId;
+    this.name = "WhatsAppCircuitBreakerOpenError";
+  }
+}
+
 export type WhatsAppSendResult = {
   providerMessageId: string;
   status: "accepted";

@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import type {
   KapsoProvisioningConnection,
@@ -12,9 +23,11 @@ import type { KapsoPhoneNumberLifecycleEvent } from "~/domain/whatsapp-kapso-pro
 import {
   inWhatsAppProvisioningWorkerTransaction,
   inWhatsAppWebhookIngressTransaction,
+  type ClinicTransaction,
 } from "~/server/db/clinic-context";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
 import { enqueueTransactionalDeliveryStatus } from "~/server/db/transactional-delivery-store";
+import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
 import {
   clinics,
   whatsappConnections,
@@ -23,6 +36,7 @@ import {
 } from "~/server/db/schema";
 
 const PROVISIONING_LEASE_MS = 10 * 60_000;
+const MAX_PROVISIONING_ATTEMPTS = 3;
 
 export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
   enqueueInbound: (input) => drizzleWhatsAppInboundStore.enqueueInbound(input),
@@ -42,6 +56,7 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
             or(
               and(
                 eq(whatsappWebhookEvents.status, "pending"),
+                lt(whatsappWebhookEvents.attempts, MAX_PROVISIONING_ATTEMPTS),
                 or(
                   isNull(whatsappWebhookEvents.nextAttemptAt),
                   lte(whatsappWebhookEvents.nextAttemptAt, now),
@@ -49,6 +64,7 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
               ),
               and(
                 eq(whatsappWebhookEvents.status, "processing"),
+                lte(whatsappWebhookEvents.attempts, MAX_PROVISIONING_ATTEMPTS),
                 lte(whatsappWebhookEvents.leaseExpiresAt, now),
               ),
             ),
@@ -58,10 +74,19 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
       const claimed: KapsoProvisioningEvent[] = [];
 
       for (const candidate of candidates) {
+        if (
+          await isProvisioningEventCircuitOpen(transaction, candidate.payload)
+        ) {
+          continue;
+        }
         const [event] = await transaction
           .update(whatsappWebhookEvents)
           .set({
-            attempts: candidate.attempts + 1,
+            attempts:
+              candidate.status === "processing" &&
+              candidate.attempts >= MAX_PROVISIONING_ATTEMPTS
+                ? candidate.attempts
+                : candidate.attempts + 1,
             leaseExpiresAt: new Date(now.valueOf() + PROVISIONING_LEASE_MS),
             leaseToken: randomUUID(),
             status: "processing",
@@ -76,6 +101,7 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
               or(
                 and(
                   eq(whatsappWebhookEvents.status, "pending"),
+                  lt(whatsappWebhookEvents.attempts, MAX_PROVISIONING_ATTEMPTS),
                   or(
                     isNull(whatsappWebhookEvents.nextAttemptAt),
                     lte(whatsappWebhookEvents.nextAttemptAt, now),
@@ -83,13 +109,21 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
                 ),
                 and(
                   eq(whatsappWebhookEvents.status, "processing"),
+                  lte(
+                    whatsappWebhookEvents.attempts,
+                    MAX_PROVISIONING_ATTEMPTS,
+                  ),
                   lte(whatsappWebhookEvents.leaseExpiresAt, now),
                 ),
               ),
             ),
           )
           .returning();
-        if (event !== undefined) claimed.push(toProvisioningEvent(event));
+        if (event !== undefined) {
+          claimed.push(
+            toProvisioningEvent(event, candidate.status === "processing"),
+          );
+        }
       }
       return claimed;
     });
@@ -358,6 +392,28 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
     });
   },
 
+  async pauseForCircuit({ eventId, leaseToken, pausedAt, reason }) {
+    await inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+      await transaction
+        .update(whatsappWebhookEvents)
+        .set({
+          attempts: 0,
+          lastError: reason.slice(0, 1_000),
+          leaseExpiresAt: null,
+          leaseToken: null,
+          nextAttemptAt: pausedAt,
+          status: "pending",
+        })
+        .where(
+          and(
+            eq(whatsappWebhookEvents.id, eventId),
+            eq(whatsappWebhookEvents.leaseToken, leaseToken),
+            eq(whatsappWebhookEvents.status, "processing"),
+          ),
+        );
+    });
+  },
+
   async updateConnection(input) {
     await inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
       const [activeLease] = await transaction
@@ -423,17 +479,55 @@ export const drizzleWhatsAppProvisioningStore: KapsoProvisioningStore = {
 
 function toProvisioningEvent(
   event: typeof whatsappWebhookEvents.$inferSelect,
+  leaseRecovered = false,
 ): KapsoProvisioningEvent {
   return {
     attempts: event.attempts,
     id: event.id,
     idempotencyKey: event.idempotencyKey,
+    leaseExpiresAt: event.leaseExpiresAt,
+    leaseRecovered,
     leaseToken: event.leaseToken,
     nextAttemptAt: event.nextAttemptAt,
     payload: event.payload as KapsoPhoneNumberLifecycleEvent,
     receivedAt: event.receivedAt,
     status: event.status,
   };
+}
+
+async function isProvisioningEventCircuitOpen(
+  transaction: ClinicTransaction,
+  payload: unknown,
+) {
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    Array.isArray(payload)
+  ) {
+    return false;
+  }
+  const event = payload as Partial<KapsoPhoneNumberLifecycleEvent>;
+  if (
+    typeof event.customerId !== "string" ||
+    typeof event.phoneNumberId !== "string"
+  ) {
+    return false;
+  }
+  const connections = await transaction.query.whatsappConnections.findMany({
+    columns: { clinicId: true },
+    where: or(
+      eq(whatsappConnections.customer, event.customerId),
+      eq(whatsappConnections.phoneNumberId, event.phoneNumberId),
+    ),
+  });
+  for (const connection of connections) {
+    if (
+      await isWhatsAppCircuitOpenInTransaction(transaction, connection.clinicId)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function toProvisioningConnection(

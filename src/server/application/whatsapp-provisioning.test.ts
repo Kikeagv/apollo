@@ -5,6 +5,7 @@ import { whatsappCriticalTemplateCatalog } from "~/domain/whatsapp-readiness";
 
 import {
   KapsoProvisioningProviderError,
+  KAPSO_PROVISIONING_MAX_ATTEMPTS,
   receiveKapsoWebhook,
   runKapsoProvisioningWorker,
   type KapsoProvisioningConnection,
@@ -17,6 +18,7 @@ import type {
   WhatsAppReadinessRecord,
   WhatsAppReadinessProvisioningStore,
 } from "./whatsapp-readiness";
+import type { WhatsAppCircuitBreakerStore } from "./whatsapp-circuit-breaker";
 
 function connection(
   overrides: Partial<KapsoProvisioningConnection> = {},
@@ -37,6 +39,7 @@ function connection(
 
 function createFakeStore(initialConnection = connection()) {
   const events: KapsoProvisioningEvent[] = [];
+  const leaseExpiresAt = new Map<string, Date | null>();
   const steps = new Map<
     string,
     { status: "succeeded" | "failed"; remoteId?: string }
@@ -52,6 +55,8 @@ function createFakeStore(initialConnection = connection()) {
         attempts: 0,
         id: `event-${++sequence}`,
         idempotencyKey: input.idempotencyKey,
+        leaseExpiresAt: null,
+        leaseRecovered: false,
         leaseToken: null,
         nextAttemptAt: null,
         payload: input.event,
@@ -67,13 +72,23 @@ function createFakeStore(initialConnection = connection()) {
     async claimDueEvents(input) {
       const pending = events.filter(
         (item) =>
-          item.status === "pending" &&
-          (item.nextAttemptAt === null || item.nextAttemptAt <= input.now),
+          (item.status === "pending" &&
+            (item.nextAttemptAt === null || item.nextAttemptAt <= input.now)) ||
+          (item.status === "processing" &&
+            item.attempts <= KAPSO_PROVISIONING_MAX_ATTEMPTS &&
+            (leaseExpiresAt.get(item.id) ?? item.leaseExpiresAt) !== null &&
+            (leaseExpiresAt.get(item.id) ?? item.leaseExpiresAt)! <= input.now),
       );
       for (const item of pending) {
+        const recoveringLease = item.status === "processing";
+        const recoveringAtMaxAttempts =
+          recoveringLease && item.attempts >= KAPSO_PROVISIONING_MAX_ATTEMPTS;
         item.status = "processing";
-        item.attempts += 1;
+        if (!recoveringAtMaxAttempts) item.attempts += 1;
+        item.leaseRecovered = recoveringLease;
         item.leaseToken = `lease-${item.id}-${item.attempts}`;
+        item.leaseExpiresAt = new Date(input.now.valueOf() + 600_000);
+        leaseExpiresAt.set(item.id, item.leaseExpiresAt);
       }
       return pending;
     },
@@ -140,6 +155,15 @@ function createFakeStore(initialConnection = connection()) {
         item.nextAttemptAt = input.nextAttemptAt;
       }
     },
+    async pauseForCircuit(input) {
+      const item = events.find((candidate) => candidate.id === input.eventId);
+      if (item) {
+        item.attempts = 0;
+        item.status = "pending";
+        item.nextAttemptAt = input.pausedAt;
+        item.leaseExpiresAt = null;
+      }
+    },
     async markRejected(input) {
       const item = events.find((candidate) => candidate.id === input.eventId);
       if (item) item.status = "rejected";
@@ -148,6 +172,9 @@ function createFakeStore(initialConnection = connection()) {
   return {
     events,
     getConnection: () => currentConnection,
+    expireLease: (eventId: string, now = new Date(0)) => {
+      leaseExpiresAt.set(eventId, now);
+    },
     getStep: (eventId: string, step: KapsoProvisioningStepName) =>
       steps.get(`${eventId}:${step}`),
     store,
@@ -254,7 +281,8 @@ function createFakeReadiness(overrides: Partial<WhatsAppReadinessRecord> = {}) {
   const saveForProvisioning = vi.fn<
     WhatsAppReadinessProvisioningStore["saveForProvisioning"]
   >(async (input) => {
-    state = input.state;
+    state = { ...input.state, revision: (input.state.revision ?? 0) + 1 };
+    return state;
   });
   const syncAlerts = vi.fn<WhatsAppReadinessProvisioningStore["syncAlerts"]>(
     async () => undefined,
@@ -673,6 +701,50 @@ describe("worker de provisión Kapso", () => {
     );
   });
 
+  it("abre inmediatamente el circuito cuando Kapso reporta un webhook pausado", async () => {
+    const fake = createFakeStore();
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.created",
+      idempotencyKey: "kapso-webhook-paused-1",
+      payload: {
+        customer: { id: "customer-1" },
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+    const provider = createFakeProvider({
+      ensureProjectWebhook: vi.fn().mockResolvedValue({
+        remoteId: "project-webhook-1",
+        wasPaused: true,
+      }),
+    });
+    const open = vi.fn().mockResolvedValue({
+      status: "open",
+    });
+    const recordFailure = vi.fn();
+
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        provider,
+        undefined,
+        { open, recordFailure } as unknown as WhatsAppCircuitBreakerStore,
+      ),
+    ).resolves.toMatchObject({ retried: 1 });
+
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorKind: "worker",
+        cause: "webhook-paused",
+        workerKind: "provisioning",
+      }),
+    );
+    expect(recordFailure).not.toHaveBeenCalled();
+    expect(fake.events[0]).toMatchObject({ attempts: 0, status: "pending" });
+  });
+
   it("asocia el número y configura ambos webhooks sin declarar ready", async () => {
     const fake = createFakeStore();
     await receiveKapsoWebhook({
@@ -828,6 +900,131 @@ describe("worker de provisión Kapso", () => {
       runKapsoProvisioningWorker({ now: new Date() }, fake.store, provider),
     ).resolves.toMatchObject({ retried: 1 });
     expect(fake.getConnection()).toMatchObject({ status: "degraded" });
+  });
+
+  it("limita la provisión a tres intentos y abre el circuito sin perder el evento", async () => {
+    const fake = createFakeStore();
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.created",
+      idempotencyKey: "kapso-three-attempts-1",
+      payload: {
+        customer: { id: "customer-1" },
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+    const provider = createFakeProvider({
+      ensureProjectWebhook: vi
+        .fn()
+        .mockRejectedValue(
+          new KapsoProvisioningProviderError(503, "Kapso down"),
+        ),
+    });
+    const recordFailure = vi
+      .fn<WhatsAppCircuitBreakerStore["recordFailure"]>()
+      .mockResolvedValueOnce({
+        opened: false,
+        state: {} as Awaited<ReturnType<WhatsAppCircuitBreakerStore["read"]>>,
+      })
+      .mockResolvedValueOnce({
+        opened: false,
+        state: {} as Awaited<ReturnType<WhatsAppCircuitBreakerStore["read"]>>,
+      })
+      .mockResolvedValueOnce({
+        opened: true,
+        state: {} as Awaited<ReturnType<WhatsAppCircuitBreakerStore["read"]>>,
+      });
+    const circuitBreaker = {
+      recordFailure,
+    } as unknown as WhatsAppCircuitBreakerStore;
+    const initial = new Date("2026-09-07T12:00:00.000Z");
+
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: initial },
+        fake.store,
+        provider,
+        undefined,
+        circuitBreaker,
+      ),
+    ).resolves.toMatchObject({ retried: 1 });
+    expect(fake.events[0]?.nextAttemptAt).toEqual(
+      new Date(initial.valueOf() + 10_000),
+    );
+
+    const secondAttempt = fake.events[0];
+    if (!secondAttempt) throw new Error("Falta el evento de prueba");
+    secondAttempt.nextAttemptAt = new Date(initial.valueOf() + 10_000);
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: secondAttempt.nextAttemptAt },
+        fake.store,
+        provider,
+        undefined,
+        circuitBreaker,
+      ),
+    ).resolves.toMatchObject({ retried: 1 });
+    expect(fake.events[0]?.nextAttemptAt).toEqual(
+      new Date(initial.valueOf() + 50_000),
+    );
+
+    const thirdAttempt = fake.events[0];
+    if (!thirdAttempt) throw new Error("Falta el evento de prueba");
+    thirdAttempt.nextAttemptAt = new Date(initial.valueOf() + 50_000);
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: thirdAttempt.nextAttemptAt },
+        fake.store,
+        provider,
+        undefined,
+        circuitBreaker,
+      ),
+    ).resolves.toMatchObject({ retried: 1 });
+    expect(provider.ensureProjectWebhook).toHaveBeenCalledTimes(3);
+    expect(recordFailure).toHaveBeenCalledTimes(3);
+    expect(fake.events[0]).toMatchObject({ attempts: 0, status: "pending" });
+  });
+
+  it("recupera un lease abandonado en el tercer intento y lo resuelve sin repetir Kapso", async () => {
+    const fake = createFakeStore();
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.phone_number.created",
+      idempotencyKey: "kapso-abandoned-third-attempt-1",
+      payload: {
+        customer: { id: "customer-1" },
+        phone_number_id: "phone-1",
+        project: { id: "project-1" },
+      },
+      store: fake.store,
+    });
+    const event = fake.events[0];
+    if (event === undefined) throw new Error("Falta el evento abandonado");
+    event.status = "processing";
+    event.attempts = KAPSO_PROVISIONING_MAX_ATTEMPTS;
+    event.leaseToken = "lease-abandoned";
+    fake.expireLease(event.id);
+
+    const provider = createFakeProvider();
+    const recordFailure = vi
+      .fn<WhatsAppCircuitBreakerStore["recordFailure"]>()
+      .mockResolvedValue({
+        opened: false,
+        state: {} as Awaited<ReturnType<WhatsAppCircuitBreakerStore["read"]>>,
+      });
+
+    await expect(
+      runKapsoProvisioningWorker(
+        { now: new Date("2026-09-07T12:00:00.000Z") },
+        fake.store,
+        provider,
+        undefined,
+        { recordFailure } as unknown as WhatsAppCircuitBreakerStore,
+      ),
+    ).resolves.toMatchObject({ claimed: 1, rejected: 1 });
+    expect(provider.ensureProjectWebhook).not.toHaveBeenCalled();
+    expect(recordFailure).toHaveBeenCalledTimes(1);
+    expect(event.status).toBe("rejected");
   });
 
   it("mantiene disconnected cuando un evento creado llega después del eliminado", async () => {

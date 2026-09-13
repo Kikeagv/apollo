@@ -18,11 +18,14 @@ import {
   type WhatsAppConsentEvidence,
 } from "~/domain/whatsapp-consent";
 import type { WhatsAppConsentStore } from "~/server/application/whatsapp-consent";
+import { WhatsAppCircuitBreakerOpenError } from "~/server/application/whatsapp-provider";
 import {
   inWhatsAppInboundWorkerTransaction,
   inWhatsAppOutboundWorkerTransaction,
   inWhatsAppWebhookIngressTransaction,
+  lockWhatsAppCircuit,
 } from "~/server/db/clinic-context";
+import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
 import type { db } from "~/server/db";
 import {
   clinics,
@@ -264,6 +267,29 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
       const claimed: WhatsAppInboundEvent[] = [];
 
       for (const candidate of candidates) {
+        const connection =
+          await transaction.query.whatsappConnections.findFirst({
+            columns: { clinicId: true, status: true },
+            where: eq(
+              whatsappConnections.phoneNumberId,
+              candidate.phoneNumberId,
+            ),
+          });
+        if (
+          connection !== undefined &&
+          !isBusinessAppContinuityAllowed(
+            candidate.origin,
+            connection.status,
+          ) &&
+          (await isWhatsAppCircuitOpenInTransaction(
+            transaction,
+            connection.clinicId,
+          ))
+        ) {
+          // La entrada permanece pendiente para conservar el evento y
+          // procesarlo cuando el superadmin reactive la Clínica.
+          continue;
+        }
         const leaseToken = randomUUID();
         const [updated] = await transaction
           .update(whatsappInboundMessages)
@@ -333,7 +359,24 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
             "El customer de Kapso no coincide con la Conexión de la Clínica",
         } satisfies WhatsAppInboundResolution;
       }
-      if (connection.status !== "ready") {
+      const businessAppContinuity = isBusinessAppContinuityAllowed(
+        message.origin,
+        connection.status,
+      );
+      if (
+        !businessAppContinuity &&
+        (await isWhatsAppCircuitOpenInTransaction(
+          transaction,
+          connection.clinicId,
+        ))
+      ) {
+        return {
+          kind: "circuit-open",
+          reason:
+            "El circuit breaker de la Clínica está abierto; el mensaje queda pendiente",
+        } satisfies WhatsAppInboundResolution;
+      }
+      if (connection.status !== "ready" && !businessAppContinuity) {
         return {
           kind: "connection-not-ready",
           reason:
@@ -591,6 +634,14 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         .limit(limit);
       const claimed: WhatsAppOutboundReply[] = [];
       for (const candidate of candidates) {
+        if (
+          await isWhatsAppCircuitOpenInTransaction(
+            transaction,
+            candidate.clinicId,
+          )
+        ) {
+          continue;
+        }
         const leaseToken = randomUUID();
         const [updated] = await transaction
           .update(whatsappInboundReplies)
@@ -738,6 +789,28 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
     });
   },
 
+  async deferReplyForCircuit({ id, leaseToken, now, reason }) {
+    await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+      await transaction
+        .update(whatsappInboundReplies)
+        .set({
+          attempts: sql`greatest(0, ${whatsappInboundReplies.attempts} - 1)`,
+          lastError: reason.slice(0, 1_000),
+          leaseExpiresAt: null,
+          leaseToken: null,
+          nextAttemptAt: new Date(now.valueOf() + RETRY_DELAY_MS),
+          status: "pending",
+        })
+        .where(
+          and(
+            eq(whatsappInboundReplies.id, id),
+            eq(whatsappInboundReplies.leaseToken, leaseToken),
+            eq(whatsappInboundReplies.status, "processing"),
+          ),
+        );
+    });
+  },
+
   async saveAssistantResponse({ eventId, leaseToken, responseText }) {
     await inWhatsAppInboundWorkerTransaction(async (transaction) => {
       await transaction
@@ -786,6 +859,37 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
             eq(whatsappInboundMessages.status, "processing"),
           ),
         );
+    });
+  },
+
+  async deferForCircuit({ eventId, leaseToken, now, reason }) {
+    await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+      await transaction
+        .update(whatsappInboundMessages)
+        .set({
+          attempts: sql`greatest(0, ${whatsappInboundMessages.attempts} - 1)`,
+          lastError: reason.slice(0, 1_000),
+          leaseExpiresAt: null,
+          leaseToken: null,
+          nextAttemptAt: new Date(now.valueOf() + RETRY_DELAY_MS),
+          processedAt: null,
+          status: "pending",
+        })
+        .where(
+          and(
+            eq(whatsappInboundMessages.id, eventId),
+            eq(whatsappInboundMessages.leaseToken, leaseToken),
+            eq(whatsappInboundMessages.status, "processing"),
+          ),
+        );
+    });
+  },
+
+  async assertCircuitClosed({ clinicId }) {
+    await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+      await lockWhatsAppCircuit(transaction, clinicId);
+      if (await isWhatsAppCircuitOpenInTransaction(transaction, clinicId))
+        throw new WhatsAppCircuitBreakerOpenError(clinicId);
     });
   },
 
@@ -1150,6 +1254,16 @@ function storageOriginToDomain(origin: string): WhatsAppInboundMessageOrigin {
     default:
       return "unknown";
   }
+}
+
+function isBusinessAppContinuityAllowed(
+  origin: string,
+  connectionStatus: (typeof whatsappConnections.$inferSelect)["status"],
+) {
+  return (
+    (origin === "business_app" || origin === "business-app") &&
+    connectionStatus === "blocked"
+  );
 }
 
 function toIdentityRecord(

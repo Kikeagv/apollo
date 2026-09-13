@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createKapsoWhatsAppSenders } from "./kapso-whatsapp";
 import type { KapsoWhatsAppProviderError } from "./kapso-whatsapp";
 import { WhatsAppConnectionRequiredError } from "~/server/application/whatsapp-provider";
+import type { WhatsAppBillingCapacityStore } from "~/server/application/whatsapp-billing-capacity";
 import type { reserveWhatsAppSendSlot } from "~/server/db/whatsapp-rate-limit-store";
 
 const connection = {
@@ -73,6 +74,133 @@ describe("adaptador de envío Kapso", () => {
       to: "50370000001",
       type: "text",
     });
+  });
+
+  it("reserva capacidad antes del POST y la liquida con el resultado aceptado", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ messages: [{ id: "wamid-capacity" }] }), {
+        status: 200,
+      }),
+    );
+    const reserve = vi
+      .fn<WhatsAppBillingCapacityStore["reserve"]>()
+      .mockResolvedValue({
+        reserved: true,
+        status: "reserved",
+      });
+    const settle = vi
+      .fn<WhatsAppBillingCapacityStore["settle"]>()
+      .mockResolvedValue(undefined);
+    const capacity: WhatsAppBillingCapacityStore = {
+      reserve,
+      settle,
+    };
+    const sender = createKapsoWhatsAppSenders({
+      apiKey: "kapso-secret",
+      fetchImpl,
+      requireConnection: vi.fn().mockResolvedValue(connection),
+      reserveCapacity: capacity,
+      reserveSendSlot: async () => 0,
+    });
+
+    await expect(
+      sender.sendConversationReply({
+        clinicId: "clinic-1",
+        idempotencyKey: "capacity-1",
+        recipientPhoneE164: "+50370000001",
+        text: "Mensaje reservado",
+      }),
+    ).resolves.toEqual({
+      providerMessageId: "wamid-capacity",
+      status: "accepted",
+    });
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clinicId: "clinic-1",
+        reservationKey: "capacity-1",
+      }),
+    );
+    expect(settle).toHaveBeenCalledTimes(1);
+    const settlement = settle.mock.calls[0]?.[0];
+    expect(settlement).toMatchObject({
+      clinicId: "clinic-1",
+      outcome: "accepted",
+      reservationKey: "capacity-1",
+    });
+    expect(settlement?.now).toBeInstanceOf(Date);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("conserva el circuito cerrado cuando la reserva rechaza el envío", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const reserve = vi
+      .fn<WhatsAppBillingCapacityStore["reserve"]>()
+      .mockResolvedValue({
+        reason: "quota-exhausted",
+        reserved: false,
+      });
+    const settle = vi
+      .fn<WhatsAppBillingCapacityStore["settle"]>()
+      .mockResolvedValue(undefined);
+    const capacity: WhatsAppBillingCapacityStore = {
+      reserve,
+      settle,
+    };
+    const sender = createKapsoWhatsAppSenders({
+      apiKey: "kapso-secret",
+      fetchImpl,
+      requireConnection: vi.fn().mockResolvedValue(connection),
+      reserveCapacity: capacity,
+      reserveSendSlot: async () => 0,
+    });
+
+    await expect(
+      sender.sendConversationReply({
+        clinicId: "clinic-1",
+        idempotencyKey: "capacity-2",
+        recipientPhoneE164: "+50370000001",
+        text: "No debe salir",
+      }),
+    ).rejects.toThrow("cuota");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
+  });
+
+  it("libera la reserva si falla el rate limiter antes del POST", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const reserve = vi
+      .fn<WhatsAppBillingCapacityStore["reserve"]>()
+      .mockResolvedValue({ reserved: true, status: "reserved" });
+    const settle = vi
+      .fn<WhatsAppBillingCapacityStore["settle"]>()
+      .mockResolvedValue(undefined);
+    const sender = createKapsoWhatsAppSenders({
+      apiKey: "kapso-secret",
+      fetchImpl,
+      requireConnection: vi.fn().mockResolvedValue(connection),
+      reserveCapacity: { reserve, settle },
+      reserveSendSlot: vi
+        .fn<typeof reserveWhatsAppSendSlot>()
+        .mockRejectedValue(new Error("rate limiter unavailable")),
+    });
+
+    await expect(
+      sender.sendConversationReply({
+        clinicId: "clinic-1",
+        idempotencyKey: "capacity-rate-limit-error",
+        recipientPhoneE164: "+50370000001",
+        text: "No debe quedar reservada",
+      }),
+    ).rejects.toThrow("rate limiter unavailable");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(settle).toHaveBeenCalledTimes(1);
+    const settlement = settle.mock.calls[0]?.[0];
+    expect(settlement).toMatchObject({
+      clinicId: "clinic-1",
+      outcome: "failed",
+      reservationKey: "capacity-rate-limit-error",
+    });
+    expect(settlement?.now).toBeInstanceOf(Date);
   });
 
   it("usa BSUID y el formato de plantilla Utility fuera de ventana", async () => {

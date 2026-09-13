@@ -3,6 +3,10 @@ import {
   type KapsoDeliveryStatusEventName,
 } from "~/domain/whatsapp-delivery-events";
 import type { TransactionalDeliveryCallbackStore } from "./transactional-deliveries";
+import {
+  persistWhatsAppOperationalMetric,
+  type WhatsAppOperationalObserver,
+} from "./whatsapp-circuit-breaker";
 
 export class TransactionalDeliveryStatusNotFoundError extends Error {
   constructor() {
@@ -52,6 +56,7 @@ export async function runTransactionalDeliveryStatusWorker(
   input: { limit?: number; now: Date },
   queue: TransactionalDeliveryStatusStore,
   callbackStore: TransactionalDeliveryCallbackStore,
+  observer?: WhatsAppOperationalObserver,
 ) {
   const events = await queue.claimDueStatusEvents({
     limit: input.limit ?? 50,
@@ -67,7 +72,7 @@ export async function runTransactionalDeliveryStatusWorker(
         event.eventName,
         event.payload,
       );
-      await callbackStore.recordProviderCallback({
+      const observation = await callbackStore.recordProviderCallback({
         ...(status.correlationKey === null
           ? {}
           : { idempotencyKey: status.correlationKey }),
@@ -77,6 +82,29 @@ export async function runTransactionalDeliveryStatusWorker(
         ...(status.error === null ? {} : { error: status.error }),
         status: status.status,
       });
+      if (observation !== undefined && observer !== undefined) {
+        await persistWhatsAppOperationalMetric(observer, {
+          clinicId: observation.clinicId,
+          errorCode: observation.errorCode,
+          idempotencyKey: observation.idempotencyKey,
+          latencyMs: null,
+          metric: observation.metric,
+          occurredAt: input.now,
+          operation: observation.operation,
+          outcome: observation.outcome,
+          templateName: observation.templateName,
+          workerKind: "delivery-status",
+        });
+        if (observation.isNew !== false && observation.outcome === "failed") {
+          await observer.recordFailure({
+            cause: "high-failure-rate",
+            clinicId: observation.clinicId,
+            now: input.now,
+            reason: status.error ?? "Kapso reportó fallo de Entrega",
+            workerKind: "delivery-status",
+          });
+        }
+      }
       await queue.markStatusProcessed({
         eventId: event.id,
         leaseToken,

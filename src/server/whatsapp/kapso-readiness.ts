@@ -136,6 +136,16 @@ export function createKapsoReadinessProvider(
         "credit_balance",
         "remaining_credit_usd",
       ]);
+      const creditLimitCents = readOptionalUsdCents(data, [
+        "credit_limit_usd",
+        "monthly_credit_limit_usd",
+        "credit_limit",
+      ]);
+      const creditReserveCents = readOptionalUsdCents(data, [
+        "credit_reserve_usd",
+        "send_reserve_usd",
+        "reserve_usd",
+      ]);
       const consumedCents = readUsdCents(data, [
         "attributed_consumption_usd",
         "attributed_consumed_usd",
@@ -152,6 +162,44 @@ export function createKapsoReadinessProvider(
       const alertThresholdCents = readOptionalUsdCents(data, [
         "alert_threshold_usd",
         "alert_threshold",
+      ]);
+      const estimatedDailyConsumptionCents = readOptionalUsdCents(data, [
+        "estimated_daily_consumption_usd",
+        "daily_consumption_usd",
+      ]);
+      const warningBalancePercent = readOptionalInteger(data, [
+        "warning_balance_percent",
+        "warning_threshold_percent",
+      ]);
+      const criticalBalancePercent = readOptionalInteger(data, [
+        "critical_balance_percent",
+        "critical_threshold_percent",
+      ]);
+      const warningAutonomyDays = readOptionalInteger(data, [
+        "warning_autonomy_days",
+      ]);
+      const criticalAutonomyDays = readOptionalInteger(data, [
+        "critical_autonomy_days",
+      ]);
+      const kapsoMonthlyQuota = readOptionalInteger(data, [
+        "monthly_message_quota",
+        "monthly_quota",
+        "message_quota",
+      ]);
+      const kapsoQuotaPeriod = readOptionalQuotaPeriod(data, [
+        "quota_period",
+        "billing_period",
+        "period",
+        "period_start",
+      ]);
+      const kapsoQuotaConsumed = readOptionalInteger(data, [
+        "messages_used",
+        "quota_consumed",
+        "monthly_messages_used",
+      ]);
+      const kapsoQuotaReserved = readOptionalInteger(data, [
+        "messages_reserved",
+        "quota_reserved",
       ]);
       const mode = readBillingMode(data);
       const chargesSeparated = readBoolean(data, [
@@ -171,6 +219,19 @@ export function createKapsoReadinessProvider(
         chargesSeparated,
         consumedCents,
         creditCents,
+        ...(creditLimitCents === null ? {} : { creditLimitCents }),
+        ...(creditReserveCents === null ? {} : { creditReserveCents }),
+        ...(estimatedDailyConsumptionCents === null
+          ? {}
+          : { estimatedDailyConsumptionCents }),
+        ...(warningBalancePercent === null ? {} : { warningBalancePercent }),
+        ...(criticalBalancePercent === null ? {} : { criticalBalancePercent }),
+        ...(warningAutonomyDays === null ? {} : { warningAutonomyDays }),
+        ...(criticalAutonomyDays === null ? {} : { criticalAutonomyDays }),
+        ...(kapsoMonthlyQuota === null ? {} : { kapsoMonthlyQuota }),
+        ...(kapsoQuotaPeriod === null ? {} : { kapsoQuotaPeriod }),
+        ...(kapsoQuotaConsumed === null ? {} : { kapsoQuotaConsumed }),
+        ...(kapsoQuotaReserved === null ? {} : { kapsoQuotaReserved }),
         metaChargesCents,
         mode,
         platformChargesCents,
@@ -389,6 +450,40 @@ function readOptionalUsdCents(
     }
   }
   return null;
+}
+
+function readOptionalInteger(
+  data: Record<string, unknown>,
+  keys: string[],
+): number | null {
+  for (const key of keys) {
+    const value = data[key];
+    if (
+      typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value >= 0
+    ) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+      if (Number.isSafeInteger(parsed) && parsed >= 0) return parsed;
+    }
+  }
+  return null;
+}
+
+function readOptionalQuotaPeriod(
+  data: Record<string, unknown>,
+  keys: string[],
+): string | null {
+  const value = readString(data, keys)?.trim();
+  if (value === undefined || value === null) return null;
+  const match = /^(\d{4})-(\d{1,2})(?:-\d{1,2})?(?:T.*)?$/.exec(value);
+  if (match === null) return null;
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  return `${match[1]}-${String(month).padStart(2, "0")}`;
 }
 
 function readBoolean(data: Record<string, unknown>, keys: string[]) {

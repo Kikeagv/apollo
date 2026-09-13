@@ -19,6 +19,7 @@ import {
 } from "~/server/db/transactional-delivery-store";
 import { requireWhatsAppConnectionReady } from "~/server/db/whatsapp-connection-store";
 import { createKapsoInboundReplySender } from "~/server/whatsapp/kapso-whatsapp";
+import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
 
 /** Drena mensajes Kapso ya autenticados, manteniendo la entrada HTTP rápida. */
 export async function POST(request: Request) {
@@ -89,6 +90,7 @@ export async function POST(request: Request) {
       isActive: (input) => isWhatsAppHumanTakeoverActive(input, takeoverStore),
       activate: (input) => activateWhatsAppHumanTakeover(input, takeoverStore),
     },
+    drizzleWhatsAppCircuitBreakerStore,
   );
   return Response.json(result);
 }

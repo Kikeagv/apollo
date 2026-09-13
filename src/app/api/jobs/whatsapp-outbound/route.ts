@@ -5,6 +5,8 @@ import { drizzleTransactionalDeliveryCallbackStore } from "~/server/db/transacti
 import { drizzleTransactionalDeliveryStatusStore } from "~/server/db/transactional-delivery-store";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
 import { createKapsoInboundReplyProvider } from "~/server/whatsapp/kapso-whatsapp";
+import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
+import { drizzleWhatsAppBillingCapacityStore } from "~/server/db/whatsapp-billing-capacity-store";
 
 /** Drena respuestas y reconcilia estados después de que Kapso aceptó el envío. */
 export async function POST(request: Request) {
@@ -19,12 +21,16 @@ export async function POST(request: Request) {
   const replies = await runWhatsAppOutboundReplyWorker(
     { now },
     drizzleWhatsAppInboundStore,
-    createKapsoInboundReplyProvider(),
+    createKapsoInboundReplyProvider({
+      reserveCapacity: drizzleWhatsAppBillingCapacityStore,
+    }),
+    drizzleWhatsAppCircuitBreakerStore,
   );
   const statuses = await runTransactionalDeliveryStatusWorker(
     { now },
     drizzleTransactionalDeliveryStatusStore,
     drizzleTransactionalDeliveryCallbackStore,
+    drizzleWhatsAppCircuitBreakerStore,
   );
   return Response.json({ replies, statuses });
 }

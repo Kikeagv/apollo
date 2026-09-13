@@ -1539,6 +1539,223 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
+
+          const circuitTables = await migrated<
+            Array<{
+              relforcerowsecurity: boolean;
+              relrowsecurity: boolean;
+              relname: string;
+            }>
+          >`
+            select c.relname, c.relrowsecurity, c.relforcerowsecurity
+            from pg_class c
+            inner join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relname in (
+                'pg-drizzle_whatsapp_billing_reservation',
+                'pg-drizzle_whatsapp_circuit_breaker',
+                'pg-drizzle_whatsapp_circuit_breaker_alert',
+                'pg-drizzle_whatsapp_circuit_breaker_audit',
+                'pg-drizzle_whatsapp_usage_metric'
+              )
+            order by c.relname
+          `;
+          expect(circuitTables).toEqual([
+            {
+              relname: "pg-drizzle_whatsapp_billing_reservation",
+              relforcerowsecurity: true,
+              relrowsecurity: true,
+            },
+            {
+              relname: "pg-drizzle_whatsapp_circuit_breaker",
+              relforcerowsecurity: true,
+              relrowsecurity: true,
+            },
+            {
+              relname: "pg-drizzle_whatsapp_circuit_breaker_alert",
+              relforcerowsecurity: true,
+              relrowsecurity: true,
+            },
+            {
+              relname: "pg-drizzle_whatsapp_circuit_breaker_audit",
+              relforcerowsecurity: true,
+              relrowsecurity: true,
+            },
+            {
+              relname: "pg-drizzle_whatsapp_usage_metric",
+              relforcerowsecurity: true,
+              relrowsecurity: true,
+            },
+          ]);
+          const circuitPolicies = await migrated<
+            Array<{
+              command: "ALL" | "DELETE" | "INSERT" | "SELECT" | "UPDATE";
+              name: string;
+              table_name: string;
+            }>
+          >`
+            select cmd as command, policyname as name, tablename as table_name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename in (
+                'pg-drizzle_whatsapp_billing_reservation',
+                'pg-drizzle_whatsapp_circuit_breaker',
+                'pg-drizzle_whatsapp_circuit_breaker_alert',
+                'pg-drizzle_whatsapp_circuit_breaker_audit',
+                'pg-drizzle_whatsapp_usage_metric'
+              )
+          `;
+          expect(circuitPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "SELECT",
+                name: "whatsapp_billing_reservation_outbound_worker_manage",
+                table_name: "pg-drizzle_whatsapp_billing_reservation",
+              },
+              {
+                command: "INSERT",
+                name: "whatsapp_billing_reservation_outbound_worker_insert",
+                table_name: "pg-drizzle_whatsapp_billing_reservation",
+              },
+              {
+                command: "UPDATE",
+                name: "whatsapp_billing_reservation_outbound_worker_update",
+                table_name: "pg-drizzle_whatsapp_billing_reservation",
+              },
+              {
+                command: "DELETE",
+                name: "whatsapp_reservation_retention_scheduler_delete",
+                table_name: "pg-drizzle_whatsapp_billing_reservation",
+              },
+              {
+                command: "ALL",
+                name: "whatsapp_circuit_breaker_superadmin_manage",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker",
+              },
+              {
+                command: "ALL",
+                name: "whatsapp_circuit_breaker_alert_superadmin_manage",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker_alert",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_circuit_breaker_alert_worker_read",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker_alert",
+              },
+              {
+                command: "INSERT",
+                name: "whatsapp_circuit_breaker_alert_worker_insert",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker_alert",
+              },
+              {
+                command: "UPDATE",
+                name: "whatsapp_circuit_breaker_alert_worker_update",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker_alert",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_circuit_breaker_worker_manage",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker",
+              },
+              {
+                command: "INSERT",
+                name: "whatsapp_circuit_breaker_worker_insert",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker",
+              },
+              {
+                command: "UPDATE",
+                name: "whatsapp_circuit_breaker_worker_update",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker",
+              },
+              {
+                command: "INSERT",
+                name: "whatsapp_circuit_breaker_audit_worker_append",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker_audit",
+              },
+              {
+                command: "DELETE",
+                name: "whatsapp_operational_retention_scheduler_delete",
+                table_name: "pg-drizzle_whatsapp_circuit_breaker_audit",
+              },
+              {
+                command: "DELETE",
+                name: "whatsapp_metric_retention_scheduler_delete",
+                table_name: "pg-drizzle_whatsapp_usage_metric",
+              },
+              {
+                command: "INSERT",
+                name: "whatsapp_usage_metric_worker_append",
+                table_name: "pg-drizzle_whatsapp_usage_metric",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_usage_metric_worker_read",
+                table_name: "pg-drizzle_whatsapp_usage_metric",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_usage_metric_superadmin_read",
+                table_name: "pg-drizzle_whatsapp_usage_metric",
+              },
+            ]),
+          );
+          const billingWorkerPolicy = await migrated<
+            Array<{ command: "SELECT"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_billing'
+              and policyname = 'whatsapp_billing_outbound_worker_manage'
+          `;
+          expect(billingWorkerPolicy).toEqual([
+            {
+              command: "SELECT",
+              name: "whatsapp_billing_outbound_worker_manage",
+            },
+          ]);
+          const circuitConnectionPolicy = await migrated<
+            Array<{ command: "UPDATE"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_connection'
+              and policyname = 'whatsapp_connection_circuit_worker_update'
+          `;
+          expect(circuitConnectionPolicy).toEqual([
+            {
+              command: "UPDATE",
+              name: "whatsapp_connection_circuit_worker_update",
+            },
+          ]);
+          const billingOperationalColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_billing'
+              and column_name in (
+                'credit_in_flight_cents',
+                'credit_reserve_cents',
+                'estimated_daily_consumption_cents',
+                'kapso_monthly_quota',
+                'kapso_quota_consumed',
+                'kapso_quota_in_flight',
+                'kapso_quota_reserved'
+              )
+            order by column_name
+          `;
+          expect(billingOperationalColumns).toEqual([
+            { column_name: "credit_in_flight_cents" },
+            { column_name: "credit_reserve_cents" },
+            { column_name: "estimated_daily_consumption_cents" },
+            { column_name: "kapso_monthly_quota" },
+            { column_name: "kapso_quota_consumed" },
+            { column_name: "kapso_quota_in_flight" },
+            { column_name: "kapso_quota_reserved" },
+          ]);
         } finally {
           await migrated.end();
         }

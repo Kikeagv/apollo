@@ -7,6 +7,10 @@ import {
   drizzleTransactionalDeliveryStore,
 } from "~/server/db/transactional-delivery-store";
 import { transactionalDeliveryAdapter } from "~/server/integrations/transactional-delivery";
+import {
+  drizzleWhatsAppCircuitBreakerStore,
+  purgeExpiredWhatsAppOperationalData,
+} from "~/server/db/whatsapp-circuit-breaker-store";
 
 /** Entrada protegida del job de producción: prepara y drena la outbox. */
 export async function POST(request: Request) {
@@ -16,8 +20,9 @@ export async function POST(request: Request) {
   ) {
     return new Response("No autorizado", { status: 401 });
   }
+  const now = new Date();
   const result = await runTransactionalDeliveryScheduler(
-    { now: new Date() },
+    { now },
     {
       applyNoShowPolicy: (input) =>
         drizzleAppointmentSchedulerStore.applyNoShowPolicy(input),
@@ -28,6 +33,10 @@ export async function POST(request: Request) {
     },
     drizzleTransactionalDeliveryStore,
     transactionalDeliveryAdapter(),
+    drizzleWhatsAppCircuitBreakerStore,
   );
-  return Response.json(result);
+  const purgedOperationalData = await purgeExpiredWhatsAppOperationalData({
+    now,
+  });
+  return Response.json({ ...result, ...purgedOperationalData });
 }
