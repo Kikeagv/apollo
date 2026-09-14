@@ -211,6 +211,17 @@ describe("Conexiones de WhatsApp persistentes", () => {
             clinicId: fixture.primary.clinicId,
             provider: "kapso",
           }),
+        ).rejects.toThrow("tráfico real de WhatsApp");
+        await updateConnection(fixture, fixture.primary.clinicId, {
+          realTrafficEnabledAt: new Date(),
+          realTrafficEnabledByIdentityId: fixture.superadminIdentityId,
+          realTrafficStatus: "enabled",
+        });
+        await expect(
+          requireWhatsAppConnectionReady({
+            clinicId: fixture.primary.clinicId,
+            provider: "kapso",
+          }),
         ).resolves.toMatchObject({ status: "ready" });
         await updateConnection(fixture, fixture.primary.clinicId, {
           metadata: {

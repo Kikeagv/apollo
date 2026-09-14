@@ -11,6 +11,10 @@ import {
   type WhatsAppTemplateSnapshot,
   type WhatsAppWebhookSnapshot,
 } from "~/domain/whatsapp-readiness";
+import type {
+  WhatsAppSyntheticSmokeStepCode,
+  WhatsAppSyntheticSmokeStepInput,
+} from "~/domain/whatsapp-smoke";
 import {
   evaluateWhatsAppBillingHealth,
   type WhatsAppBillingHealth,
@@ -152,6 +156,19 @@ export type WhatsAppReadinessProvider = {
     evidence: string;
     evidenceScope: WhatsAppE2EEvidenceScope;
     testedAt: Date;
+  }>;
+  runSyntheticSmoke?(input: {
+    phoneNumberId: string;
+    projectWebhookId: string;
+    syntheticContactId: string;
+  }): Promise<{
+    evidence?: string;
+    providerTransportVerified?: boolean;
+    realPatientsEnabled: boolean;
+    steps: Partial<
+      Record<WhatsAppSyntheticSmokeStepCode, WhatsAppSyntheticSmokeStepInput>
+    >;
+    syntheticContact: boolean;
   }>;
   getNumberHealth(input: {
     phoneNumberId: string;

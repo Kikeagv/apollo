@@ -42,6 +42,8 @@ export type WhatsAppConnection = {
   businessAccountId?: string | null;
   lastTestAt: Date | null;
   metadata: WhatsAppConnectionMetadata;
+  offboardingAuthorizedAt?: Date | null;
+  offboardingAuthorizedByIdentityId?: string | null;
   phoneNumberE164: string | null;
   phoneNumberId: string | null;
   provider: WhatsAppProviderId;

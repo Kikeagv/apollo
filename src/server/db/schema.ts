@@ -45,6 +45,12 @@ import type {
   WhatsAppConnectionType,
 } from "~/domain/whatsapp-connection";
 import type {
+  WhatsAppOffboardingStepCode,
+  WhatsAppOffboardingStep,
+} from "~/domain/whatsapp-offboarding";
+import type { WhatsAppSyntheticSmokeStep } from "~/domain/whatsapp-smoke";
+import type { WhatsAppRealTrafficGateCode } from "~/domain/whatsapp-traffic";
+import type {
   WhatsAppCircuitBreakerCause,
   WhatsAppCircuitBreakerStatus,
   WhatsAppUsageMetric,
@@ -177,6 +183,22 @@ export const whatsappConnections = createTable(
     phoneNumberId: text("phone_number_id"),
     provider: text("provider").$type<WhatsAppProviderId>().notNull(),
     status: text("status").$type<WhatsAppConnectionStatus>().notNull(),
+    realTrafficStatus: text("real_traffic_status")
+      .$type<"blocked" | "enabled" | "offboarded">()
+      .default("blocked")
+      .notNull(),
+    realTrafficEnabledAt: timestamp("real_traffic_enabled_at", {
+      withTimezone: true,
+    }),
+    realTrafficEnabledByIdentityId: text(
+      "real_traffic_enabled_by_identity_id",
+    ).references(() => user.id, { onDelete: "set null" }),
+    offboardingAuthorizedAt: timestamp("offboarding_authorized_at", {
+      withTimezone: true,
+    }),
+    offboardingAuthorizedByIdentityId: text(
+      "offboarding_authorized_by_identity_id",
+    ).references(() => user.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -195,6 +217,10 @@ export const whatsappConnections = createTable(
     uniqueIndex("whatsapp_connection_phone_number_id_unique")
       .on(table.phoneNumberId)
       .where(sql`${table.phoneNumberId} IS NOT NULL`),
+    check(
+      "whatsapp_connection_real_traffic_status",
+      sql`${table.realTrafficStatus} IN ('blocked', 'enabled', 'offboarded')`,
+    ),
   ],
 );
 
@@ -436,6 +462,194 @@ export const whatsappReadiness = createTable(
       "whatsapp_readiness_status_reason_not_blank",
       sql`btrim(${table.statusReason}) <> ''`,
     ),
+  ],
+);
+
+/** Evidencia administrativa de cada gate que autoriza tráfico real. */
+export const whatsappTrafficGateEvidences = createTable(
+  "whatsapp_traffic_gate_evidence",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    code: text("code").$type<WhatsAppRealTrafficGateCode>().notNull(),
+    ready: boolean("ready").default(false).notNull(),
+    evidenceReference: text("evidence_reference"),
+    recordedByIdentityId: text("recorded_by_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    recordedAt: timestamp("recorded_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("whatsapp_traffic_gate_evidence_clinic_code_unique").on(
+      table.clinicId,
+      table.code,
+    ),
+    index("whatsapp_traffic_gate_evidence_clinic_idx").on(
+      table.clinicId,
+      table.updatedAt,
+    ),
+    check(
+      "whatsapp_traffic_gate_evidence_code",
+      sql`${table.code} IN ('consent', 'contract', 'privacy', 'retention', 'dpa', 'transfers', 'billing', 'product-approval')`,
+    ),
+    check(
+      "whatsapp_traffic_gate_evidence_reference",
+      sql`${table.ready} = false OR btrim(coalesce(${table.evidenceReference}, '')) <> ''`,
+    ),
+  ],
+);
+
+/** Resultado durable del smoke de WhatsApp con contactos sintéticos. */
+export const whatsappSmokeRuns = createTable(
+  "whatsapp_smoke_run",
+  {
+    id: uuid("id").primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    actorIdentityId: text("actor_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    provisioningEventId: uuid("provisioning_event_id").references(
+      () => whatsappWebhookEvents.id,
+      { onDelete: "set null" },
+    ),
+    providerTransportVerified: boolean("provider_transport_verified")
+      .default(false)
+      .notNull(),
+    status: text("status").$type<"failed" | "passed">().notNull(),
+    syntheticContact: boolean("synthetic_contact").notNull(),
+    realPatientsEnabled: boolean("real_patients_enabled").notNull(),
+    steps: jsonb("steps").$type<WhatsAppSyntheticSmokeStep[]>().notNull(),
+    blockers: jsonb("blockers")
+      .$type<Array<{ code: string; message: string }>>()
+      .default([])
+      .notNull(),
+    evidence: text("evidence"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("whatsapp_smoke_run_clinic_finished_idx").on(
+      table.clinicId,
+      table.finishedAt,
+    ),
+    check(
+      "whatsapp_smoke_run_result_safety",
+      sql`${table.status} = 'failed' OR (${table.syntheticContact} = true AND ${table.realPatientsEnabled} = false)`,
+    ),
+  ],
+);
+
+/** Ejecución de retirada; conserva activos Meta y permite reintentar pasos. */
+export const whatsappOffboardingRuns = createTable(
+  "whatsapp_offboarding_run",
+  {
+    id: uuid("id").primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    actorIdentityId: text("actor_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    provisioningEventId: uuid("provisioning_event_id").references(
+      () => whatsappWebhookEvents.id,
+      { onDelete: "set null" },
+    ),
+    status: text("status")
+      .$type<"completed" | "failed" | "running">()
+      .notNull(),
+    configurationExport: jsonb("configuration_export")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    unique("whatsapp_offboarding_run_clinic_id_unique").on(
+      table.clinicId,
+      table.id,
+    ),
+    index("whatsapp_offboarding_run_clinic_started_idx").on(
+      table.clinicId,
+      table.startedAt,
+    ),
+    check(
+      "whatsapp_offboarding_run_status",
+      sql`${table.status} IN ('running', 'completed', 'failed')`,
+    ),
+    check(
+      "whatsapp_offboarding_run_completion",
+      sql`${table.status} = 'running' OR ${table.completedAt} IS NOT NULL`,
+    ),
+  ],
+);
+
+/** Evidencia append-only de cada efecto y reintento del offboarding. */
+export const whatsappOffboardingStepAudits = createTable(
+  "whatsapp_offboarding_step_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    actorIdentityId: text("actor_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => whatsappOffboardingRuns.id, { onDelete: "cascade" }),
+    step: text("step").$type<WhatsAppOffboardingStepCode>().notNull(),
+    status: text("status").$type<WhatsAppOffboardingStep["status"]>().notNull(),
+    effect: text("effect").$type<WhatsAppOffboardingStep["effect"]>().notNull(),
+    message: text("message").notNull(),
+    evidence: text("evidence"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("whatsapp_offboarding_step_audit_run_idx").on(
+      table.runId,
+      table.occurredAt,
+    ),
+    index("whatsapp_offboarding_step_audit_clinic_idx").on(
+      table.clinicId,
+      table.occurredAt,
+    ),
+    check(
+      "whatsapp_offboarding_step_audit_step",
+      sql`${table.step} IN ('stop-sends', 'disconnect-connection', 'disable-project-webhook', 'disable-phone-webhook', 'revoke-setup-links', 'export-configuration')`,
+    ),
+    check(
+      "whatsapp_offboarding_step_audit_status",
+      sql`${table.status} IN ('succeeded', 'failed')`,
+    ),
+    check(
+      "whatsapp_offboarding_step_audit_effect",
+      sql`${table.effect} IN ('changed', 'already-complete')`,
+    ),
+    foreignKey({
+      columns: [table.clinicId, table.runId],
+      foreignColumns: [
+        whatsappOffboardingRuns.clinicId,
+        whatsappOffboardingRuns.id,
+      ],
+      name: "whatsapp_offboarding_step_audit_run_same_clinic_fk",
+    }).onDelete("cascade"),
   ],
 );
 
@@ -1025,6 +1239,7 @@ export const whatsappOnboardingAuditEvents = createTable(
         | "customer-confirmed"
         | "customer-created"
         | "onboarding-provider-unavailable"
+        | "offboarding-authorized"
         | "preflight-executed"
         | "setup-link-confirmed"
         | "setup-link-created"

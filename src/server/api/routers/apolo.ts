@@ -9,6 +9,14 @@ import {
 import { manageKapsoWhatsAppSetupLink } from "~/server/application/whatsapp-setup-links";
 import { createSubscriptionSupport } from "~/server/application/subscription-support";
 import {
+  enableWhatsAppRealTraffic,
+  getWhatsAppOperations,
+  offboardWhatsAppConnection,
+  recordWhatsAppTrafficGate,
+  revertWhatsAppRealTraffic,
+  runWhatsAppSyntheticSmoke,
+} from "~/server/application/whatsapp-operations";
+import {
   drizzleWhatsAppRuntimeDiagnosticReader,
   getWhatsAppRuntimeDiagnostic,
 } from "~/server/application/whatsapp-runtime";
@@ -32,13 +40,17 @@ import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
+import { drizzleWhatsAppOperationsStore } from "~/server/db/whatsapp-operations-store";
 import {
   listWhatsAppInboundOperationalAlerts,
   resolveWhatsAppInboundOperationalAlert,
 } from "~/server/db/whatsapp-inbound-alert-store";
 import { clinicInvitationEmailSender } from "~/server/email/clinic-invitation-email";
 import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboarding";
+import { createKapsoWebhookOffboardingProvider } from "~/server/whatsapp/kapso-provisioning";
 import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
+import { createSimulatedWhatsAppSyntheticSmokeRunner } from "~/server/whatsapp/simulated-whatsapp-smoke";
+import { whatsappRealTrafficGateCodes } from "~/domain/whatsapp-traffic";
 
 const subscriptionSupport = createSubscriptionSupport(
   drizzleSubscriptionSupportStore,
@@ -47,6 +59,9 @@ const kapsoOnboardingProvider = createKapsoOnboardingProvider({
   apiKey: env.KAPSO_API_KEY,
 });
 const kapsoReadinessProvider = createKapsoReadinessProvider({
+  apiKey: env.KAPSO_API_KEY,
+});
+const kapsoWebhookOffboardingProvider = createKapsoWebhookOffboardingProvider({
   apiKey: env.KAPSO_API_KEY,
 });
 
@@ -146,6 +161,111 @@ export const apoloRouter = {
           provider: kapsoReadinessProvider,
           circuitBreaker: drizzleWhatsAppCircuitBreakerStore,
           store: drizzleWhatsAppReadinessStore,
+        },
+      ),
+    ),
+
+  getWhatsAppOperations: protectedProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      getWhatsAppOperations(
+        { actorIdentityId: ctx.session.user.id, clinicId: input.clinicId },
+        drizzleWhatsAppOperationsStore,
+      ),
+    ),
+
+  recordWhatsAppTrafficGate: protectedProcedure
+    .input(
+      z.object({
+        clinicId: z.string().uuid(),
+        code: z.enum(whatsappRealTrafficGateCodes),
+        evidenceReference: z.string().trim().max(160).nullable().optional(),
+        ready: z.boolean(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      recordWhatsAppTrafficGate(
+        {
+          ...input,
+          actorIdentityId: ctx.session.user.id,
+          evidenceReference: input.evidenceReference ?? null,
+        },
+        drizzleWhatsAppOperationsStore,
+      ),
+    ),
+
+  runWhatsAppSyntheticSmoke: protectedProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const actorIdentityId = ctx.session.user.id;
+      return runWhatsAppSyntheticSmoke(
+        { actorIdentityId, clinicId: input.clinicId },
+        {
+          runner: {
+            async run(smokeInput) {
+              const snapshot = await drizzleWhatsAppOperationsStore.read({
+                actorIdentityId,
+                clinicId: input.clinicId,
+              });
+              if (snapshot.connection?.provider === "simulated") {
+                return createSimulatedWhatsAppSyntheticSmokeRunner().run(
+                  smokeInput,
+                );
+              }
+              if (kapsoReadinessProvider.runSyntheticSmoke === undefined) {
+                throw new Error("Kapso no expone el runner de smoke sintético");
+              }
+              return kapsoReadinessProvider.runSyntheticSmoke(smokeInput);
+            },
+          },
+          store: drizzleWhatsAppOperationsStore,
+        },
+      );
+    }),
+
+  enableWhatsAppRealTraffic: protectedProcedure
+    .input(
+      z.object({
+        clinicId: z.string().uuid(),
+        manualConfirmation: z.literal(true),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      enableWhatsAppRealTraffic(
+        { ...input, actorIdentityId: ctx.session.user.id },
+        { store: drizzleWhatsAppOperationsStore },
+      ),
+    ),
+
+  revertWhatsAppRealTraffic: protectedProcedure
+    .input(
+      z.object({
+        clinicId: z.string().uuid(),
+        manualConfirmation: z.literal(true),
+        reason: z.string().trim().min(1).max(500),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      revertWhatsAppRealTraffic(
+        { ...input, actorIdentityId: ctx.session.user.id },
+        { store: drizzleWhatsAppOperationsStore },
+      ),
+    ),
+
+  offboardWhatsAppConnection: protectedProcedure
+    .input(
+      z.object({
+        clinicId: z.string().uuid(),
+        runId: z.string().uuid().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      offboardWhatsAppConnection(
+        { ...input, actorIdentityId: ctx.session.user.id },
+        {
+          provider: kapsoWebhookOffboardingProvider,
+          setupLinkProvider: kapsoOnboardingProvider,
+          store: drizzleWhatsAppOperationsStore,
         },
       ),
     ),

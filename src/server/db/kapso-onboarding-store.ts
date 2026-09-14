@@ -193,6 +193,11 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
           phoneNumberE164: input.connection.phoneNumberE164,
           phoneNumberId: input.connection.phoneNumberId,
           provider: input.connection.provider,
+          realTrafficEnabledAt: null,
+          realTrafficEnabledByIdentityId: null,
+          realTrafficStatus: "blocked" as const,
+          offboardingAuthorizedAt: null,
+          offboardingAuthorizedByIdentityId: null,
           status: input.connection.status,
           updatedAt: new Date(),
         };

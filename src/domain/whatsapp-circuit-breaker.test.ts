@@ -146,6 +146,30 @@ describe("circuit breaker de WhatsApp", () => {
     expect(sanitized).not.toContain("api-secret");
   });
 
+  it("redacta credenciales embebidas en URLs operativas", () => {
+    const sanitized = sanitizeWhatsAppOperationalText(
+      "Kapso callback https://user:super-secret@example.com/webhook",
+    );
+
+    expect(sanitized).toBe(
+      "Kapso callback https://[redacted]@example.com/webhook",
+    );
+    expect(sanitized).not.toContain("super-secret");
+  });
+
+  it("redacta secretos en claves JSON de errores remotos", () => {
+    const sanitized = sanitizeWhatsAppOperationalText(
+      '{"access_token":"token-92","authorization":"Bearer auth-92","password":"password-92"}',
+    );
+
+    expect(sanitized).toBe(
+      '{"access_token":"[redacted]","authorization":"[redacted]","password":"[redacted]"}',
+    );
+    expect(sanitized).not.toContain("token-92");
+    expect(sanitized).not.toContain("auth-92");
+    expect(sanitized).not.toContain("password-92");
+  });
+
   it("exige causa corregida, prueba sintética aprobada y confirmación manual", () => {
     const state = closedState({ status: "open", cause: "provider-error" });
     expect(

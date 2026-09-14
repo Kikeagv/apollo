@@ -70,6 +70,7 @@ export type KapsoWhatsAppOnboardingAuditEvent = {
     | "customer-confirmed"
     | "customer-created"
     | "onboarding-provider-unavailable"
+    | "offboarding-authorized"
     | "preflight-executed"
     | "setup-link-confirmed"
     | "setup-link-created"

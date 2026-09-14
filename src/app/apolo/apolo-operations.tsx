@@ -7,6 +7,12 @@ import {
   whatsappSetupLinkStatusLabel,
   type WhatsAppSetupLink,
 } from "~/domain/whatsapp-setup-link";
+import {
+  whatsappRealTrafficGateCodes,
+  whatsappRealTrafficGateLabel,
+  type WhatsAppRealTrafficBlocker,
+} from "~/domain/whatsapp-traffic";
+import { whatsappSyntheticSmokeStepLabels } from "~/domain/whatsapp-smoke";
 import { formatDateTime } from "~/app/format-date";
 import {
   setupLinkActionLabel,
@@ -51,6 +57,10 @@ export function ApoloOperations() {
     { clinicId },
     { enabled: Boolean(clinicId) },
   );
+  const whatsappOperations = api.apolo.getWhatsAppOperations.useQuery(
+    { clinicId },
+    { enabled: Boolean(clinicId) },
+  );
   const [clinicName, setClinicName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -72,6 +82,9 @@ export function ApoloOperations() {
   const [qrDeviceAvailable, setQrDeviceAvailable] = useState(false);
   const [causeFixed, setCauseFixed] = useState(false);
   const [manualConfirmation, setManualConfirmation] = useState(false);
+  const [realTrafficConfirmation, setRealTrafficConfirmation] = useState(false);
+  const [offboardingConfirmation, setOffboardingConfirmation] = useState(false);
+  const [gateEvidence, setGateEvidence] = useState<Record<string, string>>({});
   const [openCause, setOpenCause] = useState<
     | "webhook-paused"
     | "high-failure-rate"
@@ -134,6 +147,39 @@ export function ApoloOperations() {
     onSuccess: (session) => setSupportSessionId(session.id),
   });
   const readSupport = api.apolo.readSupportClinicSummary.useMutation();
+  const recordTrafficGate = api.apolo.recordWhatsAppTrafficGate.useMutation({
+    onSuccess: () => void whatsappOperations.refetch(),
+  });
+  const runSyntheticSmoke = api.apolo.runWhatsAppSyntheticSmoke.useMutation({
+    onSuccess: () => {
+      void whatsappOperations.refetch();
+      void readiness.refetch();
+    },
+  });
+  const enableRealTraffic = api.apolo.enableWhatsAppRealTraffic.useMutation({
+    onSuccess: () => {
+      setRealTrafficConfirmation(false);
+      void whatsappOperations.refetch();
+      void readiness.refetch();
+    },
+  });
+  const revertRealTraffic = api.apolo.revertWhatsAppRealTraffic.useMutation({
+    onSuccess: () => {
+      setRealTrafficConfirmation(false);
+      void whatsappOperations.refetch();
+      void readiness.refetch();
+      void circuitBreaker.refetch();
+    },
+  });
+  const offboardConnection = api.apolo.offboardWhatsAppConnection.useMutation({
+    onSuccess: () => {
+      setOffboardingConfirmation(false);
+      void whatsappOperations.refetch();
+      void onboarding.refetch();
+      void readiness.refetch();
+      void circuitBreaker.refetch();
+    },
+  });
 
   return (
     <main className="mx-auto min-h-screen max-w-2xl space-y-6 bg-slate-950 p-8 text-slate-100">
@@ -971,6 +1017,355 @@ export function ApoloOperations() {
           </p>
         )}
       </section>
+      <section
+        aria-labelledby="whatsapp-final-operations-title"
+        className="space-y-4 rounded-xl border border-rose-500/70 p-5"
+        data-whatsapp-final-operations="true"
+      >
+        <div>
+          <h2
+            className="text-xl font-semibold"
+            id="whatsapp-final-operations-title"
+          >
+            Piloto, tráfico real y retirada de WhatsApp
+          </h2>
+          <p className="mt-1 text-sm text-slate-300">
+            El smoke usa el contacto sintético de la Clínica seleccionada. No
+            crea Pacientes ni habilita datos reales. El número, WABA y las
+            plantillas Meta se conservan durante el offboarding.
+          </p>
+        </div>
+        {!clinicId ? (
+          <p className="text-sm text-slate-400">
+            Seleccione una Clínica para operar el piloto.
+          </p>
+        ) : whatsappOperations.isLoading ? (
+          <p className="text-sm text-slate-300" role="status">
+            Consultando controles de tráfico…
+          </p>
+        ) : whatsappOperations.error ? (
+          <p className="text-sm text-amber-200" role="alert">
+            {whatsappOperations.error.message}
+          </p>
+        ) : whatsappOperations.data ? (
+          <>
+            <dl className="grid gap-3 text-sm sm:grid-cols-4">
+              <DiagnosticValue
+                label="Tráfico real"
+                value={whatsappTrafficStatusLabel(
+                  whatsappOperations.data.trafficStatus,
+                )}
+              />
+              <DiagnosticValue
+                label="Smoke sintético"
+                value={
+                  whatsappOperations.data.latestSmoke?.status === "passed"
+                    ? "Aprobado"
+                    : "Pendiente o fallido"
+                }
+              />
+              <DiagnosticValue
+                label="Readiness técnico"
+                value={
+                  whatsappOperations.data.technicalReadiness.status === "ready"
+                    ? "Listo"
+                    : "Bloqueado"
+                }
+              />
+              <DiagnosticValue
+                label="Circuit breaker"
+                value={
+                  whatsappOperations.data.circuitStatus === "closed"
+                    ? "Cerrado"
+                    : "Abierto"
+                }
+              />
+            </dl>
+            <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold">Smoke E2E sintético</h3>
+                  <p className="mt-1 text-sm text-slate-300">
+                    Cubre conexión, recepción, respuesta, takeover, history
+                    sync, templates, delivery, duplicados, 429/timeout y los
+                    controles Kapso/Consentimiento.
+                  </p>
+                </div>
+                <button
+                  className="rounded bg-sky-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                  disabled={runSyntheticSmoke.isPending}
+                  onClick={() => runSyntheticSmoke.mutate({ clinicId })}
+                  type="button"
+                >
+                  {runSyntheticSmoke.isPending
+                    ? "Ejecutando…"
+                    : "Ejecutar smoke sintético"}
+                </button>
+              </div>
+              {whatsappOperations.data.latestSmoke ? (
+                <>
+                  <p className="mt-3 text-sm">
+                    Resultado:{" "}
+                    <strong>
+                      {whatsappOperations.data.latestSmoke.status === "passed"
+                        ? "aprobado"
+                        : "fallido"}
+                    </strong>{" "}
+                    · contacto sintético:{" "}
+                    {whatsappOperations.data.latestSmoke.syntheticContact
+                      ? "sí"
+                      : "no"}{" "}
+                    · Pacientes reales habilitados:{" "}
+                    {whatsappOperations.data.latestSmoke.realPatientsEnabled
+                      ? "sí"
+                      : "no"}
+                  </p>
+                  <ul className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+                    {whatsappOperations.data.latestSmoke.steps.map((step) => (
+                      <li key={step.code}>
+                        <span
+                          className={
+                            step.passed ? "text-teal-200" : "text-rose-200"
+                          }
+                        >
+                          {step.passed ? "✓" : "✕"}{" "}
+                          {whatsappSyntheticSmokeStepLabels[step.code]}
+                        </span>
+                        {step.message ? " · " + step.message : ""}
+                      </li>
+                    ))}
+                  </ul>
+                  {whatsappOperations.data.latestSmoke.blockers.length > 0 ? (
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-200">
+                      {whatsappOperations.data.latestSmoke.blockers.map(
+                        (blocker) => (
+                          <li key={blocker.code + "-" + blocker.message}>
+                            {blocker.message}
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  ) : null}
+                </>
+              ) : (
+                <p className="mt-3 text-sm text-amber-200">
+                  Todavía no existe evidencia de smoke sintético.
+                </p>
+              )}
+              {runSyntheticSmoke.error ? (
+                <p className="mt-2 text-sm text-amber-200" role="alert">
+                  {runSyntheticSmoke.error.message}
+                </p>
+              ) : null}
+            </div>
+            <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+              <h3 className="font-semibold">Gates para tráfico real</h3>
+              <p className="mt-1 text-sm text-slate-300">
+                Registre una referencia operativa breve por gate. No introduzca
+                PII, tokens, QR ni credenciales.
+              </p>
+              <ul className="mt-3 space-y-3">
+                {whatsappRealTrafficGateCodes.map((code) => {
+                  const gate = whatsappOperations.data.gates[code];
+                  const evidence =
+                    gateEvidence[code] ?? gate?.evidenceReference ?? "";
+                  return (
+                    <li
+                      className="flex flex-col gap-2 sm:flex-row sm:items-center"
+                      key={code}
+                    >
+                      <label className="flex-1 text-sm">
+                        <span className="block text-slate-200">
+                          {whatsappRealTrafficGateLabel(code)}
+                        </span>
+                        <input
+                          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2"
+                          onChange={(event) =>
+                            setGateEvidence((current) => ({
+                              ...current,
+                              [code]: event.target.value,
+                            }))
+                          }
+                          placeholder="Referencia de evidencia"
+                          value={evidence}
+                        />
+                      </label>
+                      <button
+                        className="rounded border border-teal-300 px-3 py-2 text-sm text-teal-100 disabled:opacity-50"
+                        disabled={recordTrafficGate.isPending}
+                        onClick={() =>
+                          recordTrafficGate.mutate({
+                            clinicId,
+                            code,
+                            evidenceReference: evidence.trim() || null,
+                            ready: evidence.trim() !== "",
+                          })
+                        }
+                        type="button"
+                      >
+                        {gate?.ready ? "Actualizar" : "Registrar"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              {recordTrafficGate.error ? (
+                <p className="mt-2 text-sm text-amber-200" role="alert">
+                  {recordTrafficGate.error.message}
+                </p>
+              ) : null}
+            </div>
+            <div className="rounded-lg border border-amber-500/70 bg-amber-950/20 p-4">
+              <h3 className="font-semibold">Habilitación explícita</h3>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-300">
+                {whatsappOperations.data.trafficEvaluation.blockers.length ===
+                0 ? (
+                  <li>Todos los gates necesarios están presentes.</li>
+                ) : (
+                  whatsappOperations.data.trafficEvaluation.blockers.map(
+                    (blocker: WhatsAppRealTrafficBlocker) => (
+                      <li key={blocker.code + "-" + blocker.message}>
+                        {blocker.message}
+                      </li>
+                    ),
+                  )
+                )}
+              </ul>
+              <label className="mt-3 flex items-center gap-2 text-sm">
+                <input
+                  checked={realTrafficConfirmation}
+                  onChange={(event) =>
+                    setRealTrafficConfirmation(event.target.checked)
+                  }
+                  type="checkbox"
+                />
+                Confirmo que la Clínica está autorizada para tráfico real.
+              </label>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                  disabled={
+                    !whatsappOperations.data.trafficEvaluation.allowed ||
+                    !realTrafficConfirmation ||
+                    enableRealTraffic.isPending
+                  }
+                  onClick={() =>
+                    enableRealTraffic.mutate({
+                      clinicId,
+                      manualConfirmation: true,
+                    })
+                  }
+                  type="button"
+                >
+                  Habilitar tráfico real
+                </button>
+                <button
+                  className="rounded border border-rose-300 px-3 py-2 text-rose-100 disabled:opacity-50"
+                  disabled={
+                    whatsappOperations.data.trafficStatus !== "enabled" ||
+                    !realTrafficConfirmation ||
+                    revertRealTraffic.isPending
+                  }
+                  onClick={() =>
+                    revertRealTraffic.mutate({
+                      clinicId,
+                      manualConfirmation: true,
+                      reason: "Reversión manual desde Operación comercial",
+                    })
+                  }
+                  type="button"
+                >
+                  Revertir y abrir circuit breaker
+                </button>
+              </div>
+              {enableRealTraffic.error || revertRealTraffic.error ? (
+                <p className="mt-2 text-sm text-amber-200" role="alert">
+                  {
+                    (enableRealTraffic.error ?? revertRealTraffic.error)
+                      ?.message
+                  }
+                </p>
+              ) : null}
+            </div>
+            <div className="rounded-lg border border-rose-500/70 bg-rose-950/20 p-4">
+              <h3 className="font-semibold">Offboarding de la Conexión</h3>
+              <p className="mt-1 text-sm text-slate-300">
+                Detiene envíos, desconecta y desactiva webhooks/setup links de
+                Praxia. No elimina el número, WABA ni plantillas de la Clínica.
+                Cada paso queda auditado y los fallos pueden reintentarse.
+              </p>
+              <p className="mt-2 text-sm text-slate-300">
+                Autorización de la Clínica:{" "}
+                {whatsappOperations.data.offboardingAuthorization === null
+                  ? "pendiente del Médico propietario"
+                  : `registrada por ${whatsappOperations.data.offboardingAuthorization.authorizedByIdentityId}`}
+              </p>
+              <label className="mt-3 flex items-center gap-2 text-sm">
+                <input
+                  checked={offboardingConfirmation}
+                  onChange={(event) =>
+                    setOffboardingConfirmation(event.target.checked)
+                  }
+                  type="checkbox"
+                />
+                Confirmo retirar la Conexión de Praxia.
+              </label>
+              <button
+                className="mt-3 rounded bg-rose-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                disabled={
+                  !offboardingConfirmation ||
+                  whatsappOperations.data.offboardingAuthorization === null ||
+                  offboardConnection.isPending
+                }
+                onClick={() => offboardConnection.mutate({ clinicId })}
+                type="button"
+              >
+                {offboardConnection.isPending
+                  ? "Retirando…"
+                  : "Retirar Conexión"}
+              </button>
+              {whatsappOperations.data.offboarding ? (
+                <div className="mt-3 space-y-2 text-sm">
+                  <p>
+                    Última retirada:{" "}
+                    {whatsappOperations.data.offboarding.status}
+                  </p>
+                  <ul className="space-y-1 text-slate-300">
+                    {whatsappOperations.data.offboarding.steps.map(
+                      (step, index) => (
+                        <li key={step.code + "-" + index}>
+                          {step.status === "succeeded" ? "✓" : "✕"}{" "}
+                          {step.message}
+                          {step.effect === "already-complete"
+                            ? " (idempotente)"
+                            : ""}
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                  <details>
+                    <summary className="cursor-pointer text-teal-200">
+                      Ver exportación de configuración permitida
+                    </summary>
+                    <pre className="mt-2 max-h-56 overflow-auto rounded bg-slate-950 p-3 text-xs text-slate-300">
+                      {JSON.stringify(
+                        whatsappOperations.data.offboarding.configurationExport,
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </details>
+                </div>
+              ) : null}
+              {offboardConnection.error ? (
+                <p className="mt-2 text-sm text-amber-200" role="alert">
+                  {offboardConnection.error.message}
+                </p>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+      </section>
       <section className="space-y-3 rounded-xl border border-slate-700 p-5">
         <h2 className="text-xl font-semibold">Pago por transferencia</h2>
         <input
@@ -1424,6 +1819,16 @@ function apoloReadinessActionLabel(
     templates: "Sincronizar plantillas",
     webhooks: "Reintentar webhooks",
   }[action];
+}
+
+function whatsappTrafficStatusLabel(
+  status: "blocked" | "enabled" | "offboarded",
+) {
+  return {
+    blocked: "Bloqueado",
+    enabled: "Habilitado",
+    offboarded: "Retirado",
+  }[status];
 }
 
 function formatCents(cents: number) {

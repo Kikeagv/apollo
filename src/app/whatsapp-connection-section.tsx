@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import {
   whatsappConnectionNextAction,
   whatsappConnectionStatusLabel,
@@ -239,10 +241,18 @@ function readinessGateLabel(
 
 /** Flujo de configuración iniciado por el Médico propietario desde la Clínica. */
 export function WhatsAppSetupLinkSection() {
+  const [offboardingConfirmation, setOffboardingConfirmation] = useState(false);
   const onboarding = api.panacea.getKapsoOnboarding.useQuery();
   const manageSetupLink = api.panacea.manageKapsoWhatsAppSetupLink.useMutation({
     onSuccess: () => void onboarding.refetch(),
   });
+  const authorizeOffboarding =
+    api.panacea.authorizeWhatsAppOffboarding.useMutation({
+      onSuccess: () => {
+        setOffboardingConfirmation(false);
+        void onboarding.refetch();
+      },
+    });
   const snapshot = onboarding.data;
   const setupLink = snapshot?.setupLink ?? null;
   const status = setupLink === null ? null : whatsappSetupLinkStatus(setupLink);
@@ -364,6 +374,56 @@ export function WhatsAppSetupLinkSection() {
                 {manageSetupLink.error.message}
               </p>
             ) : null}
+            <div className="border-destructive/40 bg-destructive/5 rounded-lg border p-4 text-sm leading-6">
+              <p className="font-medium">Autorizar salida de Praxia</p>
+              <p className="text-muted-foreground mt-1">
+                Solo el Médico propietario puede autorizar que un superadmin
+                retire esta Conexión. El número, WABA y plantillas permanecen en
+                la cuenta de la Clínica.
+              </p>
+              {snapshot.connection?.offboardingAuthorizedAt ? (
+                <p className="mt-2">
+                  Autorización registrada el{" "}
+                  {formatDateTime(snapshot.connection.offboardingAuthorizedAt)}.
+                </p>
+              ) : (
+                <>
+                  <label className="mt-3 flex items-center gap-2">
+                    <input
+                      checked={offboardingConfirmation}
+                      onChange={(event) =>
+                        setOffboardingConfirmation(event.target.checked)
+                      }
+                      type="checkbox"
+                    />
+                    Confirmo la autorización de salida de esta Clínica.
+                  </label>
+                  <Button
+                    className="mt-3"
+                    disabled={
+                      !offboardingConfirmation ||
+                      authorizeOffboarding.isPending ||
+                      snapshot.connection === null
+                    }
+                    onClick={() =>
+                      authorizeOffboarding.mutate({
+                        manualConfirmation: true,
+                      })
+                    }
+                    type="button"
+                  >
+                    {authorizeOffboarding.isPending
+                      ? "Registrando…"
+                      : "Autorizar offboarding"}
+                  </Button>
+                </>
+              )}
+              {authorizeOffboarding.error ? (
+                <p className="text-destructive mt-2" role="alert">
+                  {authorizeOffboarding.error.message}
+                </p>
+              ) : null}
+            </div>
           </>
         )}
       </CardContent>

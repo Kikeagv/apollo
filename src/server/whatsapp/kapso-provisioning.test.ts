@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   KapsoProvisioningProviderError,
+  createKapsoWebhookOffboardingProvider,
   createKapsoProvisioningProvider,
 } from "./kapso-provisioning";
 
@@ -331,6 +332,50 @@ describe("adaptador de provisión de Kapso", () => {
     );
   });
 
+  it("desactiva un webhook de Praxia sin eliminarlo y trata 404 como idempotente", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
+      );
+    const provider = createKapsoWebhookOffboardingProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.disableWebhook({
+        kind: "project",
+        phoneNumberId: null,
+        remoteId: "project-92",
+      }),
+    ).resolves.toEqual({ evidence: "Kapso webhook project active=false" });
+    await expect(
+      provider.disableWebhook({
+        kind: "phone-number",
+        phoneNumberId: "phone-92",
+        remoteId: "phone-webhook-92",
+      }),
+    ).resolves.toEqual({
+      alreadyDisabled: true,
+      evidence: "Kapso webhook phone-number ya no está activo",
+    });
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "https://api.kapso.ai/platform/v1/whatsapp/webhooks/project-92",
+      expect.objectContaining({
+        body: JSON.stringify({ whatsapp_webhook: { active: false } }),
+        method: "PATCH",
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "https://api.kapso.ai/platform/v1/whatsapp/phone_numbers/phone-92/webhooks/phone-webhook-92",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+  });
+
   it("convierte un 503 en un error clasificable para reintento", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -347,5 +392,34 @@ describe("adaptador de provisión de Kapso", () => {
     await expect(provider.getPhoneNumber("phone-1")).rejects.toBeInstanceOf(
       KapsoProvisioningProviderError,
     );
+  });
+
+  it("redacta secretos del error remoto antes de exponerlo a la aplicación", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error:
+            '{"access_token":"token-92","callback":"https://kapso:super-secret@example.com?access_token=token-92"}',
+        }),
+        { status: 503 },
+      ),
+    );
+    const provider = createKapsoProvisioningProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+      secretKey: "webhook-secret",
+      webhookUrl: "https://app.usepraxia.com/api/webhooks/kapso",
+    });
+
+    const error = await provider
+      .getPhoneNumber("phone-1")
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(KapsoProvisioningProviderError);
+    expect(error).toMatchObject({ status: 503 });
+    expect(error).toMatchObject({
+      message:
+        '{"access_token":"[redacted]","callback":"https://[redacted]@example.com?access_token=[redacted]"}',
+    });
   });
 });

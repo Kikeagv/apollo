@@ -264,6 +264,105 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
+          const apo92Policies = await migrated<
+            Array<{ command: "ALL" | "INSERT" | "SELECT"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename in (
+                'pg-drizzle_whatsapp_traffic_gate_evidence',
+                'pg-drizzle_whatsapp_smoke_run',
+                'pg-drizzle_whatsapp_offboarding_run',
+                'pg-drizzle_whatsapp_offboarding_step_audit'
+              )
+          `;
+          expect(apo92Policies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "ALL",
+                name: "whatsapp_traffic_gate_evidence_superadmin_manage",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_traffic_gate_evidence_provider_read",
+              },
+              {
+                command: "ALL",
+                name: "whatsapp_smoke_run_superadmin_manage",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_smoke_run_provider_read",
+              },
+              {
+                command: "ALL",
+                name: "whatsapp_offboarding_run_superadmin_manage",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_offboarding_step_audit_superadmin_read",
+              },
+              {
+                command: "INSERT",
+                name: "whatsapp_offboarding_step_audit_superadmin_append",
+              },
+            ]),
+          );
+          const apo92Rls = await migrated<
+            Array<{
+              force_row_security: boolean;
+              relname: string;
+              row_security: boolean;
+            }>
+          >`
+            select c.relname, c.relrowsecurity as row_security,
+              c.relforcerowsecurity as force_row_security
+            from pg_class c
+            inner join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relname in (
+                'pg-drizzle_whatsapp_traffic_gate_evidence',
+                'pg-drizzle_whatsapp_smoke_run',
+                'pg-drizzle_whatsapp_offboarding_run',
+                'pg-drizzle_whatsapp_offboarding_step_audit'
+              )
+            order by c.relname
+          `;
+          expect(apo92Rls).toEqual([
+            {
+              force_row_security: true,
+              relname: "pg-drizzle_whatsapp_offboarding_run",
+              row_security: true,
+            },
+            {
+              force_row_security: true,
+              relname: "pg-drizzle_whatsapp_offboarding_step_audit",
+              row_security: true,
+            },
+            {
+              force_row_security: true,
+              relname: "pg-drizzle_whatsapp_smoke_run",
+              row_security: true,
+            },
+            {
+              force_row_security: true,
+              relname: "pg-drizzle_whatsapp_traffic_gate_evidence",
+              row_security: true,
+            },
+          ]);
+          const offboardingAuditActor = await migrated<
+            Array<{ column_name: string; is_nullable: string }>
+          >`
+            select column_name, is_nullable
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_offboarding_step_audit'
+              and column_name = 'actor_identity_id'
+          `;
+          expect(offboardingAuditActor).toEqual([
+            { column_name: "actor_identity_id", is_nullable: "NO" },
+          ]);
           const whatsappPolicy = await migrated<
             Array<{ command: "UPDATE"; name: string }>
           >`
@@ -298,6 +397,81 @@ describe("migraciones de PostgreSQL", () => {
             { column_name: "no_show_policy" },
             { column_name: "voice_transcription_enabled" },
           ]);
+          const apo92GenerationColumns = await migrated<
+            Array<{ column_name: string; table_name: string }>
+          >`
+            select table_name, column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and (
+                (table_name = 'pg-drizzle_whatsapp_connection'
+                  and column_name in (
+                    'offboarding_authorized_at',
+                    'offboarding_authorized_by_identity_id'
+                  ))
+                or (table_name = 'pg-drizzle_whatsapp_smoke_run'
+                  and column_name in ('provisioning_event_id', 'provider_transport_verified'))
+                or (table_name = 'pg-drizzle_whatsapp_offboarding_run'
+                  and column_name = 'provisioning_event_id')
+              )
+            order by table_name, column_name
+          `;
+          expect(apo92GenerationColumns).toEqual([
+            {
+              column_name: "offboarding_authorized_at",
+              table_name: "pg-drizzle_whatsapp_connection",
+            },
+            {
+              column_name: "offboarding_authorized_by_identity_id",
+              table_name: "pg-drizzle_whatsapp_connection",
+            },
+            {
+              column_name: "provisioning_event_id",
+              table_name: "pg-drizzle_whatsapp_offboarding_run",
+            },
+            {
+              column_name: "provider_transport_verified",
+              table_name: "pg-drizzle_whatsapp_smoke_run",
+            },
+            {
+              column_name: "provisioning_event_id",
+              table_name: "pg-drizzle_whatsapp_smoke_run",
+            },
+          ]);
+          const offboardingAuthorizationPolicy = await migrated<
+            Array<{ command: "UPDATE"; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_connection'
+              and policyname = 'whatsapp_connection_clinic_owner_authorize_offboarding'
+          `;
+          expect(offboardingAuthorizationPolicy).toEqual([
+            {
+              command: "UPDATE",
+              name: "whatsapp_connection_clinic_owner_authorize_offboarding",
+            },
+          ]);
+          const connectionUpdateColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.column_privileges
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_connection'
+              and grantee = 'panacea_clinical_access'
+              and privilege_type = 'UPDATE'
+            order by column_name
+          `;
+          expect(connectionUpdateColumns).toEqual(
+            expect.arrayContaining([
+              { column_name: "metadata" },
+              { column_name: "offboarding_authorized_at" },
+              { column_name: "offboarding_authorized_by_identity_id" },
+              { column_name: "status" },
+            ]),
+          );
           const clinicReadinessPolicies = await migrated<
             Array<{ command: "INSERT" | "SELECT" | "UPDATE"; name: string }>
           >`
@@ -552,6 +726,75 @@ describe("migraciones de PostgreSQL", () => {
           alter table "pg-drizzle_clinic_readiness"
           enable trigger "clinic_readiness_terms_acceptance_guard"
         `;
+        const apo92SmokeRuns = {
+          clinic: randomUUID(),
+          other: randomUUID(),
+        };
+        const apo92Generations = {
+          clinic: randomUUID(),
+          other: randomUUID(),
+        };
+        await rlsAdmin`
+          insert into "pg-drizzle_whatsapp_connection" (
+            clinic_id, provider, status, connection_type, customer, metadata
+          ) values (
+            ${rlsClinicId}, 'simulated', 'ready', 'simulated',
+            ${`rls-simulated:${rlsClinicId}`}, '{}'::jsonb
+          )
+        `;
+        await rlsAdmin`
+          insert into "pg-drizzle_whatsapp_webhook_event" (
+            id, idempotency_key, event_name, payload, status
+          ) values
+            (
+              ${apo92Generations.clinic}, 'apo92-generation-clinic',
+              'whatsapp.phone_number.created', '{}'::jsonb, 'processed'
+            ),
+            (
+              ${apo92Generations.other}, 'apo92-generation-other',
+              'whatsapp.phone_number.created', '{}'::jsonb, 'processed'
+            )
+        `;
+        await rlsAdmin`
+          insert into "pg-drizzle_whatsapp_readiness" (
+            clinic_id, provisioning_event_id, status_reason
+          ) values (${rlsClinicId}, ${apo92Generations.clinic}, 'ready')
+        `;
+        await rlsAdmin`
+          insert into "pg-drizzle_whatsapp_provisioning_step" (
+            event_id, clinic_id, phone_number_id, step, status
+          ) values (
+            ${apo92Generations.clinic}, ${rlsClinicId}, 'phone-92',
+            'project-webhook', 'succeeded'
+          )
+        `;
+        await rlsAdmin`
+          insert into "pg-drizzle_whatsapp_smoke_run" (
+            id, clinic_id, actor_identity_id, provisioning_event_id, status, synthetic_contact,
+            real_patients_enabled, steps, blockers, started_at, finished_at
+          ) values
+            (
+              ${apo92SmokeRuns.clinic}, ${rlsClinicId}, ${rlsIdentities.owner}, ${apo92Generations.clinic},
+              'passed', true, false, '[]'::jsonb, '[]'::jsonb, now(), now()
+            ),
+            (
+              ${apo92SmokeRuns.other}, ${otherClinicId}, ${rlsIdentities.other}, null,
+              'passed', true, false, '[]'::jsonb, '[]'::jsonb, now(), now()
+            )
+        `;
+        await expect(
+          rlsAdmin`
+            insert into "pg-drizzle_whatsapp_smoke_run" (
+              id, clinic_id, actor_identity_id, provisioning_event_id, status,
+              synthetic_contact, real_patients_enabled, steps, blockers,
+              started_at, finished_at
+            ) values (
+              ${randomUUID()}, ${rlsClinicId}, ${rlsIdentities.owner},
+              ${apo92Generations.other}, 'failed', false, true,
+              '[]'::jsonb, '[]'::jsonb, now(), now()
+            )
+          `,
+        ).rejects.toThrow(/generación.*pertenece.*Clínica/i);
         await rlsAdmin.end();
 
         const restrictedUrl = new URL(migratedUrl);
@@ -637,6 +880,149 @@ describe("migraciones de PostgreSQL", () => {
               `,
           );
           expect(visibleClinics).toEqual([{ id: rlsClinicId }]);
+
+          const providerSmokeRuns = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "owner",
+              clinicUserId: rlsMemberships.owner,
+              identityId: rlsIdentities.owner,
+            },
+            async (transaction) => {
+              await transaction`select set_config(
+                'app.whatsapp_provider', 'true', true
+              )`;
+              return transaction<Array<{ clinic_id: string }>>`
+                select clinic_id
+                from "pg-drizzle_whatsapp_smoke_run"
+                order by clinic_id
+              `;
+            },
+          );
+          expect(providerSmokeRuns).toEqual([{ clinic_id: rlsClinicId }]);
+
+          const providerSmokeRunsFromOtherClinic = await withClinicContext(
+            restricted,
+            {
+              clinicId: otherClinicId,
+              clinicRole: "doctor",
+              clinicUserId: rlsMemberships.other,
+              identityId: rlsIdentities.other,
+            },
+            async (transaction) => {
+              await transaction`select set_config(
+                'app.whatsapp_provider', 'true', true
+              )`;
+              return transaction<Array<{ clinic_id: string }>>`
+                select clinic_id
+                from "pg-drizzle_whatsapp_smoke_run"
+                order by clinic_id
+              `;
+            },
+          );
+          expect(providerSmokeRunsFromOtherClinic).toEqual([
+            { clinic_id: otherClinicId },
+          ]);
+
+          const ownerAuthorization = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "owner",
+              clinicUserId: rlsMemberships.owner,
+              identityId: rlsIdentities.owner,
+            },
+            async (transaction) => {
+              await transaction`select set_config(
+                'app.subscription_status', 'active', true
+              )`;
+              return transaction<Array<{ clinic_id: string }>>`
+                update "pg-drizzle_whatsapp_connection"
+                set
+                  offboarding_authorized_at = now(),
+                  offboarding_authorized_by_identity_id = ${rlsIdentities.owner}
+                where clinic_id = ${rlsClinicId}
+                returning clinic_id
+              `;
+            },
+          );
+          expect(ownerAuthorization).toEqual([{ clinic_id: rlsClinicId }]);
+
+          const doctorAuthorization = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "doctor",
+              clinicUserId: rlsMemberships.doctor,
+              identityId: rlsIdentities.doctor,
+            },
+            async (transaction) => {
+              await transaction`select set_config(
+                'app.subscription_status', 'active', true
+              )`;
+              return transaction<Array<{ clinic_id: string }>>`
+                update "pg-drizzle_whatsapp_connection"
+                set
+                  offboarding_authorized_at = now(),
+                  offboarding_authorized_by_identity_id = ${rlsIdentities.doctor}
+                where clinic_id = ${rlsClinicId}
+                returning clinic_id
+              `;
+            },
+          );
+          expect(doctorAuthorization).toEqual([]);
+
+          await expect(
+            withClinicContext(
+              restricted,
+              {
+                clinicId: rlsClinicId,
+                clinicRole: "owner",
+                clinicUserId: rlsMemberships.owner,
+                identityId: rlsIdentities.owner,
+              },
+              async (transaction) => {
+                await transaction`select set_config(
+                  'app.subscription_status', 'active', true
+                )`;
+                return transaction`
+                  update "pg-drizzle_whatsapp_connection"
+                  set metadata = '{"owner_probe":true}'::jsonb
+                  where clinic_id = ${rlsClinicId}
+                `;
+              },
+            ),
+          ).rejects.toThrow(/propietario.*actualizar.*autorización/i);
+
+          const provisioningWorkerUpdate = await withClinicContext(
+            restricted,
+            {
+              clinicId: rlsClinicId,
+              clinicRole: "doctor",
+              clinicUserId: rlsMemberships.doctor,
+              identityId: rlsIdentities.doctor,
+            },
+            async (transaction) => {
+              await transaction`select set_config(
+                'app.whatsapp_provisioning_worker', 'true', true
+              )`;
+              await transaction`select set_config(
+                'app.subscription_status', 'active', true
+              )`;
+              return transaction<Array<{ clinic_id: string }>>`
+                update "pg-drizzle_whatsapp_connection"
+                set
+                  metadata = '{"worker_probe":true}'::jsonb,
+                  status = 'provisioning'
+                where clinic_id = ${rlsClinicId}
+                returning clinic_id
+              `;
+            },
+          );
+          expect(provisioningWorkerUpdate).toEqual([
+            { clinic_id: rlsClinicId },
+          ]);
 
           await expect(
             withClinicContext(

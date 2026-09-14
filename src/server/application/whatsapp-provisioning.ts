@@ -5,6 +5,7 @@ import {
   parseKapsoDeliveryStatusPayload,
   type KapsoDeliveryStatusEvent,
 } from "~/domain/whatsapp-delivery-events";
+import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
 import {
   KapsoLifecycleEventError,
   isKapsoPhoneNumberLifecycleEventName,
@@ -185,7 +186,7 @@ export class KapsoProvisioningProviderError extends Error {
   readonly status: number;
 
   constructor(status: number, message: string) {
-    super(message);
+    super(sanitizeWhatsAppOperationalText(message));
     this.name = "KapsoProvisioningProviderError";
     this.status = status;
   }

@@ -1,4 +1,5 @@
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
+import type { WhatsAppRealTrafficBlocker } from "~/domain/whatsapp-traffic";
 import type { AppointmentReminderSender } from "./appointment-reminders";
 import type { ConversationEscalationTrigger } from "./conversation-escalations";
 import type { ManualAppointmentMessageSender } from "./manual-appointments";
@@ -23,6 +24,21 @@ export class WhatsAppCircuitBreakerOpenError extends Error {
     );
     this.clinicId = clinicId;
     this.name = "WhatsAppCircuitBreakerOpenError";
+  }
+}
+
+export class WhatsAppRealTrafficBlockedError extends Error {
+  readonly realTrafficBlocked = true;
+  readonly blockers: WhatsAppRealTrafficBlocker[];
+
+  constructor(blockers: WhatsAppRealTrafficBlocker[] = []) {
+    super(
+      blockers.length === 0
+        ? "El tráfico real de WhatsApp está bloqueado hasta completar los gates y habilitarlo explícitamente"
+        : blockers.map((blocker) => blocker.message).join("; "),
+    );
+    this.name = "WhatsAppRealTrafficBlockedError";
+    this.blockers = blockers;
   }
 }
 

@@ -119,8 +119,12 @@ export function sanitizeWhatsAppOperationalText(value: string) {
   return value
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .replace(
-      /((?:authorization|x-api-key|api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*)(?:Bearer\s+)?\S+/gi,
-      "$1[redacted]",
+      /([a-z][a-z\d+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi,
+      "$1[redacted]@",
+    )
+    .replace(
+      /((?:["']?(?:authorization|x-api-key|api[_-]?key|access[_-]?token|secret|password)["']?)\s*[:=]\s*["']?)(?:Bearer\s+)?([^\"',}\s]+)(["']?)/gi,
+      "$1[redacted]$3",
     )
     .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
     .trim()

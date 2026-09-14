@@ -139,7 +139,7 @@ export type KapsoOnboardingProvider = {
   revokeSetupLink: (input: {
     customerId: string;
     setupLinkId: string;
-  }) => Promise<KapsoSetupLink>;
+  }) => Promise<KapsoSetupLink | undefined>;
 };
 
 type KapsoOnboardingProviderOptions = {
@@ -296,17 +296,24 @@ export function createKapsoOnboardingProvider(
     },
 
     async revokeSetupLink(input) {
-      const payload = await requestJson(
-        fetchImpl,
-        options.apiKey,
-        `/customers/${encodeURIComponent(input.customerId)}/setup_links/${encodeURIComponent(input.setupLinkId)}`,
-        {
-          body: JSON.stringify({ setup_link: { status: "revoked" } }),
-          headers: { "Content-Type": "application/json" },
-          method: "PATCH",
-        },
-      );
-      return toSetupLink(parseKapsoPayload(setupLinkSchema, payload.data));
+      try {
+        const payload = await requestJson(
+          fetchImpl,
+          options.apiKey,
+          `/customers/${encodeURIComponent(input.customerId)}/setup_links/${encodeURIComponent(input.setupLinkId)}`,
+          {
+            body: JSON.stringify({ setup_link: { status: "revoked" } }),
+            headers: { "Content-Type": "application/json" },
+            method: "PATCH",
+          },
+        );
+        return toSetupLink(parseKapsoPayload(setupLinkSchema, payload.data));
+      } catch (error) {
+        if (error instanceof KapsoProviderError && error.status === 404) {
+          return undefined;
+        }
+        throw error;
+      }
     },
   };
 }

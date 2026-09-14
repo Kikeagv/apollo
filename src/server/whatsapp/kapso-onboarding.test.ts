@@ -491,6 +491,25 @@ describe("adaptador de onboarding de Kapso", () => {
     );
   });
 
+  it("trata un setup link remoto inexistente como revocado", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: "not found" }), { status: 404 }),
+      );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.revokeSetupLink({
+        customerId: "kapso-customer-1",
+        setupLinkId: "setup-link-missing",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("falla cerrado si una asociación de número no trae un número visible", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

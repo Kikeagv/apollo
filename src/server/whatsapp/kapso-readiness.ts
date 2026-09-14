@@ -6,6 +6,8 @@ import {
   type WhatsAppTemplateCategory,
   type WhatsAppTemplateSnapshot,
 } from "~/domain/whatsapp-readiness";
+import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
+import { kapsoProjectWebhookEvents } from "~/domain/whatsapp-kapso-provisioning";
 import type {
   WhatsAppBillingProviderResult,
   WhatsAppReadinessProvider,
@@ -265,6 +267,40 @@ export function createKapsoReadinessProvider(
         evidence: `Kapso webhook test success=true; phone_number_id=${input.phoneNumberId}; tested_at=${testedAt.toISOString()}`,
         evidenceScope: "webhook-preflight",
         testedAt,
+      };
+    },
+
+    async runSyntheticSmoke(input) {
+      const payload = await requestJson(
+        fetchImpl,
+        options.apiKey,
+        `/whatsapp/webhooks/${encodeURIComponent(input.projectWebhookId)}/test`,
+        {
+          // El endpoint oficial solo acepta event_type. El resto del smoke
+          // sintético se ejecuta dentro de Praxia con un Contacto sintético.
+          body: JSON.stringify({ event_type: kapsoProjectWebhookEvents[0] }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+        },
+      );
+      const data = unwrapData(payload);
+      if (!readBoolean(data, ["success"])) {
+        throw new KapsoReadinessProviderError(
+          422,
+          "Kapso no confirmó el smoke sintético del webhook de proyecto",
+        );
+      }
+      const testedAt = new Date();
+      return {
+        evidence: sanitizeWhatsAppOperationalText(
+          `Kapso webhook test success=true; event_type=${kapsoProjectWebhookEvents[0]}; phone_number_id=${input.phoneNumberId}; synthetic_contact_id=${input.syntheticContactId}; tested_at=${testedAt.toISOString()}`,
+        ),
+        // El endpoint oficial confirma la prueba del webhook, no cada contrato
+        // externo requerido por APO-92. Por eso no puede habilitar tráfico real.
+        providerTransportVerified: false,
+        realPatientsEnabled: false,
+        steps: {},
+        syntheticContact: input.syntheticContactId.startsWith("synthetic-"),
       };
     },
   };

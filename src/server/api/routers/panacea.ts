@@ -7,6 +7,7 @@ import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner
 import { getPanaceaConfigurationOverview } from "~/server/application/panacea-configuration";
 import { getWhatsAppConnection } from "~/server/application/whatsapp-connections";
 import { getWhatsAppReadiness } from "~/server/application/whatsapp-readiness";
+import { authorizeWhatsAppOffboarding } from "~/server/application/whatsapp-operations";
 import { getKapsoWhatsAppOnboarding } from "~/server/application/kapso-onboarding";
 import { manageKapsoWhatsAppSetupLink } from "~/server/application/whatsapp-setup-links";
 import {
@@ -97,6 +98,7 @@ import {
 import { drizzlePanaceaConfigurationReader } from "~/server/db/panacea-configuration-store";
 import { drizzleWhatsAppConnectionReader } from "~/server/db/whatsapp-connection-store";
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
+import { drizzleWhatsAppOperationsStore } from "~/server/db/whatsapp-operations-store";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
 import { drizzlePanaceaTeamReader } from "~/server/db/panacea-team-store";
 import {
@@ -209,6 +211,22 @@ export const panaceaRouter = {
       kapsoOnboardingProvider,
     );
   }),
+
+  authorizeWhatsAppOffboarding: clinicProcedure
+    .input(z.object({ manualConfirmation: z.literal(true) }))
+    .mutation(({ ctx, input }) => {
+      if (ctx.clinic.role !== "owner") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      return authorizeWhatsAppOffboarding(
+        {
+          actorIdentityId: ctx.clinic.identityId,
+          clinicId: ctx.clinic.clinicId,
+          manualConfirmation: input.manualConfirmation,
+        },
+        drizzleWhatsAppOperationsStore,
+      );
+    }),
 
   manageKapsoWhatsAppSetupLink: clinicProcedure
     .input(

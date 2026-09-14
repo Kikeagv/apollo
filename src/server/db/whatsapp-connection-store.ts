@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import {
   isWhatsAppConnectionReady,
@@ -8,11 +8,13 @@ import {
   evaluateWhatsAppReadiness,
   type WhatsAppReadinessInput,
 } from "~/domain/whatsapp-readiness";
+import { evaluateWhatsAppRealTraffic } from "~/domain/whatsapp-traffic";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 import type { WhatsAppConnectionReader } from "~/server/application/whatsapp-connections";
 import {
   WhatsAppCircuitBreakerOpenError,
   WhatsAppConnectionRequiredError,
+  WhatsAppRealTrafficBlockedError,
 } from "~/server/application/whatsapp-provider";
 import {
   inClinicTransaction,
@@ -25,6 +27,9 @@ import {
   whatsappBilling,
   whatsappCriticalTemplates,
   whatsappReadiness,
+  clinics,
+  whatsappSmokeRuns,
+  whatsappTrafficGateEvidences,
 } from "~/server/db/schema";
 
 /** Lee la conexión sin sacar al operador del alcance RLS de su Clínica. */
@@ -71,20 +76,34 @@ export async function requireWhatsAppConnectionReady(input: {
       });
       if (connection === undefined) return undefined;
       if (input.provider === "kapso") {
-        const [readiness, billing, templates, circuit] = await Promise.all([
-          transaction.query.whatsappReadiness.findFirst({
-            where: eq(whatsappReadiness.clinicId, input.clinicId),
-          }),
-          transaction.query.whatsappBilling.findFirst({
-            where: eq(whatsappBilling.clinicId, input.clinicId),
-          }),
-          transaction.query.whatsappCriticalTemplates.findMany({
-            where: eq(whatsappCriticalTemplates.clinicId, input.clinicId),
-          }),
-          transaction.query.whatsappCircuitBreakers.findFirst({
-            where: eq(whatsappCircuitBreakers.clinicId, input.clinicId),
-          }),
-        ]);
+        const [readiness, billing, templates, circuit, clinic, gates, smoke] =
+          await Promise.all([
+            transaction.query.whatsappReadiness.findFirst({
+              where: eq(whatsappReadiness.clinicId, input.clinicId),
+            }),
+            transaction.query.whatsappBilling.findFirst({
+              where: eq(whatsappBilling.clinicId, input.clinicId),
+            }),
+            transaction.query.whatsappCriticalTemplates.findMany({
+              where: eq(whatsappCriticalTemplates.clinicId, input.clinicId),
+            }),
+            transaction.query.whatsappCircuitBreakers.findFirst({
+              where: eq(whatsappCircuitBreakers.clinicId, input.clinicId),
+            }),
+            transaction.query.clinics.findFirst({
+              columns: { isSynthetic: true },
+              where: eq(clinics.id, input.clinicId),
+            }),
+            transaction.query.whatsappTrafficGateEvidences.findMany({
+              where: eq(whatsappTrafficGateEvidences.clinicId, input.clinicId),
+            }),
+            transaction
+              .select()
+              .from(whatsappSmokeRuns)
+              .where(eq(whatsappSmokeRuns.clinicId, input.clinicId))
+              .orderBy(desc(whatsappSmokeRuns.finishedAt))
+              .limit(1),
+          ]);
         if (circuit?.status === "open") {
           throw new WhatsAppCircuitBreakerOpenError(
             input.clinicId,
@@ -181,6 +200,35 @@ export async function requireWhatsAppConnectionReady(input: {
             (connection.metadata.provisioningEventId ?? null)
         ) {
           return undefined;
+        }
+        const trafficEvaluation = evaluateWhatsAppRealTraffic({
+          circuitStatus: circuit?.status ?? "closed",
+          clinicIsSynthetic: clinic?.isSynthetic ?? true,
+          connectionGenerationId:
+            connection.metadata.provisioningEventId ?? null,
+          connectionProvider: connection.provider,
+          connectionStatus: connection.status,
+          gates: Object.fromEntries(
+            gates.map((gate) => [
+              gate.code,
+              {
+                evidenceReference: gate.evidenceReference,
+                ready: gate.ready,
+              },
+            ]),
+          ),
+          requireEnabled: true,
+          smoke: smoke[0] ?? {
+            providerTransportVerified: false,
+            realPatientsEnabled: false,
+            status: "pending",
+            syntheticContact: false,
+          },
+          technicalReadiness: readinessResult.status,
+          trafficStatus: connection.realTrafficStatus,
+        });
+        if (!trafficEvaluation.allowed) {
+          throw new WhatsAppRealTrafficBlockedError(trafficEvaluation.blockers);
         }
       }
       return connection;

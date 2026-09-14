@@ -4,6 +4,7 @@ import {
   kapsoPhoneNumberWebhookEvents,
   kapsoProjectWebhookEvents,
 } from "~/domain/whatsapp-kapso-provisioning";
+import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
 import type {
   KapsoProvisioningPhoneNumber,
   KapsoProvisioningProvider,
@@ -49,6 +50,62 @@ export class KapsoProvisioningProviderUnavailableError extends Error {
     super("Kapso no está disponible para la provisión");
     this.name = "KapsoProvisioningProviderUnavailableError";
   }
+}
+
+export type KapsoWebhookOffboardingProvider = {
+  disableWebhook(input: {
+    kind: "phone-number" | "project";
+    phoneNumberId: string | null;
+    remoteId: string;
+  }): Promise<{ alreadyDisabled?: boolean; evidence: string }>;
+};
+
+/** Desactiva únicamente webhooks propiedad de Praxia; nunca elimina activos Meta. */
+export function createKapsoWebhookOffboardingProvider(options: {
+  apiKey?: string;
+  fetchImpl?: typeof fetch;
+}): KapsoWebhookOffboardingProvider {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  return {
+    async disableWebhook(input) {
+      if (options.apiKey === undefined || options.apiKey.trim() === "") {
+        throw new KapsoProvisioningProviderUnavailableError();
+      }
+      const path =
+        input.kind === "phone-number"
+          ? input.phoneNumberId === null
+            ? null
+            : `/whatsapp/phone_numbers/${encodeURIComponent(input.phoneNumberId)}/webhooks/${encodeURIComponent(input.remoteId)}`
+          : `/whatsapp/webhooks/${encodeURIComponent(input.remoteId)}`;
+      if (path === null) {
+        throw new KapsoProvisioningProviderError(
+          422,
+          "No hay phone_number_id para desactivar el webhook de número",
+        );
+      }
+      try {
+        await requestJson(fetchImpl, options.apiKey, path, {
+          body: JSON.stringify({ whatsapp_webhook: { active: false } }),
+          headers: { "Content-Type": "application/json" },
+          method: "PATCH",
+        });
+        return {
+          evidence: `Kapso webhook ${input.kind} active=false`,
+        };
+      } catch (error) {
+        if (
+          error instanceof KapsoProvisioningProviderError &&
+          error.status === 404
+        ) {
+          return {
+            alreadyDisabled: true,
+            evidence: `Kapso webhook ${input.kind} ya no está activo`,
+          };
+        }
+        throw error;
+      }
+    },
+  };
 }
 
 type KapsoProvisioningProviderOptions = {
@@ -376,7 +433,7 @@ async function requestJson(
       payload !== null &&
       "error" in payload &&
       typeof payload.error === "string"
-        ? payload.error
+        ? sanitizeWhatsAppOperationalText(payload.error)
         : "Kapso rechazó la provisión";
     throw new KapsoProvisioningProviderError(response.status, message);
   }

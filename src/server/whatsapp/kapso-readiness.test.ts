@@ -318,6 +318,69 @@ describe("adaptador de readiness de Kapso", () => {
     ).rejects.toBeInstanceOf(KapsoReadinessProviderError);
   });
 
+  it("usa el contrato oficial de prueba de webhook y conserva el smoke app-side en Praxia", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            success: true,
+          },
+        }),
+      ),
+    );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    const result = await provider.runSyntheticSmoke?.({
+      phoneNumberId: "phone-92",
+      projectWebhookId: "project-webhook-92",
+      syntheticContactId: "synthetic-contact-92",
+    });
+
+    expect(result?.syntheticContact).toBe(true);
+    expect(result?.providerTransportVerified).toBe(false);
+    expect(result?.realPatientsEnabled).toBe(false);
+    expect(result?.steps).toEqual({});
+    expect(result?.evidence).toContain("success=true");
+    const requestInit = fetchImpl.mock.calls[0]?.[1];
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.kapso.ai/platform/v1/whatsapp/webhooks/project-webhook-92/test",
+      expect.anything(),
+    );
+    expect(requestInit?.method).toBe("POST");
+    expect(typeof requestInit?.body).toBe("string");
+    if (typeof requestInit?.body !== "string") return;
+    expect(JSON.parse(requestInit.body)).toEqual({
+      event_type: "whatsapp.phone_number.created",
+    });
+  });
+
+  it("falla cerrado si Kapso no confirma que la prueba del webhook fue encolada", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            success: false,
+          },
+        }),
+      ),
+    );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    await expect(
+      provider.runSyntheticSmoke?.({
+        phoneNumberId: "phone-92",
+        projectWebhookId: "project-webhook-92",
+        syntheticContactId: "synthetic-contact-92",
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
   it("mantiene billing pendiente si Kapso no devuelve umbral de alerta", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
