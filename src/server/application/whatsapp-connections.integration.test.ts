@@ -222,7 +222,9 @@ describe("Conexiones de WhatsApp persistentes", () => {
             clinicId: fixture.primary.clinicId,
             provider: "kapso",
           }),
-        ).resolves.toMatchObject({ status: "ready" });
+        ).rejects.toThrow(
+          "Una Clínica sintética no puede recibir tráfico real",
+        );
         await updateConnection(fixture, fixture.primary.clinicId, {
           metadata: {
             health: "healthy",

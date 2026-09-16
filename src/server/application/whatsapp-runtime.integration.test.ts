@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { env } from "~/env";
 import { getWhatsAppRuntimeDiagnostic } from "./whatsapp-runtime";
 import { db } from "../db";
 import { apoloSuperadmins, user as identities } from "../db/schema";
@@ -45,7 +46,7 @@ describe("diagnóstico de runtime autorizado por Identidad", () => {
           getWhatsAppRuntimeDiagnostic({ identityId: superadminId }),
         ).resolves.toMatchObject({
           configured: true,
-          provider: "simulated",
+          provider: env.WHATSAPP_DELIVERY,
         });
         await expect(
           getWhatsAppRuntimeDiagnostic({ identityId: otherIdentityId }),

@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 
 import {
   WhatsAppReadinessConflictError,
@@ -73,6 +73,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
         transaction,
         input.eventId,
         input.leaseToken,
+        input.now,
       );
       await setProvisioningClinicId(transaction, input.clinicId);
       const clinic = await transaction.query.clinics.findFirst({
@@ -175,6 +176,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
         transaction,
         input.eventId,
         input.leaseToken,
+        input.now,
       );
       await setProvisioningClinicId(transaction, input.clinicId);
       const [clinic] = await transaction
@@ -189,6 +191,15 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
         transaction,
         input.clinicId,
         clinic.subscriptionStatus,
+      );
+      // The active provisioning lease has already been checked above. These
+      // settings let the RLS policy bind a ready transition to that lease and
+      // to the provisioning generation for this Clínica.
+      await transaction.execute(
+        sql`select set_config('app.whatsapp_provisioning_event_id', ${input.eventId}, true)`,
+      );
+      await transaction.execute(
+        sql`select set_config('app.whatsapp_provisioning_lease_token', ${input.leaseToken}, true)`,
       );
       await lockWhatsAppCircuit(transaction, input.clinicId);
 
@@ -231,6 +242,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
         transaction,
         input.eventId,
         input.leaseToken,
+        input.now,
       );
       await setProvisioningClinicId(transaction, input.clinicId);
       await insertOrUpdateAlert(transaction, {
@@ -464,6 +476,7 @@ async function assertActiveProvisioningLease(
   transaction: ClinicTransaction,
   eventId: string,
   leaseToken: string,
+  now: Date,
 ) {
   const [event] = await transaction
     .select({ id: whatsappWebhookEvents.id })
@@ -473,6 +486,7 @@ async function assertActiveProvisioningLease(
         eq(whatsappWebhookEvents.id, eventId),
         eq(whatsappWebhookEvents.leaseToken, leaseToken),
         eq(whatsappWebhookEvents.status, "processing"),
+        gt(whatsappWebhookEvents.leaseExpiresAt, now),
       ),
     );
   if (event === undefined) {
@@ -739,6 +753,7 @@ async function syncAlertsInTransaction(
       transaction,
       input.provisioningEventId,
       input.leaseToken,
+      input.now,
     );
   }
 

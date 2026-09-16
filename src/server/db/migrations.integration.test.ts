@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 const canonicalTermsAcceptanceErrorMessage =
   "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.";
 const clinicTermsRepairMigrationCreatedAt = "1789575811006";
+const apo91SchemaRepairMigrationCreatedAt = "1789575811007";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
@@ -659,6 +660,10 @@ describe("migraciones de PostgreSQL", () => {
           await migrated`
             delete from drizzle.__drizzle_migrations
             where created_at = ${clinicTermsRepairMigrationCreatedAt}
+          `;
+          await migrated`
+            delete from drizzle.__drizzle_migrations
+            where created_at = ${apo91SchemaRepairMigrationCreatedAt}
           `;
           await runMigrations(migratedUrl.toString());
           const repairedTermsContracts = await migrated<
@@ -2194,6 +2199,439 @@ describe("migraciones de PostgreSQL", () => {
             { column_name: "kapso_quota_in_flight" },
             { column_name: "kapso_quota_reserved" },
           ]);
+        } finally {
+          await migrated.end();
+        }
+      } finally {
+        await admin.unsafe(`drop database if exists "${databaseName}"`);
+        await admin.end();
+      }
+    },
+  );
+
+  databaseTest(
+    "repara el contrato de APO-91 cuando el ledger quedó adelantado",
+    async () => {
+      const databaseName = `apo_94_schema_repair_${randomUUID().replaceAll(
+        "-",
+        "",
+      )}`;
+      const admin = postgres(process.env.DATABASE_URL!, { max: 1 });
+      const migratedUrl = new URL(process.env.DATABASE_URL!);
+      migratedUrl.pathname = `/${databaseName}`;
+
+      try {
+        await admin.unsafe(`create database "${databaseName}"`);
+        await runMigrations(migratedUrl.toString());
+
+        const migrated = postgres(migratedUrl.toString(), { max: 1 });
+        try {
+          await migrated`
+            alter table "pg-drizzle_whatsapp_inbound_reply"
+            drop column if exists "last_provider_event_id"
+          `;
+          await migrated`
+            alter table "pg-drizzle_whatsapp_billing_reservation"
+            drop column if exists "reserved_at"
+          `;
+          await migrated`
+            drop trigger if exists whatsapp_billing_outbound_mutation_guard
+            on "pg-drizzle_whatsapp_billing"
+          `;
+          await migrated`
+            drop function if exists guard_whatsapp_billing_outbound_mutation()
+          `;
+          await migrated`
+            drop trigger if exists whatsapp_connection_circuit_mutation_guard
+            on "pg-drizzle_whatsapp_connection"
+          `;
+          await migrated`
+            drop function if exists guard_whatsapp_connection_circuit_mutation()
+          `;
+          await migrated`
+            drop trigger if exists whatsapp_circuit_breaker_worker_mutation_guard
+            on "pg-drizzle_whatsapp_circuit_breaker"
+          `;
+          await migrated`
+            drop function if exists guard_whatsapp_circuit_breaker_worker_mutation()
+          `;
+          await migrated`
+            drop policy if exists whatsapp_connection_circuit_worker_update
+            on "pg-drizzle_whatsapp_connection"
+          `;
+          await migrated`
+            drop policy if exists whatsapp_connection_provisioning_worker_update
+            on "pg-drizzle_whatsapp_connection"
+          `;
+          await migrated`
+            drop policy if exists whatsapp_billing_subscription_active_read
+            on "pg-drizzle_whatsapp_billing"
+          `;
+          for (const policy of [
+            [
+              "whatsapp_billing_outbound_worker_capacity_update",
+              "pg-drizzle_whatsapp_billing",
+            ],
+            [
+              "whatsapp_billing_outbound_worker_manage",
+              "pg-drizzle_whatsapp_billing",
+            ],
+            [
+              "whatsapp_billing_reservation_outbound_worker_insert",
+              "pg-drizzle_whatsapp_billing_reservation",
+            ],
+            [
+              "whatsapp_billing_reservation_outbound_worker_manage",
+              "pg-drizzle_whatsapp_billing_reservation",
+            ],
+            [
+              "whatsapp_billing_reservation_outbound_worker_update",
+              "pg-drizzle_whatsapp_billing_reservation",
+            ],
+            ["whatsapp_billing_scheduler_read", "pg-drizzle_whatsapp_billing"],
+            [
+              "whatsapp_billing_scheduler_capacity_update",
+              "pg-drizzle_whatsapp_billing",
+            ],
+            [
+              "whatsapp_billing_reservation_scheduler_read",
+              "pg-drizzle_whatsapp_billing_reservation",
+            ],
+            [
+              "whatsapp_billing_reservation_scheduler_update",
+              "pg-drizzle_whatsapp_billing_reservation",
+            ],
+            [
+              "whatsapp_inbound_reply_scheduler_read",
+              "pg-drizzle_whatsapp_inbound_reply",
+            ],
+            [
+              "whatsapp_circuit_breaker_audit_superadmin_append",
+              "pg-drizzle_whatsapp_circuit_breaker_audit",
+            ],
+            [
+              "whatsapp_circuit_breaker_audit_superadmin_read",
+              "pg-drizzle_whatsapp_circuit_breaker_audit",
+            ],
+            [
+              "whatsapp_circuit_breaker_audit_worker_append",
+              "pg-drizzle_whatsapp_circuit_breaker_audit",
+            ],
+            [
+              "whatsapp_circuit_breaker_clinic_owner_read",
+              "pg-drizzle_whatsapp_circuit_breaker",
+            ],
+            [
+              "whatsapp_circuit_breaker_provider_read",
+              "pg-drizzle_whatsapp_circuit_breaker",
+            ],
+            [
+              "whatsapp_circuit_breaker_superadmin_manage",
+              "pg-drizzle_whatsapp_circuit_breaker",
+            ],
+            [
+              "whatsapp_circuit_breaker_worker_insert",
+              "pg-drizzle_whatsapp_circuit_breaker",
+            ],
+            [
+              "whatsapp_circuit_breaker_worker_manage",
+              "pg-drizzle_whatsapp_circuit_breaker",
+            ],
+            [
+              "whatsapp_circuit_breaker_worker_update",
+              "pg-drizzle_whatsapp_circuit_breaker",
+            ],
+            [
+              "whatsapp_metric_retention_scheduler_delete",
+              "pg-drizzle_whatsapp_usage_metric",
+            ],
+            [
+              "whatsapp_operational_retention_scheduler_delete",
+              "pg-drizzle_whatsapp_circuit_breaker_audit",
+            ],
+            [
+              "whatsapp_reservation_retention_scheduler_delete",
+              "pg-drizzle_whatsapp_billing_reservation",
+            ],
+            [
+              "whatsapp_usage_metric_superadmin_read",
+              "pg-drizzle_whatsapp_usage_metric",
+            ],
+            [
+              "whatsapp_usage_metric_worker_append",
+              "pg-drizzle_whatsapp_usage_metric",
+            ],
+            [
+              "whatsapp_usage_metric_worker_read",
+              "pg-drizzle_whatsapp_usage_metric",
+            ],
+          ] as const) {
+            await migrated.unsafe(
+              `drop policy if exists "${policy[0]}" on "${policy[1]}"`,
+            );
+          }
+          await migrated`
+            drop table if exists "pg-drizzle_whatsapp_circuit_breaker_alert"
+            cascade
+          `;
+          await migrated`
+            delete from drizzle.__drizzle_migrations
+            where created_at = ${apo91SchemaRepairMigrationCreatedAt}
+          `;
+
+          await runMigrations(migratedUrl.toString());
+
+          const inboundColumns = await migrated<Array<{ column_name: string }>>`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_inbound_reply'
+              and column_name = 'last_provider_event_id'
+          `;
+          expect(inboundColumns).toEqual([
+            { column_name: "last_provider_event_id" },
+          ]);
+
+          const reservationColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_billing_reservation'
+              and column_name = 'reserved_at'
+          `;
+          expect(reservationColumns).toEqual([{ column_name: "reserved_at" }]);
+
+          const alertTables = await migrated<Array<{ table_name: string }>>`
+            select table_name
+            from information_schema.tables
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_circuit_breaker_alert'
+          `;
+          expect(alertTables).toEqual([
+            { table_name: "pg-drizzle_whatsapp_circuit_breaker_alert" },
+          ]);
+
+          const billingTriggers = await migrated<
+            Array<{ trigger_name: string }>
+          >`
+            select trigger_name
+            from information_schema.triggers
+            where trigger_schema = 'public'
+              and event_object_table = 'pg-drizzle_whatsapp_billing'
+              and trigger_name = 'whatsapp_billing_outbound_mutation_guard'
+          `;
+          expect(billingTriggers).toEqual([
+            { trigger_name: "whatsapp_billing_outbound_mutation_guard" },
+          ]);
+
+          const connectionTriggers = await migrated<
+            Array<{ trigger_name: string }>
+          >`
+            select trigger_name
+            from information_schema.triggers
+            where trigger_schema = 'public'
+              and event_object_table = 'pg-drizzle_whatsapp_connection'
+              and trigger_name = 'whatsapp_connection_circuit_mutation_guard'
+          `;
+          expect(connectionTriggers).toEqual([
+            { trigger_name: "whatsapp_connection_circuit_mutation_guard" },
+          ]);
+
+          const circuitBreakerTriggers = await migrated<
+            Array<{ trigger_name: string }>
+          >`
+            select trigger_name
+            from information_schema.triggers
+            where trigger_schema = 'public'
+              and event_object_table = 'pg-drizzle_whatsapp_circuit_breaker'
+              and trigger_name = 'whatsapp_circuit_breaker_worker_mutation_guard'
+          `;
+          expect(circuitBreakerTriggers).toEqual([
+            {
+              trigger_name: "whatsapp_circuit_breaker_worker_mutation_guard",
+            },
+          ]);
+
+          const connectionWorkerPolicies = await migrated<
+            Array<{ name: string; withCheck: string | null }>
+          >`
+            select policyname as name, with_check as "withCheck"
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_connection'
+              and policyname in (
+                'whatsapp_connection_circuit_worker_update',
+                'whatsapp_connection_provisioning_worker_update'
+              )
+            order by policyname
+          `;
+          expect(connectionWorkerPolicies.map(({ name }) => name)).toEqual([
+            "whatsapp_connection_circuit_worker_update",
+            "whatsapp_connection_provisioning_worker_update",
+          ]);
+          for (const policy of connectionWorkerPolicies) {
+            expect(policy.withCheck).toContain("status");
+          }
+          const provisioningWorkerPolicy = connectionWorkerPolicies.find(
+            ({ name }) =>
+              name === "whatsapp_connection_provisioning_worker_update",
+          );
+          expect(provisioningWorkerPolicy?.withCheck ?? "").toContain(
+            "'ready'",
+          );
+          expect(provisioningWorkerPolicy?.withCheck ?? "").toContain(
+            "'disconnected'",
+          );
+          expect(provisioningWorkerPolicy?.withCheck ?? "").toContain(
+            "app.whatsapp_provisioning_event_id",
+          );
+          expect(provisioningWorkerPolicy?.withCheck ?? "").toContain(
+            "app.whatsapp_provisioning_lease_token",
+          );
+          expect(provisioningWorkerPolicy?.withCheck ?? "").toContain(
+            "pg-drizzle_whatsapp_provisioning_step",
+          );
+          expect(provisioningWorkerPolicy?.withCheck ?? "").toContain(
+            '"pg-drizzle_whatsapp_connection"',
+          );
+          for (const clause of [
+            "lease_expires_at",
+            "clock_timestamp",
+            "'succeeded'",
+            "phone_number_id",
+            "project_id",
+            "metadata",
+            "project-webhook",
+            "phone-number-webhook",
+          ]) {
+            expect(provisioningWorkerPolicy?.withCheck ?? "").toContain(clause);
+          }
+
+          const repairedOperationalPolicies = await migrated<
+            Array<{ name: string }>
+          >`
+            select policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and policyname in (
+                'whatsapp_billing_outbound_worker_capacity_update',
+                'whatsapp_billing_outbound_worker_manage',
+                'whatsapp_billing_reservation_outbound_worker_insert',
+                'whatsapp_billing_reservation_outbound_worker_manage',
+                'whatsapp_billing_reservation_outbound_worker_update',
+                'whatsapp_billing_scheduler_read',
+                'whatsapp_billing_scheduler_capacity_update',
+                'whatsapp_billing_reservation_scheduler_read',
+                'whatsapp_billing_reservation_scheduler_update',
+                'whatsapp_inbound_reply_scheduler_read',
+                'whatsapp_circuit_breaker_alert_superadmin_manage',
+                'whatsapp_circuit_breaker_alert_worker_insert',
+                'whatsapp_circuit_breaker_alert_worker_read',
+                'whatsapp_circuit_breaker_alert_worker_update',
+                'whatsapp_circuit_breaker_audit_superadmin_append',
+                'whatsapp_circuit_breaker_audit_superadmin_read',
+                'whatsapp_circuit_breaker_audit_worker_append',
+                'whatsapp_circuit_breaker_clinic_owner_read',
+                'whatsapp_circuit_breaker_provider_read',
+                'whatsapp_circuit_breaker_superadmin_manage',
+                'whatsapp_circuit_breaker_worker_insert',
+                'whatsapp_circuit_breaker_worker_manage',
+                'whatsapp_circuit_breaker_worker_update',
+                'whatsapp_connection_circuit_worker_update',
+                'whatsapp_connection_provisioning_worker_update',
+                'whatsapp_metric_retention_scheduler_delete',
+                'whatsapp_operational_retention_scheduler_delete',
+                'whatsapp_reservation_retention_scheduler_delete',
+                'whatsapp_usage_metric_superadmin_read',
+                'whatsapp_usage_metric_worker_append',
+                'whatsapp_usage_metric_worker_read'
+              )
+            order by name
+          `;
+          expect(repairedOperationalPolicies).toEqual([
+            { name: "whatsapp_billing_outbound_worker_capacity_update" },
+            { name: "whatsapp_billing_outbound_worker_manage" },
+            {
+              name: "whatsapp_billing_reservation_outbound_worker_insert",
+            },
+            {
+              name: "whatsapp_billing_reservation_outbound_worker_manage",
+            },
+            {
+              name: "whatsapp_billing_reservation_outbound_worker_update",
+            },
+            { name: "whatsapp_billing_reservation_scheduler_read" },
+            { name: "whatsapp_billing_reservation_scheduler_update" },
+            { name: "whatsapp_billing_scheduler_capacity_update" },
+            { name: "whatsapp_billing_scheduler_read" },
+            { name: "whatsapp_circuit_breaker_alert_superadmin_manage" },
+            { name: "whatsapp_circuit_breaker_alert_worker_insert" },
+            { name: "whatsapp_circuit_breaker_alert_worker_read" },
+            { name: "whatsapp_circuit_breaker_alert_worker_update" },
+            { name: "whatsapp_circuit_breaker_audit_superadmin_append" },
+            { name: "whatsapp_circuit_breaker_audit_superadmin_read" },
+            { name: "whatsapp_circuit_breaker_audit_worker_append" },
+            { name: "whatsapp_circuit_breaker_clinic_owner_read" },
+            { name: "whatsapp_circuit_breaker_provider_read" },
+            { name: "whatsapp_circuit_breaker_superadmin_manage" },
+            { name: "whatsapp_circuit_breaker_worker_insert" },
+            { name: "whatsapp_circuit_breaker_worker_manage" },
+            { name: "whatsapp_circuit_breaker_worker_update" },
+            { name: "whatsapp_connection_circuit_worker_update" },
+            { name: "whatsapp_connection_provisioning_worker_update" },
+            { name: "whatsapp_inbound_reply_scheduler_read" },
+            { name: "whatsapp_metric_retention_scheduler_delete" },
+            { name: "whatsapp_operational_retention_scheduler_delete" },
+            { name: "whatsapp_reservation_retention_scheduler_delete" },
+            { name: "whatsapp_usage_metric_superadmin_read" },
+            { name: "whatsapp_usage_metric_worker_append" },
+            { name: "whatsapp_usage_metric_worker_read" },
+          ]);
+
+          const billingSubscriptionPolicy = await migrated<
+            Array<{ usingExpression: string | null }>
+          >`
+            select qual as "usingExpression"
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_billing'
+              and policyname = 'whatsapp_billing_subscription_active_read'
+          `;
+          expect(billingSubscriptionPolicy).toHaveLength(1);
+          expect(billingSubscriptionPolicy[0]?.usingExpression).toContain(
+            "appointment_scheduler",
+          );
+
+          const alertPolicies = await migrated<
+            Array<{ command: string; name: string }>
+          >`
+            select cmd as command, policyname as name
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_circuit_breaker_alert'
+          `;
+          expect(alertPolicies).toEqual(
+            expect.arrayContaining([
+              {
+                command: "ALL",
+                name: "whatsapp_circuit_breaker_alert_superadmin_manage",
+              },
+              {
+                command: "INSERT",
+                name: "whatsapp_circuit_breaker_alert_worker_insert",
+              },
+              {
+                command: "SELECT",
+                name: "whatsapp_circuit_breaker_alert_worker_read",
+              },
+              {
+                command: "UPDATE",
+                name: "whatsapp_circuit_breaker_alert_worker_update",
+              },
+            ]),
+          );
         } finally {
           await migrated.end();
         }

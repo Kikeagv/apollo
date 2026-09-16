@@ -108,6 +108,7 @@ export type WhatsAppReadinessProvisioningStore = {
     clinicId: string;
     eventId: string;
     leaseToken: string;
+    now: Date;
     phoneNumberId: string;
     projectId: string;
   }): Promise<WhatsAppReadinessRecord>;
@@ -115,6 +116,7 @@ export type WhatsAppReadinessProvisioningStore = {
     clinicId: string;
     eventId: string;
     leaseToken: string;
+    now: Date;
     phoneNumberId: string;
     projectId: string;
     state: WhatsAppReadinessRecord;
@@ -430,6 +432,7 @@ async function saveProvisioningReadiness(
     clinicId: input.clinicId,
     eventId: input.eventId,
     leaseToken: input.leaseToken,
+    now: input.now,
     phoneNumberId: input.phoneNumberId,
     projectId: input.projectId,
     state,

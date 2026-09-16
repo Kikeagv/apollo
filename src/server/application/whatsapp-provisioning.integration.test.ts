@@ -309,7 +309,7 @@ describe("persistencia y RLS de provisión Kapso", () => {
     "el worker persiste readiness y alertas bajo el contexto RLS correcto",
     async () => {
       const fixture = await createFixture();
-      const now = new Date("2026-09-07T12:00:00.000Z");
+      const now = new Date();
       const readinessProvider: WhatsAppReadinessProvider = {
         getBilling: async () => ({
           alertThresholdCents: 100,

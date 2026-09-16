@@ -659,6 +659,13 @@
       "when": 1789575811006,
       "tag": "0098_apo94_restore_clinic_terms_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1789575811007,
+      "tag": "0099_apo94_repair_apo91_schema_drift",
+      "breakpoints": true
     }
   ]
 }
