@@ -1,4 +1,5 @@
 import type { WhatsAppConnection } from "~/domain/whatsapp-connection";
+import type { WhatsAppOwnerAccessStatus } from "~/domain/whatsapp-activation";
 import type {
   WhatsAppSetupLink,
   WhatsAppSetupLinkStatus,
@@ -14,6 +15,7 @@ import {
   type WhatsAppBusinessAppStatus,
   type WhatsAppPreflightBlocker,
   type WhatsAppPreflightChecks,
+  type WhatsAppOnboardingMode,
   type WhatsAppPreflightStatus,
 } from "~/domain/whatsapp-preflight";
 import {
@@ -30,6 +32,7 @@ export type KapsoWhatsAppPreflightSnapshot = {
   blockers: WhatsAppPreflightBlocker[];
   checkedAt: Date | null;
   checks: WhatsAppPreflightChecks | null;
+  onboardingMode?: WhatsAppOnboardingMode;
   nextAction: string;
   reason: string | null;
   status: WhatsAppPreflightStatus;
@@ -40,6 +43,7 @@ export type KapsoWhatsAppOnboardingSnapshot = {
   clinicName: string;
   connection: WhatsAppConnection | null;
   customerId: string | null;
+  ownerAccess?: WhatsAppOwnerAccessStatus;
   ownerName: string | null;
   preflight: KapsoWhatsAppPreflightSnapshot | null;
   setupLink: WhatsAppSetupLink | null;
@@ -123,6 +127,7 @@ export type KapsoWhatsAppOnboardingStore = {
       blockers: WhatsAppPreflightBlocker[];
       checkedAt: Date;
       checks: WhatsAppPreflightChecks;
+      onboardingMode?: WhatsAppOnboardingMode;
       nextAction: string;
       reason: string | null;
       status: WhatsAppPreflightStatus;
@@ -136,6 +141,7 @@ export type PrepareKapsoWhatsAppOnboardingInput = {
   clinicId: string;
   metaAuthority: MetaAuthorityStatus;
   numberOwnedByClinic: boolean;
+  onboardingMode?: WhatsAppOnboardingMode;
   ownerConfirmed: boolean;
   ownerName: string;
   phoneNumberE164: string;
@@ -267,12 +273,64 @@ export async function prepareKapsoWhatsAppOnboarding(
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
   });
-  const externalCustomerId = `praxia-clinic:${input.clinicId}`;
+  const onboardingMode =
+    input.onboardingMode ?? current.preflight?.onboardingMode ?? "coexistence";
   const localPreflightInput = createPreflightInput(input, current, {
     association: "not-checked",
     numberConnectionType: "unknown",
     phoneNumberId: null,
   });
+
+  if (onboardingMode !== "coexistence") {
+    if (
+      current.customerId !== null ||
+      current.setupLink !== null ||
+      current.connection?.provider === "kapso"
+    ) {
+      throw new Error(
+        "La Clínica ya tiene una configuración Kapso; autoriza el offboarding antes de dejar WhatsApp pendiente.",
+      );
+    }
+    const checkedAt = now();
+    const isDedicated = onboardingMode === "dedicated";
+    const reason = isDedicated
+      ? "La modalidad dedicated requiere una ampliación de alcance aprobada antes de contactar a Kapso."
+      : onboardingMode === "later"
+        ? "La Clínica se creó correctamente y la activación de WhatsApp quedó pendiente."
+        : "La Clínica se creó correctamente sin integración de WhatsApp.";
+    await dependencies.store.save({
+      actorIdentityId: input.actorIdentityId,
+      auditEvents: [
+        {
+          action: "preflight-executed",
+          customerId: current.customerId,
+          reason,
+          result: isDedicated ? "blocked" : "succeeded",
+        },
+      ],
+      clinicId: input.clinicId,
+      customerId: current.customerId,
+      preflight: {
+        blockers: [],
+        checkedAt,
+        checks: toPersistedChecks(localPreflightInput),
+        onboardingMode,
+        nextAction: isDedicated
+          ? "Solicitar y registrar una ampliación aprobada antes de provisionar dedicated."
+          : onboardingMode === "later"
+            ? "Iniciar la activación de WhatsApp cuando la Clínica esté lista."
+            : "No hay ninguna acción de WhatsApp pendiente.",
+        reason,
+        status: isDedicated ? "blocked" : "not-run",
+      },
+    });
+    return dependencies.store.read({
+      actorIdentityId: input.actorIdentityId,
+      clinicId: input.clinicId,
+    });
+  }
+
+  const externalCustomerId = `praxia-clinic:${input.clinicId}`;
   const localEvaluation = evaluateKapsoWhatsAppPreflight(localPreflightInput);
 
   let customer: KapsoCustomer | undefined;
@@ -368,6 +426,7 @@ export async function prepareKapsoWhatsAppOnboarding(
         blockers: evaluation.blockers,
         checkedAt,
         checks: toPersistedChecks(preflightInput),
+        onboardingMode,
         nextAction: evaluation.nextAction,
         reason: null,
         status: evaluation.status,
@@ -393,6 +452,7 @@ export async function prepareKapsoWhatsAppOnboarding(
         blockers: localEvaluation.blockers,
         checkedAt,
         checks: toPersistedChecks(localPreflightInput),
+        onboardingMode,
         nextAction:
           localEvaluation.blockers[0]?.nextAction ??
           providerUnavailableNextAction,

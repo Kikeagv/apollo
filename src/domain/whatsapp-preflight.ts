@@ -8,6 +8,14 @@ export const whatsappBusinessAppStatuses = [
 export type WhatsAppBusinessAppStatus =
   (typeof whatsappBusinessAppStatuses)[number];
 
+export const whatsappOnboardingModes = [
+  "coexistence",
+  "dedicated",
+  "later",
+  "not-integrated",
+] as const;
+export type WhatsAppOnboardingMode = (typeof whatsappOnboardingModes)[number];
+
 export const metaAuthorityStatuses = ["confirmed", "not-confirmed"] as const;
 export type MetaAuthorityStatus = (typeof metaAuthorityStatuses)[number];
 

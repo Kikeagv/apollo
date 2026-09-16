@@ -66,6 +66,38 @@ describe("caso de uso de onboarding Kapso", () => {
     );
   });
 
+  it("persiste la modalidad elegida junto con el preflight", async () => {
+    const provider = providerFixture({ customer: customerFixture() });
+    const store = storeFixture();
+
+    await prepareKapsoWhatsAppOnboarding(
+      { ...baseInput, onboardingMode: "dedicated" },
+      { provider, store },
+    );
+
+    expect(store.saved?.preflight?.onboardingMode).toBe("dedicated");
+  });
+
+  it.each([
+    ["dedicated", "blocked"],
+    ["later", "not-run"],
+    ["not-integrated", "not-run"],
+  ] as const)(
+    "no contacta Kapso para la modalidad %s",
+    async (onboardingMode, status) => {
+      const provider = providerFixture({ customer: customerFixture() });
+      const store = storeFixture();
+
+      const result = await prepareKapsoWhatsAppOnboarding(
+        { ...baseInput, onboardingMode },
+        { provider, store },
+      );
+
+      expect(provider.findCustomerByExternalId).not.toHaveBeenCalled();
+      expect(result.preflight).toMatchObject({ onboardingMode, status });
+    },
+  );
+
   it("es idempotente cuando Kapso ya devolvió el customer de la Clínica", async () => {
     const provider = providerFixture({ customer: customerFixture() });
     const store = storeFixture();

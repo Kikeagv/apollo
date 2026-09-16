@@ -38,12 +38,17 @@ import type {
   WhatsAppPreflightBlocker,
   WhatsAppPreflightChecks,
   WhatsAppPreflightStatus,
+  WhatsAppOnboardingMode,
 } from "~/domain/whatsapp-preflight";
 import type {
   WhatsAppConnectionMetadata,
   WhatsAppConnectionStatus,
   WhatsAppConnectionType,
 } from "~/domain/whatsapp-connection";
+import type {
+  WhatsAppActivationCriterionCode,
+  WhatsAppActivationEvidenceSource,
+} from "~/domain/whatsapp-activation";
 import type {
   WhatsAppOffboardingStepCode,
   WhatsAppOffboardingStep,
@@ -502,6 +507,97 @@ export const whatsappTrafficGateEvidences = createTable(
     check(
       "whatsapp_traffic_gate_evidence_reference",
       sql`${table.ready} = false OR btrim(coalesce(${table.evidenceReference}, '')) <> ''`,
+    ),
+  ],
+);
+
+/** Evidencia externa del cierre, separada de los gates que habilitan tráfico. */
+export const whatsappActivationEvidences = createTable(
+  "whatsapp_activation_evidence",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    criterionCode: text("criterion_code")
+      .$type<WhatsAppActivationCriterionCode>()
+      .notNull(),
+    source: text("source").$type<WhatsAppActivationEvidenceSource>().notNull(),
+    evidenceReference: text("evidence_reference"),
+    pendingReason: text("pending_reason"),
+    // Es una referencia inmutable a la generación, no una dependencia de
+    // retención: el historial debe sobrevivir a la limpieza de payloads.
+    provisioningEventId: uuid("provisioning_event_id"),
+    recordedByIdentityId: text("recorded_by_identity_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    recordedAt: timestamp("recorded_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("whatsapp_activation_evidence_clinic_criterion_source_idx").on(
+      table.clinicId,
+      table.criterionCode,
+      table.source,
+      table.updatedAt,
+    ),
+    index("whatsapp_activation_evidence_clinic_idx").on(
+      table.clinicId,
+      table.provisioningEventId,
+      table.updatedAt,
+    ),
+    check(
+      "whatsapp_activation_evidence_criterion_code",
+      sql`${table.criterionCode} IN (
+        'scope-v1',
+        'product-access',
+        'connection-ownership',
+        'technical-readiness',
+        'messaging-capacity',
+        'duplicate-onboarding',
+        'existing-account',
+        'pending-readiness',
+        'stale-health',
+        'retryable-operations',
+        'synthetic-smoke',
+        'consent-representation',
+        'offboarding',
+        'simulated-connection',
+        'inbound-webhook',
+        'transactional-outbound',
+        'commercial-clinic',
+        'owner-invitation',
+        'admin-idempotency',
+        'clinic-console',
+        'template-catalog',
+        'funding-health',
+        'readiness-reconciliation',
+        'consent-versioning',
+        'welcome-return',
+        'inbound-identity',
+        'transactional-delivery',
+        'real-e2e',
+        'circuit-reactivation',
+        'controlled-offboarding',
+        'supervision-panel',
+        'controlled-pilot'
+      )`,
+    ),
+    check(
+      "whatsapp_activation_evidence_source",
+      sql`${table.source} IN ('kapso', 'deployed')`,
+    ),
+    check(
+      "whatsapp_activation_evidence_reference_or_pending",
+      sql`(
+        (btrim(coalesce(${table.evidenceReference}, '')) <> '' AND ${table.pendingReason} IS NULL)
+        OR
+        (btrim(coalesce(${table.pendingReason}, '')) <> '' AND ${table.evidenceReference} IS NULL)
+      )`,
     ),
   ],
 );
@@ -1139,6 +1235,10 @@ export const whatsappPreflights = createTable(
       .primaryKey()
       .references(() => clinics.id, { onDelete: "cascade" }),
     customerId: text("customer_id"),
+    onboardingMode: text("onboarding_mode")
+      .$type<WhatsAppOnboardingMode>()
+      .default("coexistence")
+      .notNull(),
     status: text("status")
       .$type<WhatsAppPreflightStatus>()
       .default("not-run")
@@ -1158,7 +1258,13 @@ export const whatsappPreflights = createTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("whatsapp_preflight_customer_idx").on(table.customerId)],
+  (table) => [
+    index("whatsapp_preflight_customer_idx").on(table.customerId),
+    check(
+      "whatsapp_preflight_onboarding_mode",
+      sql`${table.onboardingMode} IN ('coexistence', 'dedicated', 'later', 'not-integrated')`,
+    ),
+  ],
 );
 
 /** Enlace Kapso vigente o histórico para la configuración de una Clínica. */

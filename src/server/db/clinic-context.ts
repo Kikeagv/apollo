@@ -90,6 +90,30 @@ export async function inSuperadminTransaction<T>(
   });
 }
 
+/**
+ * Camino de superadmin para lecturas y escrituras que deben quedar sujetas a
+ * RLS. Conserva la autorización administrativa, pero ejecuta el callback con
+ * el mismo rol de aplicación que usan los flujos clínicos.
+ */
+export async function inSuperadminRlsTransaction<T>(
+  identityId: string,
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    const operator = await transaction.query.apoloSuperadmins.findFirst({
+      where: eq(apoloSuperadmins.identityId, identityId),
+    });
+    if (operator === undefined)
+      throw new Error("La Identidad no está autorizada para esta operación");
+
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.superadmin_id', ${identityId}, true)`,
+    );
+    return operation(transaction);
+  });
+}
+
 /** Camino comercial mínimo: solo el estado de suscripción de una Clínica. */
 export async function inCommercialSubscriptionTransaction<T>(
   identityId: string,

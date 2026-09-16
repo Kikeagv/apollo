@@ -17,6 +17,10 @@ import {
   runWhatsAppSyntheticSmoke,
 } from "~/server/application/whatsapp-operations";
 import {
+  getWhatsAppActivationContract,
+  recordWhatsAppActivationEvidence,
+} from "~/server/application/whatsapp-activation";
+import {
   drizzleWhatsAppRuntimeDiagnosticReader,
   getWhatsAppRuntimeDiagnostic,
 } from "~/server/application/whatsapp-runtime";
@@ -41,6 +45,7 @@ import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store"
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
 import { drizzleWhatsAppOperationsStore } from "~/server/db/whatsapp-operations-store";
+import { drizzleWhatsAppActivationEvidenceStore } from "~/server/db/whatsapp-activation-evidence-store";
 import {
   listWhatsAppInboundOperationalAlerts,
   resolveWhatsAppInboundOperationalAlert,
@@ -50,7 +55,12 @@ import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboardin
 import { createKapsoWebhookOffboardingProvider } from "~/server/whatsapp/kapso-provisioning";
 import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
 import { createSimulatedWhatsAppSyntheticSmokeRunner } from "~/server/whatsapp/simulated-whatsapp-smoke";
+import { whatsappOnboardingModes } from "~/domain/whatsapp-preflight";
 import { whatsappRealTrafficGateCodes } from "~/domain/whatsapp-traffic";
+import {
+  whatsappActivationCriterionCodes,
+  whatsappActivationEvidenceSources,
+} from "~/domain/whatsapp-activation";
 
 const subscriptionSupport = createSubscriptionSupport(
   drizzleSubscriptionSupportStore,
@@ -171,6 +181,60 @@ export const apoloRouter = {
       getWhatsAppOperations(
         { actorIdentityId: ctx.session.user.id, clinicId: input.clinicId },
         drizzleWhatsAppOperationsStore,
+      ),
+    ),
+
+  getWhatsAppActivationContract: protectedProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      getWhatsAppActivationContract(
+        {
+          actorIdentityId: ctx.session.user.id,
+          clinicId: input.clinicId,
+          // protectedProcedure garantiza que la sesión de esta solicitud está autenticada.
+          identityStatus: "authenticated",
+        },
+        {
+          evidenceStore: drizzleWhatsAppActivationEvidenceStore,
+          onboardingStore: drizzleKapsoOnboardingStore,
+          operationsStore: drizzleWhatsAppOperationsStore,
+        },
+      ),
+    ),
+
+  recordWhatsAppActivationEvidence: protectedProcedure
+    .input(
+      z
+        .object({
+          clinicId: z.string().uuid(),
+          criterionCode: z.enum(whatsappActivationCriterionCodes),
+          evidenceReference: z.string().trim().max(500).nullable().optional(),
+          pendingReason: z.string().trim().max(500).nullable().optional(),
+          source: z.enum(whatsappActivationEvidenceSources),
+        })
+        .refine(
+          (value) =>
+            (value.evidenceReference?.trim() ? 1 : 0) +
+              (value.pendingReason?.trim() ? 1 : 0) ===
+            1,
+          "Registra una referencia de evidencia o una razón de pendiente",
+        ),
+    )
+    .mutation(({ ctx, input }) =>
+      recordWhatsAppActivationEvidence(
+        {
+          ...input,
+          actorIdentityId: ctx.session.user.id,
+          evidenceReference: input.evidenceReference ?? null,
+          // protectedProcedure garantiza que la sesión de esta solicitud está autenticada.
+          identityStatus: "authenticated",
+          pendingReason: input.pendingReason ?? null,
+        },
+        {
+          evidenceStore: drizzleWhatsAppActivationEvidenceStore,
+          onboardingStore: drizzleKapsoOnboardingStore,
+          operationsStore: drizzleWhatsAppOperationsStore,
+        },
       ),
     ),
 
@@ -505,6 +569,7 @@ export const apoloRouter = {
         clinicId: z.string().uuid(),
         metaAuthority: z.enum(["confirmed", "not-confirmed"]),
         numberOwnedByClinic: z.boolean(),
+        onboardingMode: z.enum(whatsappOnboardingModes),
         ownerConfirmed: z.boolean(),
         ownerName: z.string().trim().min(1).max(120),
         phoneNumberE164: z.string().trim().max(32),

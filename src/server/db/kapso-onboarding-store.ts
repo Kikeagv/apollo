@@ -1,6 +1,7 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 
 import { publicWhatsAppConnectionMetadata } from "~/domain/whatsapp-connection";
+import type { WhatsAppOwnerAccessStatus } from "~/domain/whatsapp-activation";
 import type {
   KapsoWhatsAppOnboardingStore,
   KapsoWhatsAppOnboardingAuditEvent,
@@ -10,6 +11,7 @@ import type {
 import {
   type ClinicTransaction,
   inClinicTransaction,
+  inSuperadminRlsTransaction,
   inSuperadminTransaction,
 } from "~/server/db/clinic-context";
 import {
@@ -31,6 +33,12 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
         where: eq(clinics.id, input.clinicId),
       });
       if (clinic === undefined) throw new Error("La Clínica no existe");
+      // Las políticas de invitaciones y membresías exigen un contexto de
+      // Clínica aun cuando la Identidad de acceso sea superadmin.
+      await transaction.execute(
+        sql`select set_config('app.clinic_id', ${input.clinicId}, true)`,
+      );
+      const now = new Date();
 
       const [
         connection,
@@ -48,6 +56,8 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
           where: and(
             eq(clinicInvitations.clinicId, input.clinicId),
             eq(clinicInvitations.role, "owner"),
+            isNull(clinicInvitations.consumedAt),
+            gt(clinicInvitations.expiresAt, now),
           ),
         }),
         transaction
@@ -95,6 +105,13 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
         }),
       ]);
 
+      const ownerAccess: WhatsAppOwnerAccessStatus =
+        ownerMembership.length > 0
+          ? "ready"
+          : ownerInvitation === undefined
+            ? "blocked"
+            : "pending";
+
       return {
         clinicId: clinic.id,
         clinicName: clinic.name,
@@ -108,6 +125,7 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
         customerId:
           preflight?.customerId ??
           (connection?.provider === "kapso" ? connection.customer : null),
+        ownerAccess,
         ownerName:
           ownerInvitation?.recipientName ?? ownerMembership[0]?.name ?? null,
         preflight:
@@ -117,6 +135,7 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
                 blockers: preflight.blockers,
                 checkedAt: preflight.checkedAt,
                 checks: preflight.checks ?? null,
+                onboardingMode: preflight.onboardingMode,
                 nextAction: preflight.nextAction,
                 reason: preflight.reason,
                 status: preflight.status,
@@ -156,7 +175,7 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
         operation,
       );
     }
-    return inSuperadminTransaction(input.actorIdentityId, operation);
+    return inSuperadminRlsTransaction(input.actorIdentityId, operation);
   },
 
   async save(input) {
@@ -223,6 +242,7 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
             clinicId: input.clinicId,
             customerId: input.customerId,
             blockers: input.preflight.blockers,
+            onboardingMode: input.preflight.onboardingMode ?? "coexistence",
             nextAction: input.preflight.nextAction,
             reason: input.preflight.reason,
             status: input.preflight.status,
@@ -235,6 +255,7 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
               checks: input.preflight.checks,
               customerId: input.customerId,
               blockers: input.preflight.blockers,
+              onboardingMode: input.preflight.onboardingMode ?? "coexistence",
               nextAction: input.preflight.nextAction,
               reason: input.preflight.reason,
               status: input.preflight.status,

@@ -12,6 +12,7 @@ import {
   whatsappRealTrafficGateLabel,
   type WhatsAppRealTrafficBlocker,
 } from "~/domain/whatsapp-traffic";
+import type { WhatsAppOnboardingMode } from "~/domain/whatsapp-preflight";
 import { whatsappSyntheticSmokeStepLabels } from "~/domain/whatsapp-smoke";
 import { formatDateTime } from "~/app/format-date";
 import {
@@ -29,10 +30,14 @@ import {
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
 import { api } from "~/trpc/react";
+import { WhatsAppActivationClosureSection } from "./whatsapp-activation-closure-section";
 
 /** Panel mínimo, aislado de Panacea, para pagos, estado y soporte comercial. */
 export function ApoloOperations() {
   const [clinicId, setClinicId] = useState("");
+  const [activationRefreshToken, setActivationRefreshToken] = useState(0);
+  const refreshActivationContract = () =>
+    setActivationRefreshToken((value) => value + 1);
   const clinics = api.apolo.listCommercialClinics.useQuery();
   const runtimeDiagnostic = api.apolo.getWhatsAppRuntimeDiagnostic.useQuery();
   const inboundAlerts = api.apolo.listWhatsAppInboundAlerts.useQuery();
@@ -72,6 +77,8 @@ export function ApoloOperations() {
   const [onboardingOwnerName, setOnboardingOwnerName] = useState("");
   const [phoneNumberE164, setPhoneNumberE164] = useState("");
   const [numberOwnedByClinic, setNumberOwnedByClinic] = useState(false);
+  const [onboardingMode, setOnboardingMode] =
+    useState<WhatsAppOnboardingMode>("coexistence");
   const [ownerConfirmed, setOwnerConfirmed] = useState(false);
   const [whatsappBusinessApp, setWhatsappBusinessApp] = useState<
     "active" | "messenger-only" | "not-installed" | "not-willing"
@@ -104,19 +111,27 @@ export function ApoloOperations() {
   });
   const prepareOnboarding =
     api.apolo.prepareKapsoWhatsAppOnboarding.useMutation({
-      onSuccess: () => onboarding.refetch(),
+      onSuccess: () => {
+        void onboarding.refetch();
+        refreshActivationContract();
+      },
     });
   const manageSetupLink = api.apolo.manageKapsoWhatsAppSetupLink.useMutation({
-    onSuccess: () => onboarding.refetch(),
+    onSuccess: () => {
+      void onboarding.refetch();
+      refreshActivationContract();
+    },
   });
   const retryReadiness = api.apolo.retryWhatsAppReadiness.useMutation({
     onSuccess: () => {
       void readiness.refetch();
       void circuitBreaker.refetch();
+      refreshActivationContract();
     },
     onError: () => {
       void readiness.refetch();
       void circuitBreaker.refetch();
+      refreshActivationContract();
     },
   });
   const openCircuitBreaker = api.apolo.openWhatsAppCircuitBreaker.useMutation({
@@ -124,6 +139,7 @@ export function ApoloOperations() {
       setOpenReason("");
       void circuitBreaker.refetch();
       void readiness.refetch();
+      refreshActivationContract();
     },
   });
   const reactivateCircuitBreaker =
@@ -134,9 +150,11 @@ export function ApoloOperations() {
         void circuitBreaker.refetch();
         void readiness.refetch();
         void operationalMetrics.refetch();
+        refreshActivationContract();
       },
       onError: () => {
         void circuitBreaker.refetch();
+        refreshActivationContract();
       },
     });
   const recordPayment = api.apolo.recordTransferPayment.useMutation();
@@ -148,12 +166,16 @@ export function ApoloOperations() {
   });
   const readSupport = api.apolo.readSupportClinicSummary.useMutation();
   const recordTrafficGate = api.apolo.recordWhatsAppTrafficGate.useMutation({
-    onSuccess: () => void whatsappOperations.refetch(),
+    onSuccess: () => {
+      void whatsappOperations.refetch();
+      refreshActivationContract();
+    },
   });
   const runSyntheticSmoke = api.apolo.runWhatsAppSyntheticSmoke.useMutation({
     onSuccess: () => {
       void whatsappOperations.refetch();
       void readiness.refetch();
+      refreshActivationContract();
     },
   });
   const enableRealTraffic = api.apolo.enableWhatsAppRealTraffic.useMutation({
@@ -161,6 +183,7 @@ export function ApoloOperations() {
       setRealTrafficConfirmation(false);
       void whatsappOperations.refetch();
       void readiness.refetch();
+      refreshActivationContract();
     },
   });
   const revertRealTraffic = api.apolo.revertWhatsAppRealTraffic.useMutation({
@@ -169,6 +192,7 @@ export function ApoloOperations() {
       void whatsappOperations.refetch();
       void readiness.refetch();
       void circuitBreaker.refetch();
+      refreshActivationContract();
     },
   });
   const offboardConnection = api.apolo.offboardWhatsAppConnection.useMutation({
@@ -178,6 +202,7 @@ export function ApoloOperations() {
       void onboarding.refetch();
       void readiness.refetch();
       void circuitBreaker.refetch();
+      refreshActivationContract();
     },
   });
 
@@ -626,6 +651,21 @@ export function ApoloOperations() {
           placeholder="Número propio en formato internacional, por ejemplo +50370000000"
           value={phoneNumberE164}
         />
+        <label className="block text-sm">
+          Modalidad de WhatsApp
+          <select
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+            onChange={(event) =>
+              setOnboardingMode(event.target.value as WhatsAppOnboardingMode)
+            }
+            value={onboardingMode}
+          >
+            <option value="coexistence">Coexistence (v1)</option>
+            <option value="dedicated">Dedicated (requiere ampliación)</option>
+            <option value="later">Activar más tarde</option>
+            <option value="not-integrated">No integrar</option>
+          </select>
+        </label>
         <label className="flex items-center gap-2 text-sm">
           <input
             checked={ownerConfirmed}
@@ -698,6 +738,7 @@ export function ApoloOperations() {
               clinicId,
               metaAuthority,
               numberOwnedByClinic,
+              onboardingMode,
               ownerConfirmed,
               ownerName: onboardingOwnerName,
               phoneNumberE164,
@@ -1366,6 +1407,10 @@ export function ApoloOperations() {
           </>
         ) : null}
       </section>
+      <WhatsAppActivationClosureSection
+        clinicId={clinicId}
+        refreshToken={activationRefreshToken}
+      />
       <section className="space-y-3 rounded-xl border border-slate-700 p-5">
         <h2 className="text-xl font-semibold">Pago por transferencia</h2>
         <input

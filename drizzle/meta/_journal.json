@@ -610,6 +610,48 @@
       "when": 1789337329702,
       "tag": "0087_apo92_smoke_provider_transport_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1789575811000,
+      "tag": "0092_apo94_activation_closure_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1789575811001,
+      "tag": "0093_apo94_activation_evidence_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1789575811002,
+      "tag": "0094_apo94_activation_evidence_generation_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1789575811003,
+      "tag": "0095_apo94_activation_evidence_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1789575811004,
+      "tag": "0096_apo94_activation_evidence_rls_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1789575811005,
+      "tag": "0097_apo94_activation_evidence_audit_insert",
+      "breakpoints": true
     }
   ]
 }
