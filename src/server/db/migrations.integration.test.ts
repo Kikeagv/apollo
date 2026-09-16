@@ -7,10 +7,26 @@ import { describe, expect, it } from "vitest";
 
 const canonicalTermsAcceptanceErrorMessage =
   "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.";
+const clinicTermsRepairMigrationCreatedAt = "1789575811006";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 const run = promisify(execFile);
+
+function runMigrations(databaseUrl: string) {
+  return run(
+    process.execPath,
+    [
+      "node_modules/drizzle-kit/bin.cjs",
+      "migrate",
+      "--config=drizzle.config.ts",
+    ],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+    },
+  );
+}
 
 describe("migraciones de PostgreSQL", () => {
   databaseTest(
@@ -26,18 +42,7 @@ describe("migraciones de PostgreSQL", () => {
       try {
         await admin.unsafe(`create database "${databaseName}"`);
 
-        await run(
-          process.execPath,
-          [
-            "node_modules/drizzle-kit/bin.cjs",
-            "migrate",
-            "--config=drizzle.config.ts",
-          ],
-          {
-            cwd: process.cwd(),
-            env: { ...process.env, DATABASE_URL: migratedUrl.toString() },
-          },
-        );
+        await runMigrations(migratedUrl.toString());
 
         const migrated = postgres(migratedUrl.toString(), { max: 1 });
         try {
@@ -646,6 +651,53 @@ describe("migraciones de PostgreSQL", () => {
           expect(termsAcceptanceConstraints[0]?.definition).toContain(
             "terms_accepted_at",
           );
+
+          await migrated`
+            delete from "pg-drizzle_clinic_terms_contract"
+            where id = true
+          `;
+          await migrated`
+            delete from drizzle.__drizzle_migrations
+            where created_at = ${clinicTermsRepairMigrationCreatedAt}
+          `;
+          await runMigrations(migratedUrl.toString());
+          const repairedTermsContracts = await migrated<
+            Array<{
+              acceptance_error_message: string;
+              current_version: string;
+            }>
+          >`
+            select acceptance_error_message, current_version
+            from "pg-drizzle_clinic_terms_contract"
+          `;
+          expect(repairedTermsContracts).toEqual([
+            {
+              acceptance_error_message: canonicalTermsAcceptanceErrorMessage,
+              current_version: "1.0",
+            },
+          ]);
+          const repairedTermsAcceptanceChecks = await migrated<
+            Array<{
+              current_acceptance: boolean;
+              current_version: boolean;
+              stale_acceptance: boolean;
+              stale_version: boolean;
+            }>
+          >`
+            select
+              "public"."clinic_terms_version_is_current"('1.0') as current_version,
+              "public"."clinic_terms_version_is_current"('0.9') as stale_version,
+              "public"."clinic_terms_acceptance_is_current"(now(), '1.0') as current_acceptance,
+              "public"."clinic_terms_acceptance_is_current"(now(), '0.9') as stale_acceptance
+          `;
+          expect(repairedTermsAcceptanceChecks).toEqual([
+            {
+              current_acceptance: true,
+              current_version: true,
+              stale_acceptance: false,
+              stale_version: false,
+            },
+          ]);
         } finally {
           await migrated.end();
         }
