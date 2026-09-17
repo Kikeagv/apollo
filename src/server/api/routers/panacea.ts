@@ -3,7 +3,10 @@ import { TRPCError } from "@trpc/server";
 
 import { env } from "~/env";
 import { filterPanaceaConfigurationOverview } from "~/domain/panacea-configuration";
-import { acceptClinicInvitation } from "~/server/application/accept-clinic-owner-invitation";
+import {
+  acceptClinicInvitation,
+  getClinicInvitationActivationMode,
+} from "~/server/application/accept-clinic-owner-invitation";
 import { getPanaceaConfigurationOverview } from "~/server/application/panacea-configuration";
 import { getWhatsAppConnection } from "~/server/application/whatsapp-connections";
 import { getWhatsAppReadiness } from "~/server/application/whatsapp-readiness";
@@ -404,11 +407,15 @@ export const panaceaRouter = {
   acceptClinicInvitation: publicProcedure
     .input(
       z.object({
-        password: z.string(),
+        password: z.string().optional(),
         token: z.string(),
       }),
     )
     .mutation(({ input }) => acceptClinicInvitation(input)),
+
+  getClinicInvitationActivationMode: publicProcedure
+    .input(z.object({ token: z.string() }))
+    .query(({ input }) => getClinicInvitationActivationMode(input)),
 
   inviteAdditionalDoctor: clinicProcedure
     .input(

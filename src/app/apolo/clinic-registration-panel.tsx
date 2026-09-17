@@ -3,6 +3,10 @@
 import { useState } from "react";
 
 import type {
+  ClinicInvitationNextAction,
+  ClinicInvitationStatus,
+} from "~/domain/clinic-invitation";
+import type {
   ClinicRegistration,
   ClinicRegistrationMode,
 } from "~/server/application/clinic-registration";
@@ -213,15 +217,18 @@ function RegistrationOutcome({
   registration: ClinicRegistration;
 }) {
   const delivered = registration.invitation.delivery.status === "sent";
+  const accepted = registration.invitation.status === "accepted";
+  const healthy =
+    accepted || (delivered && registration.invitation.status === "pending");
 
   return (
     <div
       className={`rounded-lg border p-4 text-sm ${
-        delivered
+        healthy
           ? "border-success-border bg-success-muted/50"
           : "border-warning-border bg-warning-muted"
       }`}
-      role={delivered ? "status" : "alert"}
+      role={healthy ? "status" : "alert"}
     >
       <p className="font-semibold">
         Clínica {registration.clinic.name} creada correctamente.
@@ -229,8 +236,39 @@ function RegistrationOutcome({
       <p className="mt-1">
         Tipo: {registration.clinic.isSynthetic ? "sintética" : "comercial"}.{" "}
         Invitación para {registration.invitation.email}:{" "}
-        {delivered ? "enviada" : "pendiente de entrega"}.
+        {accepted ? "aceptada" : delivered ? "enviada" : "pendiente de entrega"}
+        .
       </p>
+      <dl className="mt-3 grid gap-x-4 gap-y-1 sm:grid-cols-3">
+        <div>
+          <dt className="text-muted-foreground">Estado</dt>
+          <dd className="font-medium">
+            {clinicInvitationStatusLabel(registration.invitation.status)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Expira</dt>
+          <dd className="font-medium">
+            {registration.invitation.expiresAt.toLocaleString("es-SV", {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Siguiente acción</dt>
+          <dd className="font-medium">
+            {clinicInvitationNextActionLabel(
+              registration.invitation.nextAction,
+            )}
+          </dd>
+        </div>
+      </dl>
+      {accepted ? (
+        <p className="mt-2">
+          El Médico propietario ya tiene acceso a esta Clínica.
+        </p>
+      ) : null}
       {registration.clinic.isSynthetic ? (
         <p className="mt-2">
           Esta Clínica usa tráfico simulado y no puede recibir tráfico real de
@@ -250,9 +288,35 @@ function RegistrationOutcome({
           onClick={onRetry}
           type="button"
         >
-          {isRetrying ? "Reintentando…" : "Reintentar invitación"}
+          {isRetrying
+            ? registration.invitation.status === "expired"
+              ? "Renovando…"
+              : "Reintentando…"
+            : registration.invitation.status === "expired"
+              ? "Renovar invitación"
+              : "Reintentar entrega"}
         </button>
       ) : null}
     </div>
   );
+}
+
+function clinicInvitationStatusLabel(status: ClinicInvitationStatus) {
+  return {
+    accepted: "Aceptada",
+    expired: "Vencida",
+    pending: "Pendiente de aceptación",
+  }[status];
+}
+
+function clinicInvitationNextActionLabel(
+  nextAction: ClinicInvitationNextAction,
+) {
+  return {
+    accept: "Esperar aceptación",
+    none: "Ninguna",
+    renew: "Renovar invitación",
+    "retry-delivery": "Reintentar entrega",
+    "wait-delivery": "Esperar entrega",
+  }[nextAction];
 }

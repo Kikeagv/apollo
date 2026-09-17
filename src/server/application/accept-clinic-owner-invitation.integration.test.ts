@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { hashPassword } from "better-auth/crypto";
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
@@ -7,7 +8,7 @@ import { createCaller } from "~/server/api/root";
 import { type createTRPCContext } from "~/server/api/trpc";
 import { hashOpaqueAccessToken } from "~/server/application/clinic-access";
 import { configureEffectiveSchedule } from "./availability";
-import { acceptClinicOwnerInvitation } from "./accept-clinic-owner-invitation";
+import { acceptClinicOwnerInvitation as acceptInvitation } from "./accept-clinic-owner-invitation";
 import { calculateCareOptions } from "./care-options";
 import { inviteAdditionalDoctor } from "./doctor-invitations";
 import {
@@ -28,6 +29,7 @@ import {
 } from "../db/availability-store";
 import {
   apoloSuperadmins,
+  account,
   clinics,
   clinicInvitations,
   clinicUsers,
@@ -53,6 +55,17 @@ import { createService } from "./service-catalog";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
+
+async function acceptClinicOwnerInvitation(input: {
+  password?: string;
+  token: string;
+}) {
+  const activation = await acceptInvitation(input);
+  if (!activation.active) {
+    throw new Error("La invitación no produjo un acceso activo");
+  }
+  return activation;
+}
 
 describe("activación persistente por invitación del médico propietario", () => {
   databaseTest(
@@ -822,7 +835,7 @@ describe("activación persistente por invitación del médico propietario", () =
   );
 
   databaseTest(
-    "rechaza el segundo uso y audita el fallo sin guardar la contraseña",
+    "hace idempotente el segundo uso sin guardar la nueva contraseña",
     async () => {
       const fixture = await createActivationFixture();
 
@@ -838,7 +851,10 @@ describe("activación persistente por invitación del médico propietario", () =
             password: "No-debe-quedar-en-la-auditoría",
             token: fixture.invitationToken,
           }),
-        ).rejects.toThrow("La invitación no es válida o venció");
+        ).resolves.toEqual({
+          ...activation,
+          invitationStatus: "already-accepted",
+        });
 
         const events = await readClinicAuditEvents(
           fixture.superadminId,
@@ -848,8 +864,8 @@ describe("activación persistente por invitación del médico propietario", () =
           expect.arrayContaining([
             expect.objectContaining({
               action: "identity-invitation-accepted",
-              actorKind: "anonymous",
-              result: "failed",
+              actorIdentityId: activation.identityId,
+              result: "succeeded",
             }),
           ]),
         );
@@ -857,6 +873,106 @@ describe("activación persistente por invitación del médico propietario", () =
           events,
           "No-debe-quedar-en-la-auditoría",
         );
+        const persisted = await inSuperadminTransaction(
+          fixture.superadminId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const [
+              invitations,
+              memberships,
+              doctorsForClinic,
+              identitiesForEmail,
+            ] = await Promise.all([
+              transaction.query.clinicInvitations.findMany({
+                where: eq(clinicInvitations.clinicId, fixture.clinicId),
+              }),
+              transaction.query.clinicUsers.findMany({
+                where: eq(clinicUsers.clinicId, fixture.clinicId),
+              }),
+              transaction.query.doctors.findMany({
+                where: eq(doctors.clinicId, fixture.clinicId),
+              }),
+              transaction.query.user.findMany({
+                where: eq(identities.email, fixture.ownerEmail),
+              }),
+            ]);
+            return {
+              doctors: doctorsForClinic,
+              identities: identitiesForEmail,
+              invitations,
+              memberships,
+            };
+          },
+        );
+        expect(persisted.invitations).toHaveLength(1);
+        expect(persisted.memberships).toHaveLength(1);
+        expect(persisted.doctors).toHaveLength(1);
+        expect(persisted.identities).toHaveLength(1);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "vincula una Identidad existente, conserva su contraseña y no duplica el acceso",
+    async () => {
+      const fixture = await createActivationFixture();
+      const existingPasswordHash = await hashPassword(
+        "Contraseña-existente-APO-96",
+      );
+      const existingIdentityId = `apo-96-existing-${randomUUID()}`;
+      fixture.identityId = existingIdentityId;
+
+      try {
+        await db.insert(identities).values({
+          id: existingIdentityId,
+          name: "Dra. Identidad Existente",
+          email: fixture.ownerEmail.toUpperCase(),
+          emailVerified: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        const existingIdentity = { id: existingIdentityId };
+        await db.insert(account).values({
+          id: randomUUID(),
+          accountId: existingIdentity.id,
+          providerId: "credential",
+          userId: existingIdentity.id,
+          password: existingPasswordHash,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        const activation = await acceptClinicOwnerInvitation({
+          token: fixture.invitationToken,
+        });
+
+        expect(activation).toMatchObject({
+          active: true,
+          clinicId: fixture.clinicId,
+          identityId: existingIdentity.id,
+          identityStatus: "existing",
+          invitationStatus: "accepted",
+          role: "owner",
+        });
+        await expect(
+          db.query.clinicUsers.findMany({
+            where: eq(clinicUsers.identityId, existingIdentity.id),
+          }),
+        ).resolves.toHaveLength(1);
+        await expect(
+          db.query.doctors.findMany({
+            where: eq(doctors.clinicId, fixture.clinicId),
+          }),
+        ).resolves.toHaveLength(1);
+        await expect(
+          db.query.account.findFirst({
+            where: eq(account.userId, existingIdentity.id),
+          }),
+        ).resolves.toMatchObject({ password: existingPasswordHash });
       } finally {
         await fixture.cleanup();
       }
@@ -905,6 +1021,62 @@ describe("activación persistente por invitación del médico propietario", () =
         expectAuditWithoutSensitiveContent(events, "Contraseña-vencida-APO-28");
       } finally {
         await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "devuelve una salida segura si la Identidad ya tiene otra Clínica activa",
+    async () => {
+      const first = await createActivationFixture();
+      const second = await createActivationFixture();
+
+      try {
+        const firstActivation = await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-96",
+          token: first.invitationToken,
+        });
+        first.identityId = firstActivation.identityId;
+
+        await inSuperadminTransaction(
+          second.superadminId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${second.clinicId}, true)`,
+            );
+            await transaction
+              .update(clinicInvitations)
+              .set({ email: first.ownerEmail })
+              .where(eq(clinicInvitations.id, second.invitationId));
+          },
+        );
+
+        await expect(
+          acceptInvitation({ token: second.invitationToken }),
+        ).resolves.toEqual({
+          active: false,
+          clinicId: second.clinicId,
+          identityStatus: "existing",
+          invitationStatus: "requires-support",
+          nextAction: "contact-support",
+          role: "owner",
+        });
+
+        await expect(
+          inSuperadminTransaction(second.superadminId, async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${second.clinicId}, true)`,
+            );
+            const invitation =
+              await transaction.query.clinicInvitations.findFirst({
+                where: eq(clinicInvitations.id, second.invitationId),
+              });
+            return invitation?.consumedAt;
+          }),
+        ).resolves.toBeNull();
+      } finally {
+        await first.cleanup();
+        await second.cleanup();
       }
     },
   );
@@ -978,6 +1150,7 @@ async function createActivationFixture() {
 
   return {
     clinicId,
+    invitationId: invitation.id,
     invitationCreatedAt,
     invitationExpiresAt: invitation.expiresAt,
     invitationToken: getInvitationToken(registration.id),

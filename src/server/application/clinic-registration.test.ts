@@ -38,6 +38,10 @@ describe("alta explícita de Clínicas", () => {
       lastAttempt: "succeeded",
       status: "sent",
     });
+    expect(result.invitation).toMatchObject({
+      nextAction: "accept",
+      status: "pending",
+    });
     expect(sent).toHaveLength(1);
   });
 
@@ -69,6 +73,7 @@ describe("alta explícita de Clínicas", () => {
       lastError: "Resend no disponible",
       status: "pending",
     });
+    expect(first.invitation).toMatchObject({ nextAction: "retry-delivery" });
 
     shouldFail = false;
     const retried = await retryClinicInvitation(
@@ -87,6 +92,31 @@ describe("alta explícita de Clínicas", () => {
       status: "sent",
     });
     expect(store.deliveryHistory).toHaveLength(2);
+  });
+
+  it("permite renovar una invitación vencida aunque el último correo sí se entregó", async () => {
+    const registration = pendingRegistration({
+      delivery: {
+        attempts: 1,
+        canRetry: true,
+        lastAttempt: "succeeded",
+        lastError: null,
+        status: "sent",
+      },
+      invitationStatus: "expired",
+      isSynthetic: false,
+    });
+    const store = createStore(registration);
+
+    await retryClinicInvitation(
+      { actorIdentityId: "superadmin-1", clinicId: registration.clinic.id },
+      {
+        sendOwnerInvitation: async () => undefined,
+        store,
+      },
+    );
+
+    expect(store.deliveryHistory).toHaveLength(1);
   });
 
   it("no duplica la Clínica ni el correo al repetir una alta ya entregada", async () => {
@@ -117,6 +147,8 @@ describe("alta explícita de Clínicas", () => {
 });
 
 function pendingRegistration(input: {
+  delivery?: ClinicRegistration["invitation"]["delivery"];
+  invitationStatus?: "accepted" | "expired" | "pending";
   isSynthetic: boolean;
 }): ClinicRegistration {
   return {
@@ -127,16 +159,21 @@ function pendingRegistration(input: {
     },
     invitation: {
       delivery: {
-        attempts: 0,
-        canRetry: true,
-        lastAttempt: null,
-        lastError: null,
-        status: "pending",
+        attempts: input.delivery?.attempts ?? 0,
+        canRetry: input.delivery?.canRetry ?? true,
+        lastAttempt: input.delivery?.lastAttempt ?? null,
+        lastError: input.delivery?.lastError ?? null,
+        status: input.delivery?.status ?? "pending",
       },
       email: "ana@aurora.test",
-      expiresAt: new Date("2026-09-19T00:00:00.000Z"),
+      expiresAt:
+        input.invitationStatus === "expired"
+          ? new Date("2026-09-16T00:00:00.000Z")
+          : new Date("2026-09-19T00:00:00.000Z"),
       id: "invitation-1",
+      nextAction: input.invitationStatus === "expired" ? "renew" : "accept",
       recipientName: "Dra. Ana Reyes",
+      status: input.invitationStatus ?? "pending",
     },
   };
 }
@@ -159,6 +196,7 @@ function createStore(
       return {
         clinicId: current.clinic.id,
         clinicName: current.clinic.name,
+        deliveryAttemptId: `attempt-${deliveryHistory.length + 1}`,
         email: current.invitation.email,
         expiresAt: current.invitation.expiresAt,
         invitationId: current.invitation.id,
@@ -170,6 +208,7 @@ function createStore(
       return current;
     },
     async recordInvitationDelivery(input: {
+      deliveryAttemptId: string;
       result: "failed" | "succeeded";
       failureReason?: string;
     }) {
@@ -185,6 +224,8 @@ function createStore(
             lastError: input.failureReason ?? null,
             status: input.result === "succeeded" ? "sent" : "pending",
           },
+          nextAction: input.result === "failed" ? "retry-delivery" : "accept",
+          status: "pending",
         },
       };
       return current;

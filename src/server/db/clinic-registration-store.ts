@@ -1,5 +1,11 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 
+import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+
+import {
+  getClinicInvitationNextAction,
+  getClinicInvitationStatus,
+} from "~/domain/clinic-invitation";
 import {
   ClinicRegistrationConflictError,
   type ClinicRegistration,
@@ -20,6 +26,8 @@ import {
   type SubscriptionStatus,
   whatsappConnections,
 } from "~/server/db/schema";
+
+const DELIVERY_LEASE_DURATION_MS = 5 * 60 * 1_000;
 
 export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
   async register(input) {
@@ -62,6 +70,8 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
             .insert(clinicInvitations)
             .values({
               clinicId: createdClinic.id,
+              deliveryAttemptId: input.invitation.deliveryAttemptId,
+              deliveryLeaseExpiresAt: newDeliveryLeaseExpiresAt(),
               email: normalizeEmail(input.owner.email),
               expiresAt: input.invitation.expiresAt,
               recipientName: input.owner.name,
@@ -179,9 +189,12 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
         });
         if (invitation === undefined) return undefined;
 
+        const deliveryAttemptId = randomUUID();
         const [rotatedInvitation] = await transaction
           .update(clinicInvitations)
           .set({
+            deliveryAttemptId,
+            deliveryLeaseExpiresAt: newDeliveryLeaseExpiresAt(),
             expiresAt: input.expiresAt,
             tokenHash: hashClinicInvitationToken(input.token),
           })
@@ -189,6 +202,10 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
             and(
               eq(clinicInvitations.id, invitation.id),
               isNull(clinicInvitations.consumedAt),
+              or(
+                isNull(clinicInvitations.deliveryLeaseExpiresAt),
+                lt(clinicInvitations.deliveryLeaseExpiresAt, new Date()),
+              ),
             ),
           )
           .returning({
@@ -202,6 +219,7 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
         return {
           clinicId: clinic.id,
           clinicName: clinic.name,
+          deliveryAttemptId,
           email: rotatedInvitation.email,
           expiresAt: rotatedInvitation.expiresAt,
           invitationId: rotatedInvitation.id,
@@ -246,16 +264,24 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
           clinic.subscriptionStatus,
         );
 
-        const invitation = await transaction.query.clinicInvitations.findFirst({
-          columns: { id: true },
-          where: and(
-            eq(clinicInvitations.id, input.invitationId),
-            eq(clinicInvitations.clinicId, clinic.id),
-            eq(clinicInvitations.role, "owner"),
-          ),
-        });
-        if (invitation === undefined) {
-          throw new Error("La invitación del propietario no existe");
+        const [releasedInvitation] = await transaction
+          .update(clinicInvitations)
+          .set({
+            deliveryAttemptId: null,
+            deliveryLeaseExpiresAt: null,
+          })
+          .where(
+            and(
+              eq(clinicInvitations.id, input.invitationId),
+              eq(clinicInvitations.clinicId, clinic.id),
+              eq(clinicInvitations.role, "owner"),
+              eq(clinicInvitations.deliveryAttemptId, input.deliveryAttemptId),
+              isNull(clinicInvitations.consumedAt),
+            ),
+          )
+          .returning({ id: clinicInvitations.id });
+        if (releasedInvitation === undefined) {
+          return readRegistration(transaction, clinic.id);
         }
 
         await transaction.insert(clinicInvitationDeliveries).values({
@@ -266,7 +292,7 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
               ? (input.failureReason ??
                 "El proveedor de correo no pudo entregar la invitación")
               : null,
-          invitationId: invitation.id,
+          invitationId: releasedInvitation.id,
           result: input.result,
         });
         await transaction.insert(identityAuditEvents).values({
@@ -309,6 +335,7 @@ async function readRegistration(
   const invitation = await transaction.query.clinicInvitations.findFirst({
     columns: {
       consumedAt: true,
+      deliveryLeaseExpiresAt: true,
       email: true,
       expiresAt: true,
       id: true,
@@ -340,6 +367,13 @@ async function readRegistration(
     });
   const latest = deliveries[0];
   const status = latest?.result === "succeeded" ? "sent" : "pending";
+  const deliveryInProgress =
+    invitation.deliveryLeaseExpiresAt !== null &&
+    invitation.deliveryLeaseExpiresAt > new Date();
+  const invitationStatus = getClinicInvitationStatus({
+    consumedAt: invitation.consumedAt,
+    expiresAt: invitation.expiresAt,
+  });
 
   return {
     clinic,
@@ -347,7 +381,9 @@ async function readRegistration(
       delivery: {
         attempts: deliveries.length,
         canRetry:
-          latest?.result !== "succeeded" && invitation.consumedAt === null,
+          !deliveryInProgress &&
+          invitation.consumedAt === null &&
+          (invitationStatus === "expired" || latest?.result !== "succeeded"),
         lastAttempt: latest?.result ?? null,
         lastError: latest?.failureReason ?? null,
         status,
@@ -355,7 +391,13 @@ async function readRegistration(
       email: invitation.email,
       expiresAt: invitation.expiresAt,
       id: invitation.id,
+      nextAction: getClinicInvitationNextAction({
+        deliveryInProgress,
+        lastDelivery: latest?.result ?? null,
+        status: invitationStatus,
+      }),
       recipientName: invitation.recipientName,
+      status: invitationStatus,
     },
   };
 }
@@ -374,16 +416,22 @@ function registrationFromValues(input: {
     invitation: {
       delivery: {
         attempts: 0,
-        canRetry: true,
+        canRetry: false,
         lastAttempt: null,
         lastError: null,
         status: "pending",
       },
       ...input.invitation,
+      nextAction: "wait-delivery",
+      status: "pending",
     },
   };
 }
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function newDeliveryLeaseExpiresAt() {
+  return new Date(Date.now() + DELIVERY_LEASE_DURATION_MS);
 }

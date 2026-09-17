@@ -680,6 +680,13 @@
       "when": 1789575811009,
       "tag": "0101_apo95_rls_registration_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1789670570000,
+      "tag": "0102_apo96_owner_invitation_recovery",
+      "breakpoints": true
     }
   ]
 }

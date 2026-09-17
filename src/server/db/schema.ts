@@ -1433,6 +1433,13 @@ export const clinicUsers = createTable(
   (table) => [
     index("clinic_user_identity_idx").on(table.identityId),
     unique("clinic_user_clinic_id_unique").on(table.clinicId, table.id),
+    uniqueIndex("clinic_user_clinic_identity_unique").on(
+      table.clinicId,
+      table.identityId,
+    ),
+    uniqueIndex("clinic_user_owner_unique")
+      .on(table.clinicId)
+      .where(sql`${table.role} = 'owner'`),
   ],
 );
 
@@ -2057,6 +2064,14 @@ export const clinicInvitations = createTable(
     tokenHash: text("token_hash").notNull().unique(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    acceptedIdentityId: text("accepted_identity_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    acceptedIdentityCreated: boolean("accepted_identity_created"),
+    deliveryAttemptId: uuid("delivery_attempt_id"),
+    deliveryLeaseExpiresAt: timestamp("delivery_lease_expires_at", {
+      withTimezone: true,
+    }),
   },
   (table) => [
     uniqueIndex("clinic_invitation_owner_unique")

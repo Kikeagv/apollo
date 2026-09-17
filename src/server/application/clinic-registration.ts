@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 
+import type {
+  ClinicInvitationNextAction,
+  ClinicInvitationStatus,
+} from "~/domain/clinic-invitation";
+
 export const clinicRegistrationModes = ["commercial", "synthetic"] as const;
 export type ClinicRegistrationMode = (typeof clinicRegistrationModes)[number];
 
@@ -23,13 +28,16 @@ export type ClinicRegistration = {
     email: string;
     expiresAt: Date;
     id: string;
+    nextAction: ClinicInvitationNextAction;
     recipientName: string;
+    status: ClinicInvitationStatus;
   };
 };
 
 export type ClinicInvitationDeliveryRequest = {
   clinicId: string;
   clinicName: string;
+  deliveryAttemptId: string;
   email: string;
   expiresAt: Date;
   invitationId: string;
@@ -42,7 +50,11 @@ export type ClinicRegistrationStore = {
     actorIdentityId: string;
     clinicName: string;
     idempotencyKey: string;
-    invitation: { expiresAt: Date; token: string };
+    invitation: {
+      deliveryAttemptId: string;
+      expiresAt: Date;
+      token: string;
+    };
     mode: ClinicRegistrationMode;
     owner: { email: string; name: string };
   }): Promise<{ created: boolean; registration: ClinicRegistration }>;
@@ -59,6 +71,7 @@ export type ClinicRegistrationStore = {
   recordInvitationDelivery(input: {
     actorIdentityId: string;
     clinicId: string;
+    deliveryAttemptId: string;
     failureReason?: string;
     invitationId: string;
     result: ClinicInvitationDeliveryAttempt;
@@ -96,6 +109,7 @@ export async function registerClinic(
   dependencies: ClinicRegistrationDependencies,
 ) {
   const invitation = {
+    deliveryAttemptId: randomUUID(),
     expiresAt: new Date(Date.now() + INVITATION_DURATION_MS),
     token: randomUUID(),
   };
@@ -112,6 +126,7 @@ export async function registerClinic(
     ? {
         clinicId: registered.registration.clinic.id,
         clinicName: registered.registration.clinic.name,
+        deliveryAttemptId: invitation.deliveryAttemptId,
         email: registered.registration.invitation.email,
         expiresAt: invitation.expiresAt,
         invitationId: registered.registration.invitation.id,
@@ -164,6 +179,7 @@ async function deliverInvitation(
     return dependencies.store.recordInvitationDelivery({
       actorIdentityId,
       clinicId: invitation.clinicId,
+      deliveryAttemptId: invitation.deliveryAttemptId,
       failureReason: deliveryErrorMessage(error),
       invitationId: invitation.invitationId,
       result: "failed",
@@ -173,6 +189,7 @@ async function deliverInvitation(
   return dependencies.store.recordInvitationDelivery({
     actorIdentityId,
     clinicId: invitation.clinicId,
+    deliveryAttemptId: invitation.deliveryAttemptId,
     invitationId: invitation.invitationId,
     result: "succeeded",
   });

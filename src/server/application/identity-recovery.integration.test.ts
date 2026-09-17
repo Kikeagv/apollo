@@ -377,6 +377,9 @@ async function createFixture() {
     password,
     token: invitation.token,
   });
+  if (!activation.active) {
+    throw new Error("La invitación no produjo un acceso activo");
+  }
 
   return {
     clinicId: clinic.id,
