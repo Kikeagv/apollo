@@ -666,6 +666,13 @@
       "when": 1789575811007,
       "tag": "0099_apo94_repair_apo91_schema_drift",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1789575811008,
+      "tag": "0100_apo95_recoverable_clinic_registration",
+      "breakpoints": true
     }
   ]
 }

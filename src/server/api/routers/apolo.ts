@@ -1,7 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { env } from "~/env";
-import { createSyntheticClinic } from "~/server/application/create-synthetic-clinic";
+import {
+  clinicRegistrationModes,
+  registerClinic,
+  retryClinicInvitation,
+  type ClinicRegistration,
+  type ClinicInvitationDeliveryRequest,
+} from "~/server/application/clinic-registration";
 import {
   getKapsoWhatsAppOnboarding,
   prepareKapsoWhatsAppOnboarding,
@@ -40,7 +47,7 @@ import {
   listCommercialClinics,
   readAuditedSupportClinicSummary,
 } from "~/server/db/subscription-support-store";
-import { drizzleSyntheticClinicRegistration } from "~/server/db/synthetic-clinic-registration";
+import { drizzleClinicRegistrationStore } from "~/server/db/clinic-registration-store";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
@@ -75,6 +82,27 @@ const kapsoWebhookOffboardingProvider = createKapsoWebhookOffboardingProvider({
   apiKey: env.KAPSO_API_KEY,
 });
 
+function sendClinicOwnerInvitation(
+  invitation: ClinicInvitationDeliveryRequest,
+) {
+  return clinicInvitationEmailSender().sendOwnerInvitation({
+    clinicName: invitation.clinicName,
+    expiresAt: invitation.expiresAt,
+    ownerEmail: invitation.email,
+    ownerName: invitation.recipientName,
+    token: invitation.token,
+  });
+}
+
+function withLegacyClinicSummary(registration: ClinicRegistration) {
+  return {
+    ...registration,
+    id: registration.clinic.id,
+    isSynthetic: registration.clinic.isSynthetic,
+    name: registration.clinic.name,
+  };
+}
+
 /** Operación comercial de Apolo, separada de los procedimientos de Panacea. */
 export const apoloRouter = {
   listWhatsAppInboundAlerts: protectedProcedure.query(({ ctx }) =>
@@ -106,23 +134,49 @@ export const apoloRouter = {
     .input(
       z.object({
         clinicName: z.string().trim().min(1).max(120),
+        idempotencyKey: z.string().trim().min(1).max(200).default(randomUUID),
+        mode: z.enum(clinicRegistrationModes).default("commercial"),
         ownerEmail: z.string().trim().email(),
         ownerName: z.string().trim().min(1).max(120),
       }),
     )
+    .mutation(async ({ ctx, input }) =>
+      withLegacyClinicSummary(
+        await registerClinic(
+          {
+            actorIdentityId: ctx.session.user.id,
+            clinicName: input.clinicName,
+            idempotencyKey: input.idempotencyKey,
+            mode: input.mode,
+            owner: { email: input.ownerEmail, name: input.ownerName },
+          },
+          {
+            sendOwnerInvitation: sendClinicOwnerInvitation,
+            store: drizzleClinicRegistrationStore,
+          },
+        ),
+      ),
+    ),
+
+  retryClinicInvitation: protectedProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
     .mutation(({ ctx, input }) =>
-      createSyntheticClinic(
+      retryClinicInvitation(
+        { actorIdentityId: ctx.session.user.id, clinicId: input.clinicId },
         {
-          actorIdentityId: ctx.session.user.id,
-          clinicName: input.clinicName,
-          owner: { email: input.ownerEmail, name: input.ownerName },
-        },
-        {
-          registry: drizzleSyntheticClinicRegistration,
-          sendOwnerInvitation: (invitation) =>
-            clinicInvitationEmailSender().sendOwnerInvitation(invitation),
+          sendOwnerInvitation: sendClinicOwnerInvitation,
+          store: drizzleClinicRegistrationStore,
         },
       ),
+    ),
+
+  getClinicRegistration: protectedProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      drizzleClinicRegistrationStore.read({
+        actorIdentityId: ctx.session.user.id,
+        clinicId: input.clinicId,
+      }),
     ),
 
   getKapsoOnboarding: protectedProcedure

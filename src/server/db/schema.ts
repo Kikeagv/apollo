@@ -79,6 +79,7 @@ export const createTable = pgTableCreator((name) => `pg-drizzle_${name}`);
 
 export type ClinicUserRole = "owner" | "doctor" | "secretary";
 export type ClinicInvitationRole = "owner" | "doctor";
+export type ClinicInvitationDeliveryResult = "failed" | "succeeded";
 export type AppointmentOrigin = "manual" | "reservation";
 export type AppointmentStatus = "confirmed" | "cancelled";
 export type { NoShowPolicy } from "~/domain/whatsapp-operational-policies";
@@ -143,29 +144,36 @@ export const verification = pgTable("verification", {
   ),
 });
 
-export const clinics = createTable("clinic", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(),
-  noShowPolicy: text("no_show_policy")
-    .$type<NoShowPolicy>()
-    .default("alert")
-    .notNull(),
-  escalationNotificationsEnabled: boolean("escalation_notifications_enabled")
-    .default(false)
-    .notNull(),
-  escalationSecretaryPhoneE164: text("escalation_secretary_phone_e164"),
-  voiceTranscriptionEnabled: boolean("voice_transcription_enabled")
-    .default(false)
-    .notNull(),
-  isSynthetic: boolean("is_synthetic").default(true).notNull(),
-  subscriptionStatus: text("subscription_status")
-    .$type<SubscriptionStatus>()
-    .default("active")
-    .notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const clinics = createTable(
+  "clinic",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    registrationKey: text("registration_key"),
+    noShowPolicy: text("no_show_policy")
+      .$type<NoShowPolicy>()
+      .default("alert")
+      .notNull(),
+    escalationNotificationsEnabled: boolean("escalation_notifications_enabled")
+      .default(false)
+      .notNull(),
+    escalationSecretaryPhoneE164: text("escalation_secretary_phone_e164"),
+    voiceTranscriptionEnabled: boolean("voice_transcription_enabled")
+      .default(false)
+      .notNull(),
+    isSynthetic: boolean("is_synthetic").default(true).notNull(),
+    subscriptionStatus: text("subscription_status")
+      .$type<SubscriptionStatus>()
+      .default("active")
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("clinic_registration_key_unique").on(table.registrationKey),
+  ],
+);
 
 /** Relación operativa única entre una Clínica y su proveedor de WhatsApp. */
 export const whatsappConnections = createTable(
@@ -2036,18 +2044,66 @@ export const whatsappSendRateLimitSlots = createTable(
   ],
 );
 
-export const clinicInvitations = createTable("clinic_invitation", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  clinicId: uuid("clinic_id")
-    .notNull()
-    .references(() => clinics.id, { onDelete: "cascade" }),
-  email: text("email").notNull(),
-  recipientName: text("recipient_name").notNull(),
-  role: text("role").$type<ClinicInvitationRole>().default("owner").notNull(),
-  tokenHash: text("token_hash").notNull().unique(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  consumedAt: timestamp("consumed_at", { withTimezone: true }),
-});
+export const clinicInvitations = createTable(
+  "clinic_invitation",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    recipientName: text("recipient_name").notNull(),
+    role: text("role").$type<ClinicInvitationRole>().default("owner").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("clinic_invitation_owner_unique")
+      .on(table.clinicId)
+      .where(sql`${table.role} = 'owner'`),
+  ],
+);
+
+/** Historial append-only de cada intento de entrega de una invitación de propietario. */
+export const clinicInvitationDeliveries = createTable(
+  "clinic_invitation_delivery",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clinicId: uuid("clinic_id")
+      .notNull()
+      .references(() => clinics.id, { onDelete: "cascade" }),
+    invitationId: uuid("invitation_id")
+      .notNull()
+      .references(() => clinicInvitations.id, { onDelete: "cascade" }),
+    actorIdentityId: text("actor_identity_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    result: text("result").$type<ClinicInvitationDeliveryResult>().notNull(),
+    failureReason: text("failure_reason"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("clinic_invitation_delivery_clinic_idx").on(
+      table.clinicId,
+      table.occurredAt,
+    ),
+    index("clinic_invitation_delivery_invitation_idx").on(
+      table.invitationId,
+      table.occurredAt,
+    ),
+    check(
+      "clinic_invitation_delivery_result",
+      sql`${table.result} IN ('failed', 'succeeded')`,
+    ),
+    check(
+      "clinic_invitation_delivery_failure_reason",
+      sql`${table.result} = 'succeeded' OR NULLIF(btrim(${table.failureReason}), '') IS NOT NULL`,
+    ),
+  ],
+);
 
 /** Un secreto opaco por navegador; nunca se almacena el valor enviado al cliente. */
 export const trustedClinicDevices = createTable(
