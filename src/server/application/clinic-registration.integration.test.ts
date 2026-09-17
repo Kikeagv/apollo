@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { registerClinic, retryClinicInvitation } from "./clinic-registration";
 import { db } from "../db";
-import { inSuperadminTransaction } from "../db/clinic-context";
+import {
+  inSuperadminRlsTransaction,
+  inSuperadminTransaction,
+} from "../db/clinic-context";
 import { drizzleClinicRegistrationStore } from "../db/clinic-registration-store";
 import {
   apoloSuperadmins,
@@ -209,6 +212,29 @@ describe("alta comercial y sintética recuperable", () => {
           status: "ready",
         });
         expect(persisted.syntheticReadiness).toBeDefined();
+
+        const rlsVisibility = await inSuperadminRlsTransaction(
+          identityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${first.clinic.id}, true)`,
+            );
+            const visibleDeliveries =
+              await transaction.query.clinicInvitationDeliveries.findMany({
+                where: eq(clinicInvitationDeliveries.clinicId, first.clinic.id),
+              });
+            const hiddenDeliveries =
+              await transaction.query.clinicInvitationDeliveries.findMany({
+                where: eq(
+                  clinicInvitationDeliveries.clinicId,
+                  synthetic.clinic.id,
+                ),
+              });
+            return { hiddenDeliveries, visibleDeliveries };
+          },
+        );
+        expect(rlsVisibility.visibleDeliveries).toHaveLength(3);
+        expect(rlsVisibility.hiddenDeliveries).toHaveLength(0);
       } finally {
         if (createdClinicIds.length > 0) {
           await inSuperadminTransaction(identityId, async (transaction) => {

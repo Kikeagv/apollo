@@ -7,7 +7,7 @@ import {
 } from "~/server/application/clinic-registration";
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import {
-  inSuperadminTransaction,
+  inSuperadminRlsTransaction,
   type ClinicTransaction,
 } from "~/server/db/clinic-context";
 import { hashClinicInvitationToken } from "~/server/db/clinic-invitation-token";
@@ -23,7 +23,7 @@ import {
 
 export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
   async register(input) {
-    return inSuperadminTransaction(
+    return inSuperadminRlsTransaction(
       input.actorIdentityId,
       async (transaction) => {
         const [createdClinic] = await transaction
@@ -150,7 +150,7 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
   },
 
   async prepareInvitationDelivery(input) {
-    return inSuperadminTransaction(
+    return inSuperadminRlsTransaction(
       input.actorIdentityId,
       async (transaction) => {
         const clinic = await transaction.query.clinics.findFirst({
@@ -213,7 +213,7 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
   },
 
   async read(input) {
-    return inSuperadminTransaction(
+    return inSuperadminRlsTransaction(
       input.actorIdentityId,
       async (transaction) => {
         const clinic = await transaction.query.clinics.findFirst({
@@ -232,7 +232,7 @@ export const drizzleClinicRegistrationStore: ClinicRegistrationStore = {
   },
 
   async recordInvitationDelivery(input) {
-    return inSuperadminTransaction(
+    return inSuperadminRlsTransaction(
       input.actorIdentityId,
       async (transaction) => {
         const clinic = await transaction.query.clinics.findFirst({

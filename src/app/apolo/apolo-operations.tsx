@@ -218,6 +218,12 @@ export function ApoloOperations() {
           mismo.
         </p>
       </div>
+      <a
+        className="inline-flex rounded border border-teal-300 px-3 py-2 font-medium text-teal-200"
+        href="/apolo/alta"
+      >
+        Alta comercial o sintética
+      </a>
       <section
         aria-labelledby="whatsapp-runtime-title"
         className="space-y-3 rounded-xl border border-slate-700 p-5"

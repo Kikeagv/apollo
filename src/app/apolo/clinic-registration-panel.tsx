@@ -37,7 +37,19 @@ export function ClinicRegistrationPanel() {
   });
 
   const visibleRegistration =
-    registration ?? persistedRegistration.data ?? null;
+    registration ??
+    (selectedClinicId ? persistedRegistration.data : null) ??
+    null;
+
+  const startNewRegistration = () => {
+    setClinicName("");
+    setOwnerName("");
+    setOwnerEmail("");
+    setMode("commercial");
+    setIdempotencyKey("");
+    setSelectedClinicId("");
+    setRegistration(null);
+  };
 
   return (
     <section
@@ -117,6 +129,7 @@ export function ClinicRegistrationPanel() {
             !clinicName.trim() ||
             !ownerName.trim() ||
             !ownerEmail.trim() ||
+            Boolean(visibleRegistration) ||
             createClinic.isPending
           }
           onClick={() => {
@@ -134,6 +147,15 @@ export function ClinicRegistrationPanel() {
         >
           {createClinic.isPending ? "Creando Clínica…" : "Crear Clínica"}
         </button>
+        {visibleRegistration ? (
+          <button
+            className="border-border text-foreground hover:bg-muted min-h-11 rounded-lg border px-4 py-2.5 font-medium transition-colors"
+            onClick={startNewRegistration}
+            type="button"
+          >
+            Nueva alta
+          </button>
+        ) : null}
         <label className="text-muted-foreground flex items-center gap-2 text-sm">
           Ver una alta existente
           <select
