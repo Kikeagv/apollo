@@ -33,11 +33,9 @@ export function ActivateInvitationForm({ token }: { token: string }) {
       setActivated(true);
       setExistingIdentity(data.identityStatus === "existing");
       setResult(
-        data.invitationStatus === "already-accepted"
-          ? "La invitación ya estaba aceptada y el acceso sigue activo."
-          : data.identityStatus === "existing"
-            ? "La invitación se vinculó a su Identidad existente."
-            : "La cuenta se activó. En unos segundos la llevaremos al inicio de sesión.",
+        data.identityStatus === "existing"
+          ? "La invitación se vinculó a su Identidad existente."
+          : "La cuenta se activó. En unos segundos la llevaremos al inicio de sesión.",
       );
     },
   });
@@ -69,6 +67,7 @@ export function ActivateInvitationForm({ token }: { token: string }) {
       return;
     }
 
+    if (activationMode.data !== "existing") return;
     setResult(undefined);
     activation.mutate({ token });
   }
@@ -81,7 +80,13 @@ export function ActivateInvitationForm({ token }: { token: string }) {
         <p className="text-sm text-rose-300" role="alert">
           {activationMode.error.message}
         </p>
-      ) : activated || requiresSupport ? null : (
+      ) : activated || requiresSupport ? null : activationMode.data ===
+        "expired" ? (
+        <p className="text-sm text-amber-300" role="alert">
+          Esta invitación venció. Solicite al equipo de la Clínica que emita una
+          nueva invitación.
+        </p>
+      ) : activationMode.data === undefined ? null : (
         <form className="space-y-4" onSubmit={submit}>
           {activationMode.data === "new" ? (
             <>
@@ -112,15 +117,10 @@ export function ActivateInvitationForm({ token }: { token: string }) {
                 />
               </label>
             </>
-          ) : activationMode.data === "existing" ? (
+          ) : (
             <p className="text-sm text-slate-300">
               Su correo ya tiene una Identidad. Conservaremos su contraseña
               actual y vincularemos el acceso a la Clínica.
-            </p>
-          ) : (
-            <p className="text-sm text-slate-300">
-              Esta invitación ya fue aceptada. Puede continuar al inicio de
-              sesión.
             </p>
           )}
           <button
@@ -132,9 +132,7 @@ export function ActivateInvitationForm({ token }: { token: string }) {
               ? "Activando…"
               : activationMode.data === "new"
                 ? "Activar cuenta"
-                : activationMode.data === "existing"
-                  ? "Vincular acceso"
-                  : "Continuar"}
+                : "Vincular acceso"}
           </button>
           {activation.error ? (
             <p className="text-sm text-rose-300">{activation.error.message}</p>

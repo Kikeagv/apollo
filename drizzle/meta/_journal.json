@@ -687,6 +687,13 @@
       "when": 1789670570000,
       "tag": "0102_apo96_owner_invitation_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1789756800000,
+      "tag": "0103_apo96_invitation_integrity_and_account_privileges",
+      "breakpoints": true
     }
   ]
 }

@@ -71,13 +71,12 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
           where: eq(clinicInvitations.tokenHash, tokenHash),
         });
         if (invitation === undefined) throw new ClinicOwnerInvitationError();
-        if (
-          invitation.consumedAt === null &&
-          invitation.expiresAt <= new Date()
-        ) {
+        if (invitation.consumedAt !== null) {
           throw new ClinicOwnerInvitationError();
         }
-        if (invitation.consumedAt !== null) return "accepted";
+        if (invitation.expiresAt <= new Date()) {
+          return "expired";
+        }
 
         await lockInvitationIdentity(transaction, invitation.email);
         const existingIdentity = await transaction.query.user.findFirst({
@@ -123,16 +122,9 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
             id: clinicInvitations.id,
             recipientName: clinicInvitations.recipientName,
             role: clinicInvitations.role,
-            acceptedIdentityCreated: clinicInvitations.acceptedIdentityCreated,
-            acceptedIdentityId: clinicInvitations.acceptedIdentityId,
           });
 
         if (invitation === undefined) {
-          const repeated = await resolveAlreadyAcceptedInvitation(
-            transaction,
-            tokenHash,
-          );
-          if (repeated !== undefined) return repeated;
           await auditFailedActivation(transaction, tokenHash);
           return undefined;
         }
@@ -386,93 +378,6 @@ async function activateExistingIdentity(
     identityId: input.identityId,
     identityStatus: "existing",
     invitationStatus: "accepted",
-    role: invitation.role,
-  };
-}
-
-async function resolveAlreadyAcceptedInvitation(
-  transaction: ClinicTransaction,
-  tokenHash: string,
-): Promise<ClinicInvitationMembership | undefined> {
-  const invitation = await transaction.query.clinicInvitations.findFirst({
-    columns: {
-      acceptedIdentityCreated: true,
-      acceptedIdentityId: true,
-      clinicId: true,
-      consumedAt: true,
-      email: true,
-      id: true,
-      role: true,
-    },
-    where: eq(clinicInvitations.tokenHash, tokenHash),
-  });
-  if (invitation === undefined) return undefined;
-  if (invitation.consumedAt === null) return undefined;
-
-  let identityId = invitation.acceptedIdentityId;
-  let identityStatus =
-    invitation.acceptedIdentityCreated === true
-      ? ("created" as const)
-      : ("existing" as const);
-  if (identityId === null) {
-    const identity = await transaction.query.user.findFirst({
-      columns: { id: true },
-      where: sql`lower(${user.email}) = lower(${invitation.email})`,
-    });
-    if (identity === undefined) return undefined;
-    identityId = identity.id;
-  }
-
-  await setClinicContext(transaction, invitation.clinicId);
-  await setIdentityContext(transaction, identityId);
-  const membership = await transaction.query.clinicUsers.findFirst({
-    columns: { id: true },
-    where: and(
-      eq(clinicUsers.clinicId, invitation.clinicId),
-      eq(clinicUsers.identityId, identityId),
-      eq(clinicUsers.role, invitation.role),
-      eq(clinicUsers.active, true),
-    ),
-  });
-  if (membership === undefined) return undefined;
-
-  if (invitation.acceptedIdentityId === null) {
-    const [backfilledInvitation] = await transaction
-      .update(clinicInvitations)
-      .set({
-        acceptedIdentityCreated: identityStatus === "created",
-        acceptedIdentityId: identityId,
-      })
-      .where(
-        and(
-          eq(clinicInvitations.id, invitation.id),
-          eq(clinicInvitations.tokenHash, tokenHash),
-        ),
-      )
-      .returning({ id: clinicInvitations.id });
-    if (backfilledInvitation === undefined) {
-      throw new Error("No se pudo guardar la aceptación histórica");
-    }
-    identityStatus = "existing";
-  }
-
-  await transaction.insert(identityAuditEvents).values({
-    action:
-      invitation.role === "owner"
-        ? "identity-invitation-accepted"
-        : "clinic-doctor-invitation-accepted",
-    actorIdentityId: identityId,
-    actorKind: "identity",
-    clinicId: invitation.clinicId,
-    result: "succeeded",
-  });
-
-  return {
-    active: true,
-    clinicId: invitation.clinicId,
-    identityId,
-    identityStatus,
-    invitationStatus: "already-accepted",
     role: invitation.role,
   };
 }

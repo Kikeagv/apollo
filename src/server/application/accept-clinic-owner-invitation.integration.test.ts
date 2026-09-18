@@ -7,8 +7,11 @@ import { describe, expect, it } from "vitest";
 import { createCaller } from "~/server/api/root";
 import { type createTRPCContext } from "~/server/api/trpc";
 import { hashOpaqueAccessToken } from "~/server/application/clinic-access";
+import {
+  acceptClinicOwnerInvitation as acceptInvitation,
+  getClinicInvitationActivationMode,
+} from "./accept-clinic-owner-invitation";
 import { configureEffectiveSchedule } from "./availability";
-import { acceptClinicOwnerInvitation as acceptInvitation } from "./accept-clinic-owner-invitation";
 import { calculateCareOptions } from "./care-options";
 import { inviteAdditionalDoctor } from "./doctor-invitations";
 import {
@@ -68,6 +71,23 @@ async function acceptClinicOwnerInvitation(input: {
 }
 
 describe("activación persistente por invitación del médico propietario", () => {
+  databaseTest(
+    "no revela si existe una Identidad con un token de invitación inválido",
+    async () => {
+      const fixture = await createActivationFixture();
+
+      try {
+        await expect(
+          getClinicInvitationActivationMode({
+            token: `token-invalido-${randomUUID()}`,
+          }),
+        ).rejects.toThrow("La invitación no es válida o venció");
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "la mutación de Panacea adapta la invitación autorizada del propietario",
     async () => {
@@ -835,7 +855,7 @@ describe("activación persistente por invitación del médico propietario", () =
   );
 
   databaseTest(
-    "hace idempotente el segundo uso sin guardar la nueva contraseña",
+    "rechaza el segundo uso sin guardar la nueva contraseña",
     async () => {
       const fixture = await createActivationFixture();
 
@@ -851,10 +871,7 @@ describe("activación persistente por invitación del médico propietario", () =
             password: "No-debe-quedar-en-la-auditoría",
             token: fixture.invitationToken,
           }),
-        ).resolves.toEqual({
-          ...activation,
-          invitationStatus: "already-accepted",
-        });
+        ).rejects.toThrow("La invitación no es válida o venció");
 
         const events = await readClinicAuditEvents(
           fixture.superadminId,
@@ -866,6 +883,11 @@ describe("activación persistente por invitación del médico propietario", () =
               action: "identity-invitation-accepted",
               actorIdentityId: activation.identityId,
               result: "succeeded",
+            }),
+            expect.objectContaining({
+              action: "identity-invitation-accepted",
+              actorKind: "anonymous",
+              result: "failed",
             }),
           ]),
         );

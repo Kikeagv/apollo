@@ -18,16 +18,14 @@ export type ClinicInvitationNextAction =
 export type ClinicInvitationLastDelivery = "failed" | "succeeded" | null;
 
 export type ClinicInvitationIdentityStatus = "created" | "existing";
-export type ClinicInvitationActivationMode = "new" | "existing" | "accepted";
-export type ClinicInvitationAcceptanceStatus =
-  "accepted" | "already-accepted" | "requires-support";
+export type ClinicInvitationActivationMode = "new" | "existing" | "expired";
 
 export type ClinicInvitationSuccessfulAcceptance = {
   active: true;
   clinicId: string;
   identityId: string;
   identityStatus: ClinicInvitationIdentityStatus;
-  invitationStatus: "accepted" | "already-accepted";
+  invitationStatus: "accepted";
   role: "doctor" | "owner";
 };
 

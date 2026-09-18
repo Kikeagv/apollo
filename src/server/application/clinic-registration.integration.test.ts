@@ -92,6 +92,9 @@ describe("alta comercial y sintética recuperable", () => {
           status: "expired",
         });
         expect(expired.invitation.delivery.canRetry).toBe(true);
+        await expect(
+          getClinicInvitationActivationMode({ token: oldToken }),
+        ).resolves.toBe("expired");
 
         const renewed = await retryClinicInvitation(
           { actorIdentityId: identityId, clinicId: createdClinicId },
@@ -132,7 +135,7 @@ describe("alta comercial y sintética recuperable", () => {
         ownerIdentityId = activation.identityId;
         await expect(
           getClinicInvitationActivationMode({ token: newToken }),
-        ).resolves.toBe("accepted");
+        ).rejects.toThrow("La invitación no es válida o venció");
 
         const persisted = await inSuperadminTransaction(
           identityId,
