@@ -3,6 +3,11 @@
 import { useState } from "react";
 
 import {
+  createAdministrativeOperationKey,
+  getAdministrativeOperationFeedback,
+  type AdministrativeOperationFeedback as AdministrativeOperationFeedbackState,
+} from "~/domain/administrative-operation";
+import {
   whatsappSetupLinkStatus,
   whatsappSetupLinkStatusLabel,
   type WhatsAppSetupLink,
@@ -102,8 +107,15 @@ export function ApoloOperations() {
     | "legal-block"
   >("provider-error");
   const [openReason, setOpenReason] = useState("");
+  const [paymentAttempt, setPaymentAttempt] =
+    useState<AdministrativeOperationAttempt | null>(null);
+  const [subscriptionAttempt, setSubscriptionAttempt] =
+    useState<AdministrativeOperationAttempt | null>(null);
+  const [supportAttempt, setSupportAttempt] =
+    useState<AdministrativeOperationAttempt | null>(null);
   const createClinic = api.apolo.createManualClinic.useMutation({
     onSuccess: (clinic) => {
+      resetAdministrativeOperationState();
       setClinicId(clinic.id);
       setOnboardingOwnerName(ownerName);
       void clinics.refetch();
@@ -204,6 +216,138 @@ export function ApoloOperations() {
       void circuitBreaker.refetch();
       refreshActivationContract();
     },
+  });
+
+  const resetAdministrativeOperationState = () => {
+    setAmountUsd("");
+    setReference("");
+    setReason("");
+    setExpiresAt("");
+    setSupportSessionId("");
+    setPaymentAttempt(null);
+    setSubscriptionAttempt(null);
+    setSupportAttempt(null);
+  };
+
+  const submitPayment = () => {
+    const fingerprint = `${clinicId}|${amountUsd}|${reference.trim()}`;
+    const isValid =
+      Boolean(clinicId) &&
+      /^\d+(\.\d{2})$/.test(amountUsd) &&
+      Number(amountUsd) > 0 &&
+      reference.trim().length > 0;
+    const currentAttempt =
+      paymentAttempt?.fingerprint === fingerprint ? paymentAttempt : null;
+    if (!isValid) {
+      setPaymentAttempt({ fingerprint, key: null });
+      return;
+    }
+    const operationKey =
+      currentAttempt?.key ??
+      createAdministrativeOperationKey("transfer-payment", crypto.randomUUID());
+    setPaymentAttempt({ fingerprint, key: operationKey });
+    recordPayment.mutate({
+      amountUsd,
+      clinicId,
+      operationKey,
+      reference: reference.trim(),
+    });
+  };
+
+  const submitSubscription = (status: "active" | "suspended") => {
+    const fingerprint = `${clinicId}|${status}`;
+    const currentAttempt =
+      subscriptionAttempt?.fingerprint === fingerprint
+        ? subscriptionAttempt
+        : null;
+    if (!clinicId) {
+      setSubscriptionAttempt({ fingerprint, key: null });
+      return;
+    }
+    const operationKey =
+      currentAttempt?.key ??
+      createAdministrativeOperationKey(
+        "subscription-status",
+        crypto.randomUUID(),
+      );
+    setSubscriptionAttempt({ fingerprint, key: operationKey });
+    setSubscription.mutate({ clinicId, operationKey, status });
+  };
+
+  const submitSupport = () => {
+    const fingerprint = `${clinicId}|${reason.trim()}|${expiresAt}`;
+    const parsedExpiresAt = new Date(expiresAt);
+    const isValid =
+      Boolean(clinicId) &&
+      reason.trim().length > 0 &&
+      Number.isFinite(parsedExpiresAt.getTime()) &&
+      parsedExpiresAt.getTime() > Date.now();
+    const currentAttempt =
+      supportAttempt?.fingerprint === fingerprint ? supportAttempt : null;
+    const canRecover =
+      currentAttempt?.key !== null && currentAttempt?.key !== undefined;
+    if (!isValid && !canRecover) {
+      setSupportAttempt({ fingerprint, key: null });
+      return;
+    }
+    const operationKey =
+      currentAttempt?.key ??
+      createAdministrativeOperationKey("support-session", crypto.randomUUID());
+    setSupportAttempt({ fingerprint, key: operationKey });
+    openSupport.mutate({
+      clinicId,
+      expiresAt: parsedExpiresAt,
+      operationKey,
+      reason: reason.trim(),
+    });
+  };
+
+  const paymentFingerprint = `${clinicId}|${amountUsd}|${reference.trim()}`;
+  const paymentInputValid =
+    Boolean(clinicId) &&
+    /^\d+(\.\d{2})$/.test(amountUsd) &&
+    Number(amountUsd) > 0 &&
+    reference.trim().length > 0;
+  const paymentAttemptIsCurrent =
+    paymentAttempt?.fingerprint === paymentFingerprint;
+  const paymentFeedback = getAdministrativeOperationFeedback({
+    attempted: paymentAttemptIsCurrent,
+    errorMessage: recordPayment.error?.message,
+    isError: paymentAttemptIsCurrent && recordPayment.isError,
+    isPending: paymentAttemptIsCurrent && recordPayment.isPending,
+    isSuccess: paymentAttemptIsCurrent && recordPayment.isSuccess,
+    isValid: paymentInputValid,
+    operationKey: paymentAttempt?.key ?? undefined,
+  });
+  const subscriptionAttemptIsCurrent =
+    Boolean(clinicId) && subscriptionAttempt !== null;
+  const subscriptionFeedback = getAdministrativeOperationFeedback({
+    attempted: subscriptionAttemptIsCurrent,
+    errorMessage: setSubscription.error?.message,
+    isError: subscriptionAttemptIsCurrent && setSubscription.isError,
+    isPending: subscriptionAttemptIsCurrent && setSubscription.isPending,
+    isSuccess: subscriptionAttemptIsCurrent && setSubscription.isSuccess,
+    isValid: Boolean(clinicId),
+    operationKey: subscriptionAttempt?.key ?? undefined,
+  });
+  const supportFingerprint = `${clinicId}|${reason.trim()}|${expiresAt}`;
+  const supportExpiresAt = new Date(expiresAt);
+  const supportInputValid =
+    (Boolean(clinicId) &&
+      reason.trim().length > 0 &&
+      Number.isFinite(supportExpiresAt.getTime()) &&
+      supportExpiresAt.getTime() > Date.now()) ||
+    (supportAttempt?.key !== null && supportAttempt?.key !== undefined);
+  const supportAttemptIsCurrent =
+    supportAttempt?.fingerprint === supportFingerprint;
+  const supportFeedback = getAdministrativeOperationFeedback({
+    attempted: supportAttemptIsCurrent,
+    errorMessage: openSupport.error?.message,
+    isError: supportAttemptIsCurrent && openSupport.isError,
+    isPending: supportAttemptIsCurrent && openSupport.isPending,
+    isSuccess: supportAttemptIsCurrent && openSupport.isSuccess,
+    isValid: supportInputValid,
+    operationKey: supportAttempt?.key ?? undefined,
   });
 
   return (
@@ -345,7 +489,10 @@ export function ApoloOperations() {
         Clínica
         <select
           className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setClinicId(event.target.value)}
+          onChange={(event) => {
+            resetAdministrativeOperationState();
+            setClinicId(event.target.value);
+          }}
           value={clinicId}
         >
           <option value="">Seleccione una Clínica</option>
@@ -1417,105 +1564,193 @@ export function ApoloOperations() {
         clinicId={clinicId}
         refreshToken={activationRefreshToken}
       />
-      <section className="space-y-3 rounded-xl border border-slate-700 p-5">
-        <h2 className="text-xl font-semibold">Pago por transferencia</h2>
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setAmountUsd(event.target.value)}
-          placeholder="Monto USD, por ejemplo 75.00"
-          value={amountUsd}
-        />
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setReference(event.target.value)}
-          placeholder="Referencia de transferencia"
-          value={reference}
-        />
-        <button
-          className="rounded bg-teal-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-          disabled={!clinicId || recordPayment.isPending}
-          onClick={() =>
-            recordPayment.mutate({ amountUsd, clinicId, reference })
-          }
-          type="button"
-        >
-          Registrar pago
-        </button>
-      </section>
-      <section className="space-y-3 rounded-xl border border-slate-700 p-5">
-        <h2 className="text-xl font-semibold">Suscripción</h2>
-        <div className="flex gap-2">
-          <button
-            className="rounded border border-teal-300 px-3 py-2 disabled:opacity-50"
-            disabled={!clinicId || setSubscription.isPending}
-            onClick={() =>
-              setSubscription.mutate({ clinicId, status: "active" })
-            }
-            type="button"
-          >
-            Activar
-          </button>
-          <button
-            className="rounded border border-amber-400 px-3 py-2 disabled:opacity-50"
-            disabled={!clinicId || setSubscription.isPending}
-            onClick={() =>
-              setSubscription.mutate({ clinicId, status: "suspended" })
-            }
-            type="button"
-          >
-            Suspender
-          </button>
-        </div>
-      </section>
-      <section className="space-y-3 rounded-xl border border-amber-500/70 p-5">
-        <h2 className="text-xl font-semibold">Soporte con vencimiento</h2>
-        <textarea
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setReason(event.target.value)}
-          placeholder="Motivo de soporte"
-          value={reason}
-        />
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setExpiresAt(event.target.value)}
-          type="datetime-local"
-          value={expiresAt}
-        />
-        <button
-          className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-          disabled={!clinicId || !reason || !expiresAt || openSupport.isPending}
-          onClick={() =>
-            openSupport.mutate({
-              clinicId,
-              expiresAt: new Date(expiresAt),
-              reason,
-            })
-          }
-          type="button"
-        >
-          Abrir soporte auditado
-        </button>
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setSupportSessionId(event.target.value)}
-          placeholder="ID de sesión de soporte"
-          value={supportSessionId}
-        />
-        <button
-          className="rounded border border-amber-300 px-3 py-2 disabled:opacity-50"
-          disabled={!clinicId || !supportSessionId || readSupport.isPending}
-          onClick={() => readSupport.mutate({ clinicId, supportSessionId })}
-          type="button"
-        >
-          Consultar estado de soporte
-        </button>
-        {readSupport.data ? (
-          <p className="text-sm text-slate-200">
-            {readSupport.data.name}: {readSupport.data.subscriptionStatus}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <section className="space-y-4 rounded-xl border border-slate-700 p-5">
+          <h2 className="text-xl font-semibold">Pago por transferencia</h2>
+          <label className="block text-sm" htmlFor="payment-amount">
+            Monto en USD
+            <input
+              aria-describedby="payment-amount-help"
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              id="payment-amount"
+              inputMode="decimal"
+              onChange={(event) => setAmountUsd(event.target.value)}
+              placeholder="75.00"
+              value={amountUsd}
+            />
+          </label>
+          <p className="text-xs text-slate-400" id="payment-amount-help">
+            Usa dos decimales y un monto mayor que cero.
           </p>
-        ) : null}
-      </section>
+          <label className="block text-sm" htmlFor="payment-reference">
+            Referencia de transferencia
+            <input
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              id="payment-reference"
+              onChange={(event) => setReference(event.target.value)}
+              placeholder="TRX-001"
+              value={reference}
+            />
+          </label>
+          <button
+            className="rounded bg-teal-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+            disabled={!clinicId || recordPayment.isPending}
+            onClick={submitPayment}
+            type="button"
+          >
+            {paymentFeedback.status === "failed"
+              ? "Reintentar de forma segura"
+              : recordPayment.isPending
+                ? "Procesando…"
+                : "Registrar pago"}
+          </button>
+          <AdministrativeOperationFeedback feedback={paymentFeedback} />
+          {paymentFeedback.status === "succeeded" && recordPayment.data ? (
+            <p className="text-sm text-teal-200" role="status">
+              Pago registrado. ID: {recordPayment.data.paymentId} ·{" "}
+              {formatDateTime(recordPayment.data.recordedAt)}
+            </p>
+          ) : null}
+        </section>
+        <section className="space-y-4 rounded-xl border border-slate-700 p-5">
+          <h2 className="text-xl font-semibold">Suscripción</h2>
+          <p className="text-sm text-slate-300">
+            Los reintentos conservan la misma operación administrativa.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="rounded border border-teal-300 px-3 py-2 disabled:opacity-50"
+              disabled={!clinicId || setSubscription.isPending}
+              onClick={() => submitSubscription("active")}
+              type="button"
+            >
+              Activar
+            </button>
+            <button
+              className="rounded border border-amber-400 px-3 py-2 disabled:opacity-50"
+              disabled={!clinicId || setSubscription.isPending}
+              onClick={() => submitSubscription("suspended")}
+              type="button"
+            >
+              Suspender
+            </button>
+          </div>
+          <AdministrativeOperationFeedback feedback={subscriptionFeedback} />
+          {subscriptionFeedback.status === "succeeded" &&
+          setSubscription.data ? (
+            <p className="text-sm text-teal-200" role="status">
+              Suscripción actualizada a{" "}
+              {setSubscription.data.subscriptionStatus}. Operación:{" "}
+              {setSubscription.data.operationKey}
+            </p>
+          ) : null}
+        </section>
+        <section className="space-y-4 rounded-xl border border-amber-500/70 p-5">
+          <h2 className="text-xl font-semibold">Soporte con vencimiento</h2>
+          <label className="block text-sm" htmlFor="support-reason">
+            Motivo de soporte
+            <textarea
+              className="mt-1 min-h-20 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              id="support-reason"
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Motivo de soporte"
+              value={reason}
+            />
+          </label>
+          <label className="block text-sm" htmlFor="support-expires-at">
+            Vencimiento de la sesión
+            <input
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              id="support-expires-at"
+              onChange={(event) => setExpiresAt(event.target.value)}
+              type="datetime-local"
+              value={expiresAt}
+            />
+          </label>
+          <button
+            className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+            disabled={!clinicId || openSupport.isPending}
+            onClick={submitSupport}
+            type="button"
+          >
+            {supportFeedback.status === "failed"
+              ? "Reintentar de forma segura"
+              : openSupport.isPending
+                ? "Procesando…"
+                : "Abrir soporte auditado"}
+          </button>
+          <AdministrativeOperationFeedback feedback={supportFeedback} />
+          <label className="block text-sm" htmlFor="support-session-id">
+            ID de sesión de soporte
+            <input
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              id="support-session-id"
+              onChange={(event) => setSupportSessionId(event.target.value)}
+              placeholder="Se completa al abrir soporte"
+              value={supportSessionId}
+            />
+          </label>
+          <button
+            className="rounded border border-amber-300 px-3 py-2 disabled:opacity-50"
+            disabled={!clinicId || !supportSessionId || readSupport.isPending}
+            onClick={() => readSupport.mutate({ clinicId, supportSessionId })}
+            type="button"
+          >
+            Consultar estado de soporte
+          </button>
+          {readSupport.error ? (
+            <p className="text-sm text-amber-200" role="alert">
+              {readSupport.error.message}
+            </p>
+          ) : null}
+          {readSupport.data ? (
+            <p className="text-sm text-slate-200" role="status">
+              {readSupport.data.name}: {readSupport.data.subscriptionStatus}
+            </p>
+          ) : null}
+        </section>
+      </div>
     </main>
+  );
+}
+
+type AdministrativeOperationAttempt = {
+  fingerprint: string;
+  key: string | null;
+};
+
+function AdministrativeOperationFeedback({
+  feedback,
+}: {
+  feedback: AdministrativeOperationFeedbackState;
+}) {
+  if (feedback.status === "idle") return null;
+  if (feedback.status === "validation-pending") {
+    return (
+      <p className="text-sm text-amber-200" role="status">
+        Validación pendiente: {feedback.message}
+      </p>
+    );
+  }
+  if (feedback.status === "pending") {
+    return (
+      <p className="text-sm text-slate-300" role="status">
+        {feedback.message}
+      </p>
+    );
+  }
+  if (feedback.status === "failed") {
+    return (
+      <p className="text-sm text-rose-200" role="alert">
+        {feedback.message} El reintento conserva la misma clave y no duplica la
+        operación.
+      </p>
+    );
+  }
+  return (
+    <p className="text-sm text-teal-200" role="status">
+      Operación confirmada: {feedback.operationKey}
+    </p>
   );
 }
 

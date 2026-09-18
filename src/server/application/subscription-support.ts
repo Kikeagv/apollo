@@ -1,9 +1,23 @@
 export type SubscriptionStatus = "active" | "suspended";
 
+export type TransferPaymentOperationResult = {
+  operationKey: string;
+  paymentId: string;
+  recordedAt: Date;
+  status: "succeeded";
+};
+
+export type SubscriptionStatusOperationResult = {
+  operationKey: string;
+  status: "succeeded";
+  subscriptionStatus: SubscriptionStatus;
+};
+
 export type SupportSession = {
   clinicId: string;
   expiresAt: Date;
   id: string;
+  operationKey: string;
   reason: string;
   superadminIdentityId: string;
 };
@@ -42,8 +56,9 @@ export type SubscriptionSupportStore = {
   changeSubscriptionStatus(input: {
     changedByIdentityId: string;
     clinicId: string;
+    operationKey: string;
     status: SubscriptionStatus;
-  }): Promise<void>;
+  }): Promise<SubscriptionStatusOperationResult>;
   createSupportSession(
     input: Omit<SupportSession, "id">,
   ): Promise<SupportSession>;
@@ -59,56 +74,46 @@ export type SubscriptionSupportStore = {
       | "transfer-payment-recorded";
     actorIdentityId: string;
     clinicId: string;
+    operationKey?: string;
     result: "succeeded";
     supportSessionId?: string;
   }): Promise<void>;
   recordTransferPayment(input: {
     amountUsd: string;
     clinicId: string;
+    operationKey: string;
     recordedByIdentityId: string;
     reference: string;
-  }): Promise<void>;
+  }): Promise<TransferPaymentOperationResult>;
 };
 
-export function createSubscriptionSupport(
-  store: SubscriptionSupportStore,
-  now: () => Date = () => new Date(),
-) {
+export function createSubscriptionSupport(store: SubscriptionSupportStore) {
   return {
     async recordTransferPayment(input: {
       amountUsd: string;
       clinicId: string;
+      operationKey: string;
       recordedByIdentityId: string;
       reference: string;
     }) {
       await store.assertSuperadmin(input.recordedByIdentityId);
-      await store.recordTransferPayment(input);
-      await store.recordAuditEvent({
-        action: "transfer-payment-recorded",
-        actorIdentityId: input.recordedByIdentityId,
-        clinicId: input.clinicId,
-        result: "succeeded",
-      });
+      return store.recordTransferPayment(input);
     },
 
     async changeSubscriptionStatus(input: {
       changedByIdentityId: string;
       clinicId: string;
+      operationKey: string;
       status: SubscriptionStatus;
     }) {
       await store.assertSuperadmin(input.changedByIdentityId);
-      await store.changeSubscriptionStatus(input);
-      await store.recordAuditEvent({
-        action: "subscription-status-changed",
-        actorIdentityId: input.changedByIdentityId,
-        clinicId: input.clinicId,
-        result: "succeeded",
-      });
+      return store.changeSubscriptionStatus(input);
     },
 
     async openSupportSession(input: {
       clinicId: string;
       expiresAt: Date;
+      operationKey: string;
       reason: string;
       superadminIdentityId: string;
     }) {
@@ -116,18 +121,9 @@ export function createSubscriptionSupport(
       if (input.reason.trim().length === 0) {
         throw new Error("El soporte requiere un motivo");
       }
-      if (input.expiresAt.getTime() <= now().getTime()) {
-        throw new Error("El soporte requiere un vencimiento futuro");
-      }
       const session = await store.createSupportSession({
         ...input,
         reason: input.reason.trim(),
-      });
-      await store.recordAuditEvent({
-        action: "support-session-opened",
-        actorIdentityId: input.superadminIdentityId,
-        clinicId: input.clinicId,
-        result: "succeeded",
       });
       return session;
     },

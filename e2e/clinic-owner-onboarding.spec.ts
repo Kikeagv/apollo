@@ -948,6 +948,7 @@ test("el shell muestra el soporte activo y lo retira al vencer", async ({
       transaction.insert(clinicSupportSessions).values({
         clinicId: fixture.clinicId(),
         expiresAt: new Date(Date.now() + 60_000),
+        operationKey: `support-session:e2e:${fixture.clinicId()}`,
         reason: "Revisar el alcance de soporte E2E",
         superadminIdentityId: fixture.superadminIdentityId,
       }),

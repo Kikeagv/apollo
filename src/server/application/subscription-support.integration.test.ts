@@ -34,6 +34,155 @@ const databaseTest =
 
 describe("suscripción y soporte persistentes", () => {
   databaseTest(
+    "reproduce el mismo resultado para reintentos concurrentes sin duplicar efectos",
+    async () => {
+      const fixture = await createFixture();
+      const subscriptionSupport = createSubscriptionSupport(
+        drizzleSubscriptionSupportStore,
+      );
+
+      try {
+        const paymentInput = {
+          amountUsd: "00035.00",
+          clinicId: fixture.clinicId,
+          operationKey: `transfer-payment:${fixture.clinicId}:concurrent`,
+          recordedByIdentityId: fixture.superadminId,
+          reference: "APO-97-CONCURRENT",
+        };
+        const [firstPayment, repeatedPayment] = await Promise.all([
+          subscriptionSupport.recordTransferPayment(paymentInput),
+          subscriptionSupport.recordTransferPayment(paymentInput),
+        ]);
+        expect(repeatedPayment).toEqual(firstPayment);
+
+        const subscriptionInput = {
+          changedByIdentityId: fixture.superadminId,
+          clinicId: fixture.clinicId,
+          operationKey: `subscription-status:${fixture.clinicId}:concurrent`,
+          status: "suspended" as const,
+        };
+        const [firstSubscription, repeatedSubscription] = await Promise.all([
+          subscriptionSupport.changeSubscriptionStatus(subscriptionInput),
+          subscriptionSupport.changeSubscriptionStatus(subscriptionInput),
+        ]);
+        expect(repeatedSubscription).toEqual(firstSubscription);
+
+        const supportInput = {
+          clinicId: fixture.clinicId,
+          expiresAt: new Date(Date.now() + 60_000),
+          operationKey: `support-session:${fixture.clinicId}:concurrent`,
+          reason: "Revisar una operación administrativa repetida",
+          superadminIdentityId: fixture.superadminId,
+        };
+        const [firstSession, repeatedSession] = await Promise.all([
+          subscriptionSupport.openSupportSession(supportInput),
+          subscriptionSupport.openSupportSession(supportInput),
+        ]);
+        expect(repeatedSession).toEqual(firstSession);
+
+        const persisted = await inSuperadminTransaction(
+          fixture.superadminId,
+          async (transaction) => ({
+            audits: await transaction.query.apoloAuditEvents.findMany({
+              where: eq(apoloAuditEvents.clinicId, fixture.clinicId),
+            }),
+            payments: await transaction.query.transferPayments.findMany({
+              where: eq(transferPayments.clinicId, fixture.clinicId),
+            }),
+            sessions: await transaction.query.clinicSupportSessions.findMany({
+              where: eq(clinicSupportSessions.clinicId, fixture.clinicId),
+            }),
+          }),
+        );
+        expect(
+          persisted.payments.filter(
+            (payment) => payment.operationKey === paymentInput.operationKey,
+          ),
+        ).toHaveLength(1);
+        expect(persisted.payments[0]?.amountUsd).toBe("35.00");
+        expect(
+          persisted.sessions.filter(
+            (session) => session.operationKey === supportInput.operationKey,
+          ),
+        ).toHaveLength(1);
+        expect(
+          persisted.audits.filter(
+            (audit) =>
+              audit.operationKey === paymentInput.operationKey ||
+              audit.operationKey === subscriptionInput.operationKey ||
+              audit.operationKey === supportInput.operationKey,
+          ),
+        ).toHaveLength(3);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "revierte el pago si falla su auditoría y permite reintentar la misma clave",
+    async () => {
+      const fixture = await createFixture();
+      const subscriptionSupport = createSubscriptionSupport(
+        drizzleSubscriptionSupportStore,
+      );
+      const operationKey = `transfer-payment:${fixture.clinicId}:audit-failure`;
+      const paymentInput = {
+        amountUsd: "18.00",
+        clinicId: fixture.clinicId,
+        operationKey,
+        recordedByIdentityId: fixture.superadminId,
+        reference: "APO-97-AUDIT-FAILURE",
+      };
+
+      try {
+        await expect(
+          inSuperadminTransaction(fixture.superadminId, async (transaction) => {
+            await transaction.insert(transferPayments).values(paymentInput);
+            await transaction.insert(apoloAuditEvents).values({
+              action: "transfer-payment-recorded",
+              actorIdentityId: `missing-actor-${randomUUID()}`,
+              clinicId: fixture.clinicId,
+              operationKey,
+            });
+          }),
+        ).rejects.toThrow();
+
+        await expect(
+          inSuperadminTransaction(fixture.superadminId, (transaction) =>
+            transaction.query.transferPayments.findMany({
+              where: eq(transferPayments.operationKey, operationKey),
+            }),
+          ),
+        ).resolves.toEqual([]);
+
+        const result =
+          await subscriptionSupport.recordTransferPayment(paymentInput);
+        expect(result).toMatchObject({
+          operationKey,
+          status: "succeeded",
+        });
+
+        const persisted = await inSuperadminTransaction(
+          fixture.superadminId,
+          async (transaction) => ({
+            audits: await transaction.query.apoloAuditEvents.findMany({
+              where: eq(apoloAuditEvents.operationKey, operationKey),
+            }),
+            payments: await transaction.query.transferPayments.findMany({
+              where: eq(transferPayments.operationKey, operationKey),
+            }),
+          }),
+        );
+        expect(persisted.payments).toHaveLength(1);
+        expect(persisted.audits).toHaveLength(1);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
     "suspende escritura y Asclepio, conserva lectura y exige soporte vigente aislado",
     async () => {
       const fixture = await createFixture();
@@ -52,12 +201,14 @@ describe("suscripción y soporte persistentes", () => {
         await subscriptionSupport.recordTransferPayment({
           amountUsd: "75.00",
           clinicId: fixture.clinicId,
+          operationKey: `transfer-payment:${fixture.clinicId}:apo-24`,
           recordedByIdentityId: fixture.superadminId,
           reference: "APO-24-TRX",
         });
         await subscriptionSupport.changeSubscriptionStatus({
           changedByIdentityId: fixture.superadminId,
           clinicId: fixture.clinicId,
+          operationKey: `subscription-status:${fixture.clinicId}:suspended`,
           status: "suspended",
         });
 
@@ -87,11 +238,13 @@ describe("suscripción y soporte persistentes", () => {
         await subscriptionSupport.changeSubscriptionStatus({
           changedByIdentityId: fixture.superadminId,
           clinicId: fixture.clinicId,
+          operationKey: `subscription-status:${fixture.clinicId}:active`,
           status: "active",
         });
         const supportSession = await subscriptionSupport.openSupportSession({
           clinicId: fixture.clinicId,
           expiresAt: new Date(Date.now() + 60_000),
+          operationKey: `support-session:${fixture.clinicId}:incident`,
           reason: "Revisar el incidente de agenda",
           superadminIdentityId: fixture.superadminId,
         });

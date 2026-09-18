@@ -694,6 +694,13 @@
       "when": 1789756800000,
       "tag": "0103_apo96_invitation_integrity_and_account_privileges",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1789756800001,
+      "tag": "0104_apo97_idempotent_administrative_operations",
+      "breakpoints": true
     }
   ]
 }

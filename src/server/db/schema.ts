@@ -2930,6 +2930,7 @@ export const transferPayments = createTable(
     clinicId: uuid("clinic_id")
       .notNull()
       .references(() => clinics.id, { onDelete: "restrict" }),
+    operationKey: text("operation_key").notNull(),
     amountUsd: numeric("amount_usd", { precision: 12, scale: 2 }).notNull(),
     reference: text("reference").notNull(),
     recordedByIdentityId: text("recorded_by_identity_id")
@@ -2939,7 +2940,10 @@ export const transferPayments = createTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("transfer_payment_clinic_idx").on(table.clinicId)],
+  (table) => [
+    index("transfer_payment_clinic_idx").on(table.clinicId),
+    uniqueIndex("transfer_payment_operation_key_unique").on(table.operationKey),
+  ],
 );
 
 /** Impersonación de soporte explícita, limitada a una Clínica y vencible. */
@@ -2950,6 +2954,7 @@ export const clinicSupportSessions = createTable(
     clinicId: uuid("clinic_id")
       .notNull()
       .references(() => clinics.id, { onDelete: "cascade" }),
+    operationKey: text("operation_key").notNull(),
     superadminIdentityId: text("superadmin_identity_id")
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
@@ -2964,6 +2969,9 @@ export const clinicSupportSessions = createTable(
       table.clinicId,
       table.expiresAt,
     ),
+    uniqueIndex("clinic_support_session_operation_key_unique").on(
+      table.operationKey,
+    ),
   ],
 );
 
@@ -2975,6 +2983,7 @@ export const apoloAuditEvents = createTable(
     clinicId: uuid("clinic_id")
       .notNull()
       .references(() => clinics.id, { onDelete: "restrict" }),
+    operationKey: text("operation_key"),
     actorIdentityId: text("actor_identity_id")
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
@@ -2983,11 +2992,17 @@ export const apoloAuditEvents = createTable(
       { onDelete: "restrict" },
     ),
     action: text("action").notNull(),
+    subscriptionStatus: text("subscription_status").$type<SubscriptionStatus>(),
     occurredAt: timestamp("occurred_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("apolo_audit_event_clinic_idx").on(table.clinicId)],
+  (table) => [
+    index("apolo_audit_event_clinic_idx").on(table.clinicId),
+    uniqueIndex("apolo_audit_event_operation_key_unique").on(
+      table.operationKey,
+    ),
+  ],
 );
 
 export const userRelations = relations(user, ({ many }) => ({

@@ -675,8 +675,14 @@ export const apoloRouter = {
   recordTransferPayment: protectedProcedure
     .input(
       z.object({
-        amountUsd: z.string().regex(/^\d+(\.\d{2})$/),
+        amountUsd: z
+          .string()
+          .regex(/^\d+(\.\d{2})$/)
+          .refine((amount) => Number(amount) > 0, {
+            message: "El monto debe ser mayor que cero",
+          }),
         clinicId: z.string().uuid(),
+        operationKey: z.string().trim().min(1).max(200),
         reference: z.string().trim().min(1).max(160),
       }),
     )
@@ -691,6 +697,7 @@ export const apoloRouter = {
     .input(
       z.object({
         clinicId: z.string().uuid(),
+        operationKey: z.string().trim().min(1).max(200),
         status: z.enum(["active", "suspended"]),
       }),
     )
@@ -706,6 +713,7 @@ export const apoloRouter = {
       z.object({
         clinicId: z.string().uuid(),
         expiresAt: z.coerce.date(),
+        operationKey: z.string().trim().min(1).max(200),
         reason: z.string().trim().min(1).max(1_000),
       }),
     )
