@@ -9,6 +9,11 @@ import {
 } from "~/server/application/whatsapp-readiness";
 import { publicWhatsAppConnectionMetadata } from "~/domain/whatsapp-connection";
 import {
+  whatsappCriticalTemplateCatalog,
+  type WhatsAppTemplateProvisioningStatus,
+  type WhatsAppTemplateSnapshot,
+} from "~/domain/whatsapp-readiness";
+import {
   isWhatsAppOperationalFailure,
   type WhatsAppConnectionAlert,
 } from "~/domain/whatsapp-connection-alert";
@@ -65,6 +70,15 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
       );
     }
     return inSuperadminTransaction(input.actorIdentityId, operation);
+  },
+
+  async withTemplateProvisioningLock({ businessAccountId, operation }) {
+    return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${"whatsapp-templates:" + businessAccountId}))`,
+      );
+      return operation();
+    });
   },
 
   async readForProvisioning(input) {
@@ -639,10 +653,12 @@ async function persistReadinessState(
   }
 
   for (const template of state.templates) {
+    const persistedTemplate = toTemplatePersistenceValues(template);
     await transaction
       .insert(whatsappCriticalTemplates)
       .values({
         category: template.category,
+        ...persistedTemplate,
         clinicId: state.clinicId,
         kind: template.kind,
         locale: template.locale,
@@ -663,6 +679,7 @@ async function persistReadinessState(
         ],
         set: {
           category: template.category,
+          ...persistedTemplate,
           locale: template.locale,
           name: template.name,
           projectId: state.projectId,
@@ -938,10 +955,14 @@ function toRecord(input: {
       "Pendiente de evaluar los gates técnicos",
     templates: input.templates.map((template) => ({
       category: template.category,
+      catalogVersion: template.catalogVersion,
+      content: template.content,
       kind: template.kind,
       locale: template.locale,
       name: template.name,
       providerTemplateId: template.providerTemplateId,
+      examples: template.examples,
+      provisioningStatus: template.provisioningStatus,
       rejectionReason: template.rejectionReason,
       status: template.status,
       syncedAt: template.syncedAt,
@@ -960,6 +981,36 @@ function toRecord(input: {
       null,
     revision: input.readiness?.revision ?? input.readinessRevision ?? 0,
   };
+}
+
+function toTemplatePersistenceValues(template: WhatsAppTemplateSnapshot) {
+  const definition = whatsappCriticalTemplateCatalog.find(
+    (candidate) => candidate.kind === template.kind,
+  );
+  return {
+    catalogVersion: template.catalogVersion ?? definition?.version ?? 1,
+    content: template.content ?? definition?.content ?? "",
+    examples:
+      template.examples ??
+      (definition === undefined ? {} : { ...definition.examples }),
+    provisioningStatus:
+      template.provisioningStatus ?? legacyProvisioningStatus(template.status),
+  };
+}
+
+function legacyProvisioningStatus(
+  status: WhatsAppTemplateSnapshot["status"],
+): WhatsAppTemplateProvisioningStatus {
+  switch (status) {
+    case "APPROVED":
+      return "approved";
+    case "REJECTED":
+    case "DISABLED":
+      return "rejected";
+    case "PENDING":
+    default:
+      return "in_review";
+  }
 }
 
 function toReadinessRow(state: WhatsAppReadinessRecord) {

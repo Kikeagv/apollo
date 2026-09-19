@@ -170,10 +170,14 @@ export async function requireWhatsAppConnectionReady(input: {
             )
             .map((template) => ({
               category: template.category,
+              catalogVersion: template.catalogVersion,
+              content: template.content,
+              examples: template.examples,
               kind: template.kind,
               locale: template.locale,
               name: template.name,
               providerTemplateId: template.providerTemplateId,
+              provisioningStatus: template.provisioningStatus,
               rejectionReason: template.rejectionReason,
               status: template.status,
               syncedAt: template.syncedAt,

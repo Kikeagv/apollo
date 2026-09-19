@@ -431,8 +431,10 @@ describe("persistencia y RLS de provisión Kapso", () => {
         expect(persisted.templates).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
+              catalogVersion: 1,
               kind: "confirmation",
               locale: "es",
+              provisioningStatus: "approved",
               status: "APPROVED",
             }),
           ]),

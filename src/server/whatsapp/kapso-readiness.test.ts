@@ -22,7 +22,6 @@ describe("adaptador de readiness de Kapso", () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ data: { status: "healthy" } })),
       )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: {} })))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -132,25 +131,17 @@ describe("adaptador de readiness de Kapso", () => {
       ]),
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      3,
-      "https://api.kapso.ai/whatsapp_templates/sync",
-      expect.objectContaining({
-        body: JSON.stringify({ phone_number_id: "phone-1" }),
-        method: "POST",
-      }),
-    );
-    expect(fetchImpl).toHaveBeenNthCalledWith(
       2,
       "https://api.kapso.ai/platform/v1/whatsapp/phone_numbers/phone-1/health",
       expect.objectContaining({ method: "GET" }),
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      4,
+      3,
       "https://api.kapso.ai/meta/whatsapp/v24.0/waba-1/message_templates",
       expect.objectContaining({ method: "GET" }),
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      5,
+      4,
       "https://api.kapso.ai/meta/whatsapp/v24.0/waba-1/message_templates?after=cursor-2",
       expect.objectContaining({ method: "GET" }),
     );

@@ -1532,6 +1532,33 @@ describe("migraciones de PostgreSQL", () => {
           expect(templateStatuses[0]?.definition).toMatch(
             /PENDING.*APPROVED.*REJECTED.*DISABLED/,
           );
+          const templateCatalogColumns = await migrated<
+            Array<{ column_name: string }>
+          >`
+            select column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_critical_template'
+              and column_name in ('catalog_version', 'content', 'examples', 'provisioning_status')
+            order by column_name
+          `;
+          expect(templateCatalogColumns).toEqual([
+            { column_name: "catalog_version" },
+            { column_name: "content" },
+            { column_name: "examples" },
+            { column_name: "provisioning_status" },
+          ]);
+          const templateProvisioningStatuses = await migrated<
+            Array<{ definition: string }>
+          >`
+            select pg_get_constraintdef(oid) as definition
+            from pg_constraint
+            where conrelid = 'pg-drizzle_whatsapp_critical_template'::regclass
+              and conname = 'whatsapp_critical_template_provisioning_status'
+          `;
+          expect(templateProvisioningStatuses[0]?.definition).toMatch(
+            /missing.*submitted.*in_review.*approved.*rejected/,
+          );
           const templateCategories = await migrated<
             Array<{ definition: string }>
           >`

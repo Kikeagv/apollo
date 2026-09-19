@@ -36,7 +36,9 @@ function connection(
   };
 }
 
-function approvedTemplates(): WhatsAppTemplateSnapshot[] {
+function approvedTemplates(
+  overrides: Partial<WhatsAppTemplateSnapshot> = {},
+): WhatsAppTemplateSnapshot[] {
   return whatsappCriticalTemplateCatalog.map((template) => ({
     category: template.category,
     kind: template.kind,
@@ -47,6 +49,9 @@ function approvedTemplates(): WhatsAppTemplateSnapshot[] {
     status: "APPROVED" as const,
     syncedAt: now,
     variables: [...template.variables],
+    ...(overrides.kind === undefined || overrides.kind === template.kind
+      ? overrides
+      : {}),
   }));
 }
 
@@ -113,12 +118,32 @@ function fakeStore(initial = record()) {
   const retryWebhooks = vi.fn<
     NonNullable<WhatsAppReadinessStore["retryWebhooks"]>
   >(async () => undefined);
+  const templateProvisioningLockCalls: string[] = [];
+  const withTemplateProvisioningLock = async <T>({
+    businessAccountId,
+    operation,
+  }: {
+    businessAccountId: string;
+    operation: () => Promise<T>;
+  }) => {
+    templateProvisioningLockCalls.push(businessAccountId);
+    return operation();
+  };
   const store: WhatsAppReadinessStore = {
     read,
     retryWebhooks,
     save,
+    withTemplateProvisioningLock,
   };
-  return { getState: () => current, read, retryWebhooks, save, store };
+  return {
+    getState: () => current,
+    read,
+    retryWebhooks,
+    save,
+    store,
+    templateProvisioningLockCalls,
+    withTemplateProvisioningLock,
+  };
 }
 
 function fakeProvider(
@@ -409,6 +434,7 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
     );
     expect(afterTemplates.readiness.status).toBe("pending");
     expect(syncTemplates).toHaveBeenCalledOnce();
+    expect(fake.templateProvisioningLockCalls).toEqual(["waba-1"]);
     expect(getBilling).not.toHaveBeenCalled();
     expect(runE2ETest).not.toHaveBeenCalled();
 
@@ -438,6 +464,77 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
     expect(runE2ETest).toHaveBeenCalledWith({
       phoneNumberId: "phone-1",
       projectWebhookId: "project-webhook-1",
+    });
+  });
+
+  it("mantiene el rechazo de un WABA aislado de otra Clínica", async () => {
+    const first = fakeStore(record());
+    const second = fakeStore(
+      record({
+        clinicId: "clinic-2",
+        connection: connection({
+          businessAccountId: "waba-2",
+          clinicId: "clinic-2",
+          phoneNumberId: "phone-2",
+        }),
+      }),
+    );
+    const syncTemplates = vi.fn(
+      async ({ businessAccountId }: { businessAccountId: string }) => ({
+        numberHealth: "healthy" as const,
+        numberHealthCheckedAt: now,
+        numberEnvironment: "production" as const,
+        syncedAt: now,
+        templates: approvedTemplates({
+          kind: "confirmation",
+          provisioningStatus:
+            businessAccountId === "waba-1" ? ("rejected" as const) : undefined,
+          rejectionReason:
+            businessAccountId === "waba-1" ? "Contenido no aprobado" : null,
+          status: businessAccountId === "waba-1" ? "REJECTED" : "APPROVED",
+        }),
+      }),
+    );
+    const provider = fakeProvider({ syncTemplates });
+
+    const firstResult = await retryWhatsAppReadiness(
+      {
+        action: "templates",
+        actorIdentityId: "superadmin-1",
+        clinicId: "clinic-1",
+      },
+      { now, provider, store: first.store },
+    );
+    const secondResult = await retryWhatsAppReadiness(
+      {
+        action: "templates",
+        actorIdentityId: "superadmin-1",
+        clinicId: "clinic-2",
+      },
+      { now, provider, store: second.store },
+    );
+
+    expect(
+      firstResult.templates.find(
+        (template) => template.kind === "confirmation",
+      ),
+    ).toMatchObject({
+      provisioningStatus: "rejected",
+      status: "REJECTED",
+    });
+    expect(
+      firstResult.readiness.gates.find((gate) => gate.code === "templates"),
+    ).toMatchObject({ status: "blocked" });
+    expect(
+      secondResult.readiness.gates.find((gate) => gate.code === "templates"),
+    ).toMatchObject({ status: "ready" });
+    expect(syncTemplates).toHaveBeenNthCalledWith(1, {
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+    expect(syncTemplates).toHaveBeenNthCalledWith(2, {
+      businessAccountId: "waba-2",
+      phoneNumberId: "phone-2",
     });
   });
 

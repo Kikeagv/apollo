@@ -1100,8 +1100,13 @@ export function ApoloOperations() {
                 <ul className="mt-2 space-y-1 text-slate-300">
                   {readiness.data.templates.map((template) => (
                     <li key={template.kind}>
-                      {template.name} · {template.locale || "sin locale"} ·{" "}
-                      {template.category ?? "sin categoría"} · {template.status}
+                      {template.name} · v{template.catalogVersion ?? "?"} ·{" "}
+                      {template.locale || "sin locale"} ·{" "}
+                      {template.category ?? "sin categoría"} ·{" "}
+                      {whatsappTemplateProvisioningStatusLabel(
+                        template.provisioningStatus,
+                        template.status,
+                      )}
                       {template.rejectionReason
                         ? ` · ${template.rejectionReason}`
                         : ""}
@@ -2105,6 +2110,26 @@ function apoloReadinessActionLabel(
     templates: "Sincronizar plantillas",
     webhooks: "Reintentar webhooks",
   }[action];
+}
+
+function whatsappTemplateProvisioningStatusLabel(
+  provisioningStatus: string | undefined,
+  legacyStatus: string,
+) {
+  const status = provisioningStatus ?? legacyStatus;
+  return (
+    {
+      APPROVED: "Aprobada",
+      DISABLED: "Deshabilitada",
+      PENDING: "En revisión",
+      REJECTED: "Rechazada",
+      approved: "Aprobada",
+      in_review: "En revisión",
+      missing: "Faltante; sincronizar",
+      rejected: "Rechazada",
+      submitted: "Enviada a revisión",
+    }[status] ?? "Estado no disponible"
+  );
 }
 
 function whatsappTrafficStatusLabel(

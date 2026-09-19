@@ -125,6 +125,50 @@ describe("readiness técnico de la Conexión de WhatsApp", () => {
     },
   );
 
+  it.each([
+    ["missing", "Sincronizar las plantillas críticas", "pending"],
+    ["submitted", "Esperar revisión de las plantillas críticas", "pending"],
+    ["in_review", "Esperar aprobación de las plantillas críticas", "pending"],
+    [
+      "rejected",
+      "Revisar el motivo de rechazo y sincronizar las plantillas",
+      "blocked",
+    ],
+  ] as const)(
+    "distingue el estado de provisionamiento %s de la plantilla",
+    (provisioningStatus, nextAction, gateStatus) => {
+      const templates = approvedTemplates({
+        kind: "confirmation",
+        provisioningStatus,
+        rejectionReason:
+          provisioningStatus === "rejected" ? "Contenido no aprobado" : null,
+      });
+
+      const result = evaluateWhatsAppReadiness(readyInput({ templates }));
+
+      expect(
+        result.gates.find((gate) => gate.code === "templates"),
+      ).toMatchObject({
+        status: gateStatus,
+      });
+      expect(result.nextAction).toBe(nextAction);
+    },
+  );
+
+  it("bloquea una versión de catálogo obsoleta aunque la plantilla esté aprobada", () => {
+    const templates = approvedTemplates({
+      catalogVersion: 0,
+      kind: "reminder",
+    });
+
+    const result = evaluateWhatsAppReadiness(readyInput({ templates }));
+
+    expect(result.status).toBe("blocked");
+    expect(result.nextAction).toBe(
+      "Sincronizar la versión vigente de las plantillas críticas",
+    );
+  });
+
   it("bloquea un locale incorrecto o variables incompletas con una acción concreta", () => {
     const templates = approvedTemplates({
       kind: "reminder",

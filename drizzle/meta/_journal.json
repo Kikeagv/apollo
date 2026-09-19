@@ -701,6 +701,13 @@
       "when": 1789756800001,
       "tag": "0104_apo97_idempotent_administrative_operations",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1789756800002,
+      "tag": "0105_apo99_whatsapp_template_catalog",
+      "breakpoints": true
     }
   ]
 }

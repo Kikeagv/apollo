@@ -93,38 +93,46 @@ export type WhatsAppReadinessAlertSyncInput = {
   | { access: "provisioning-worker"; leaseToken: string }
 );
 
-export type WhatsAppReadinessProvisioningStore = {
-  openAlert(input: {
-    access: "provisioning-worker";
-    clinicId: string;
-    eventId: string;
-    gateCode: WhatsAppConnectionAlertGate["code"];
-    leaseToken: string;
-    nextAction: string;
-    now: Date;
-    reason: string;
-  }): Promise<void>;
-  readForProvisioning(input: {
-    clinicId: string;
-    eventId: string;
-    leaseToken: string;
-    now: Date;
-    phoneNumberId: string;
-    projectId: string;
-  }): Promise<WhatsAppReadinessRecord>;
-  saveForProvisioning(input: {
-    clinicId: string;
-    eventId: string;
-    leaseToken: string;
-    now: Date;
-    phoneNumberId: string;
-    projectId: string;
-    state: WhatsAppReadinessRecord;
-  }): Promise<WhatsAppReadinessRecord>;
-  syncAlerts(input: WhatsAppReadinessAlertSyncInput): Promise<void>;
+export type WhatsAppTemplateProvisioningLock = {
+  withTemplateProvisioningLock?: <T>(input: {
+    businessAccountId: string;
+    operation: () => Promise<T>;
+  }) => Promise<T>;
 };
 
-export type WhatsAppReadinessStore = {
+export type WhatsAppReadinessProvisioningStore =
+  WhatsAppTemplateProvisioningLock & {
+    openAlert(input: {
+      access: "provisioning-worker";
+      clinicId: string;
+      eventId: string;
+      gateCode: WhatsAppConnectionAlertGate["code"];
+      leaseToken: string;
+      nextAction: string;
+      now: Date;
+      reason: string;
+    }): Promise<void>;
+    readForProvisioning(input: {
+      clinicId: string;
+      eventId: string;
+      leaseToken: string;
+      now: Date;
+      phoneNumberId: string;
+      projectId: string;
+    }): Promise<WhatsAppReadinessRecord>;
+    saveForProvisioning(input: {
+      clinicId: string;
+      eventId: string;
+      leaseToken: string;
+      now: Date;
+      phoneNumberId: string;
+      projectId: string;
+      state: WhatsAppReadinessRecord;
+    }): Promise<WhatsAppReadinessRecord>;
+    syncAlerts(input: WhatsAppReadinessAlertSyncInput): Promise<void>;
+  };
+
+export type WhatsAppReadinessStore = WhatsAppTemplateProvisioningLock & {
   read(input: WhatsAppReadinessAccess): Promise<WhatsAppReadinessRecord>;
   save(input: {
     access: "superadmin";
@@ -278,7 +286,13 @@ export async function retryWhatsAppReadiness(
 
   try {
     assertConnectionForAction(next.connection, input.action);
-    next = await applyAction(next, input.action, dependencies.provider, now);
+    next = await applyAction(
+      next,
+      input.action,
+      dependencies.provider,
+      now,
+      dependencies.store.withTemplateProvisioningLock,
+    );
   } catch (error) {
     if (
       error instanceof WhatsAppReadinessBlockedError &&
@@ -383,7 +397,13 @@ export async function provisionWhatsAppReadiness(
   for (const action of ["templates", "billing", "e2e"] as const) {
     try {
       assertConnectionForAction(next.connection, action);
-      next = await applyAction(next, action, dependencies.provider, now);
+      next = await applyAction(
+        next,
+        action,
+        dependencies.provider,
+        now,
+        dependencies.store.withTemplateProvisioningLock,
+      );
     } catch (error) {
       if (
         error instanceof WhatsAppReadinessBlockedError &&
@@ -566,6 +586,7 @@ async function applyAction(
   action: WhatsAppReadinessAction,
   provider: WhatsAppReadinessProvider,
   now: Date,
+  withTemplateProvisioningLock: WhatsAppTemplateProvisioningLock["withTemplateProvisioningLock"],
 ): Promise<WhatsAppReadinessRecord> {
   const connection = state.connection;
   if (connection?.phoneNumberId == null) {
@@ -586,10 +607,20 @@ async function applyAction(
   }
 
   if (action === "templates") {
-    const result = await provider.syncTemplates({
-      businessAccountId: requireBusinessAccountId(connection),
-      phoneNumberId: connection.phoneNumberId,
-    });
+    const businessAccountId = requireBusinessAccountId(connection);
+    const phoneNumberId = connection.phoneNumberId;
+    const syncTemplates = () =>
+      provider.syncTemplates({
+        businessAccountId,
+        phoneNumberId,
+      });
+    const result =
+      withTemplateProvisioningLock === undefined
+        ? await syncTemplates()
+        : await withTemplateProvisioningLock({
+            businessAccountId,
+            operation: syncTemplates,
+          });
     if (result.numberEnvironment === "sandbox") {
       throw new WhatsAppReadinessBlockedError(
         "Kapso deshabilita la sincronización de plantillas para números sandbox",

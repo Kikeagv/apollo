@@ -32,6 +32,17 @@ export const whatsappTemplateCategories = [
 export type WhatsAppTemplateCategory =
   (typeof whatsappTemplateCategories)[number];
 
+export const whatsappTemplateProvisioningStatuses = [
+  "missing",
+  "submitted",
+  "in_review",
+  "approved",
+  "rejected",
+] as const;
+
+export type WhatsAppTemplateProvisioningStatus =
+  (typeof whatsappTemplateProvisioningStatuses)[number];
+
 export const whatsappNumberHealthStatuses = [
   "healthy",
   "degraded",
@@ -67,45 +78,95 @@ export const whatsappCriticalTemplateCatalog = [
   {
     kind: "confirmation",
     category: "UTILITY",
+    content:
+      "Hola {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
     locale: "es",
     name: "appointment_confirmation",
+    examples: {
+      appointment_date: "25 de septiembre de 2026",
+      appointment_time: "08:30",
+      clinic_name: "Clínica Central",
+      doctor_name: "Dra. Ana López",
+      patient_name: "María Hernández",
+    },
+    version: 1,
     variables: appointmentTemplateVariables,
   },
   {
     kind: "reminder",
     category: "UTILITY",
+    content:
+      "Recordatorio: {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
     locale: "es",
     name: "appointment_reminder",
+    examples: {
+      appointment_date: "25 de septiembre de 2026",
+      appointment_time: "08:30",
+      clinic_name: "Clínica Central",
+      doctor_name: "Dra. Ana López",
+      patient_name: "María Hernández",
+    },
+    version: 1,
     variables: appointmentTemplateVariables,
   },
   {
     kind: "cancellation",
     category: "UTILITY",
+    content:
+      "{{patient_name}}, tu cita en {{clinic_name}} del {{appointment_date}} a las {{appointment_time}} con {{doctor_name}} fue cancelada.",
     locale: "es",
     name: "appointment_cancellation",
+    examples: {
+      appointment_date: "25 de septiembre de 2026",
+      appointment_time: "08:30",
+      clinic_name: "Clínica Central",
+      doctor_name: "Dra. Ana López",
+      patient_name: "María Hernández",
+    },
+    version: 1,
     variables: appointmentTemplateVariables,
   },
   {
     kind: "reschedule",
     category: "UTILITY",
+    content:
+      "{{patient_name}}, tu cita en {{clinic_name}} fue reprogramada para el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
     locale: "es",
     name: "appointment_reschedule",
+    examples: {
+      appointment_date: "25 de septiembre de 2026",
+      appointment_time: "08:30",
+      clinic_name: "Clínica Central",
+      doctor_name: "Dra. Ana López",
+      patient_name: "María Hernández",
+    },
+    version: 1,
     variables: appointmentTemplateVariables,
   },
 ] as const satisfies ReadonlyArray<{
   kind: WhatsAppCriticalTemplateKind;
   category: WhatsAppTemplateCategory;
+  content: string;
+  examples: Readonly<Record<string, string>>;
   locale: string;
   name: string;
+  version: number;
   variables: readonly string[];
 }>;
 
+export type WhatsAppTemplateDefinition =
+  (typeof whatsappCriticalTemplateCatalog)[number];
+
 export type WhatsAppTemplateSnapshot = {
   category: WhatsAppTemplateCategory | null;
+  catalogVersion?: number;
+  content?: string;
+  examples?: Record<string, string>;
   kind: WhatsAppCriticalTemplateKind;
   locale: string;
   name: string;
   providerTemplateId: string | null;
+  provisioningStatus?: WhatsAppTemplateProvisioningStatus;
   rejectionReason: string | null;
   status: WhatsAppTemplateStatus;
   syncedAt: Date | null;
@@ -413,6 +474,42 @@ function evaluateTemplates(
         "Sincronizar las plantillas críticas",
       );
     }
+    if (template.provisioningStatus === "missing") {
+      return gate(
+        "templates",
+        "pending",
+        `La plantilla ${definition.name} todavía no existe en el WABA`,
+        "Sincronizar las plantillas críticas",
+      );
+    }
+    if (template.provisioningStatus === "submitted") {
+      return gate(
+        "templates",
+        "pending",
+        `La plantilla ${definition.name} fue enviada a revisión`,
+        "Esperar revisión de las plantillas críticas",
+      );
+    }
+    if (template.provisioningStatus === "in_review") {
+      return gate(
+        "templates",
+        "pending",
+        `La plantilla ${definition.name} está en revisión`,
+        "Esperar aprobación de las plantillas críticas",
+      );
+    }
+    if (template.provisioningStatus === "rejected") {
+      return gate(
+        "templates",
+        "blocked",
+        `La plantilla ${definition.name} fue rechazada${
+          template.rejectionReason === null
+            ? ""
+            : `: ${template.rejectionReason}`
+        }`,
+        "Revisar el motivo de rechazo y sincronizar las plantillas",
+      );
+    }
     if (template.status !== "APPROVED") {
       if (template.status === "PENDING") {
         return gate(
@@ -467,6 +564,17 @@ function evaluateTemplates(
         "blocked",
         `La plantilla ${definition.name} tiene categoría ${template.category ?? "desconocida"}; se requiere ${definition.category}`,
         "Corregir la categoría Utility y sincronizar las plantillas",
+      );
+    }
+    if (
+      template.catalogVersion !== undefined &&
+      template.catalogVersion !== definition.version
+    ) {
+      return gate(
+        "templates",
+        "blocked",
+        `La plantilla ${definition.name} usa la versión ${template.catalogVersion}; se requiere la versión ${definition.version}`,
+        "Sincronizar la versión vigente de las plantillas críticas",
       );
     }
     const missingVariables = definition.variables.filter(

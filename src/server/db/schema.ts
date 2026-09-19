@@ -66,6 +66,7 @@ import type {
   WhatsAppE2EEvidenceScope,
   WhatsAppReadinessGateCode,
   WhatsAppTemplateCategory,
+  WhatsAppTemplateProvisioningStatus,
   WhatsAppTemplateStatus,
   WhatsAppTechnicalReadinessStatus,
 } from "~/domain/whatsapp-readiness";
@@ -829,11 +830,21 @@ export const whatsappCriticalTemplates = createTable(
     provisioningEventId: uuid("provisioning_event_id"),
     kind: text("kind").$type<WhatsAppCriticalTemplateKind>().notNull(),
     category: text("category").$type<WhatsAppTemplateCategory | null>(),
+    catalogVersion: integer("catalog_version").default(1).notNull(),
+    content: text("content").default("").notNull(),
+    examples: jsonb("examples")
+      .$type<Record<string, string>>()
+      .default({})
+      .notNull(),
     providerTemplateId: text("provider_template_id"),
     name: text("name").notNull(),
     locale: text("locale").notNull(),
     variables: jsonb("variables").$type<string[]>().default([]).notNull(),
     status: text("status").$type<WhatsAppTemplateStatus>().notNull(),
+    provisioningStatus: text("provisioning_status")
+      .$type<WhatsAppTemplateProvisioningStatus>()
+      .default("missing")
+      .notNull(),
     rejectionReason: text("rejection_reason"),
     syncedAt: timestamp("synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -860,6 +871,14 @@ export const whatsappCriticalTemplates = createTable(
     check(
       "whatsapp_critical_template_status",
       sql`${table.status} IN ('PENDING', 'APPROVED', 'REJECTED', 'DISABLED')`,
+    ),
+    check(
+      "whatsapp_critical_template_catalog_version",
+      sql`${table.catalogVersion} > 0`,
+    ),
+    check(
+      "whatsapp_critical_template_provisioning_status",
+      sql`${table.provisioningStatus} IN ('missing', 'submitted', 'in_review', 'approved', 'rejected')`,
     ),
   ],
 );

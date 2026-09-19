@@ -4,6 +4,8 @@ import {
   whatsappCriticalTemplateCatalog,
   type WhatsAppNumberHealth,
   type WhatsAppTemplateCategory,
+  type WhatsAppTemplateDefinition,
+  type WhatsAppTemplateProvisioningStatus,
   type WhatsAppTemplateSnapshot,
 } from "~/domain/whatsapp-readiness";
 import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
@@ -87,37 +89,56 @@ export function createKapsoReadinessProvider(
         };
       }
 
-      await requestJson(fetchImpl, options.apiKey, "/whatsapp_templates/sync", {
-        body: JSON.stringify({ phone_number_id: input.phoneNumberId }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-        baseUrl: "https://api.kapso.ai",
-      });
-      const remoteTemplates = await listMessageTemplates(
+      let remoteTemplates = await listMessageTemplates(
         fetchImpl,
         options.apiKey,
         input.businessAccountId,
       );
+
+      const templates: WhatsAppTemplateSnapshot[] = [];
+      for (const definition of whatsappCriticalTemplateCatalog) {
+        const remote = findRemoteTemplate(remoteTemplates, definition);
+        if (remote !== undefined) {
+          templates.push(toTemplateSnapshot(remote, definition, syncedAt));
+          continue;
+        }
+
+        try {
+          const created = await createMessageTemplateAndRecover({
+            apiKey: options.apiKey,
+            businessAccountId: input.businessAccountId,
+            definition,
+            fetchImpl,
+            listTemplates: () =>
+              listMessageTemplates(
+                fetchImpl,
+                options.apiKey,
+                input.businessAccountId,
+              ),
+            existingTemplates: remoteTemplates,
+          });
+          remoteTemplates = created.templates;
+          const recovered = findRemoteTemplate(remoteTemplates, definition);
+          templates.push(
+            toTemplateSnapshot(
+              recovered ?? created.template,
+              definition,
+              syncedAt,
+              "submitted",
+            ),
+          );
+        } catch (error) {
+          if (!isTemplateSubmissionRejection(error)) throw error;
+          templates.push(rejectedTemplate(definition, syncedAt, error));
+        }
+      }
 
       return {
         numberHealth,
         numberEnvironment,
         numberHealthCheckedAt: health.checkedAt,
         syncedAt,
-        templates: whatsappCriticalTemplateCatalog.map((definition) => {
-          const namedTemplates = remoteTemplates.filter(
-            (candidate) => readString(candidate, "name") === definition.name,
-          );
-          const remote =
-            namedTemplates.find(
-              (candidate) =>
-                (readString(candidate, ["language", "locale"]) ?? "") ===
-                definition.locale,
-            ) ?? namedTemplates[0];
-          return remote === undefined
-            ? missingTemplate(definition.name, definition.kind, syncedAt)
-            : toTemplateSnapshot(remote, definition, syncedAt);
-        }),
+        templates,
       };
     },
 
@@ -355,44 +376,202 @@ async function listMessageTemplates(
   return templates;
 }
 
+async function createMessageTemplateAndRecover(input: {
+  apiKey: string | undefined;
+  businessAccountId: string;
+  definition: WhatsAppTemplateDefinition;
+  fetchImpl: typeof fetch;
+  existingTemplates: Record<string, unknown>[];
+  listTemplates: () => Promise<Record<string, unknown>[]>;
+}) {
+  try {
+    const payload = await requestJson(
+      input.fetchImpl,
+      input.apiKey,
+      `${KAPSO_META_API_URL}/${encodeURIComponent(input.businessAccountId)}/message_templates`,
+      {
+        baseUrl: "",
+        body: JSON.stringify(templateCreatePayload(input.definition)),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
+    );
+    const template = parseCreatedTemplate(payload);
+    return {
+      template,
+      templates: [...input.existingTemplates, template],
+    };
+  } catch (error) {
+    if (!isAmbiguousTemplateCreateError(error)) throw error;
+
+    const recoveredTemplates = await input.listTemplates();
+    const recovered = findRemoteTemplate(recoveredTemplates, input.definition);
+    if (recovered !== undefined) {
+      return { template: recovered, templates: recoveredTemplates };
+    }
+    throw retryableTemplateCreateError(error);
+  }
+}
+
+function templateCreatePayload(definition: WhatsAppTemplateDefinition) {
+  return {
+    category: definition.category,
+    components: [
+      {
+        example: {
+          body_text_named_params: definition.variables.map((variable) => ({
+            example: definition.examples[variable] ?? variable,
+            param_name: variable,
+          })),
+        },
+        text: definition.content,
+        type: "BODY",
+      },
+    ],
+    language: definition.locale,
+    name: definition.name,
+    parameter_format: "NAMED",
+  };
+}
+
+function parseCreatedTemplate(payload: unknown): Record<string, unknown> {
+  const data = unwrapData(payload);
+  if (readString(data, "id") === null) {
+    throw new KapsoReadinessProviderError(
+      0,
+      "Kapso devolvió una respuesta ambigua al crear la plantilla",
+    );
+  }
+  return data;
+}
+
+function isAmbiguousTemplateCreateError(error: unknown) {
+  if (error instanceof KapsoReadinessProviderError) {
+    return (
+      error.status === 0 ||
+      error.status === 408 ||
+      error.status === 409 ||
+      error.status >= 500
+    );
+  }
+  return error instanceof z.ZodError;
+}
+
+function retryableTemplateCreateError(error: unknown) {
+  if (error instanceof KapsoReadinessProviderError && error.status === 0) {
+    return error;
+  }
+  return new KapsoReadinessProviderError(
+    0,
+    error instanceof Error
+      ? `No se pudo confirmar la creación de la plantilla: ${error.message}`
+      : "No se pudo confirmar la creación de la plantilla",
+  );
+}
+
+function isTemplateSubmissionRejection(error: unknown) {
+  return (
+    error instanceof KapsoReadinessProviderError &&
+    (error.status === 400 || error.status === 422)
+  );
+}
+
+function findRemoteTemplate(
+  remoteTemplates: Record<string, unknown>[],
+  definition: WhatsAppTemplateDefinition,
+) {
+  return remoteTemplates.find(
+    (candidate) =>
+      readString(candidate, "name") === definition.name &&
+      readString(candidate, ["language", "locale"]) === definition.locale,
+  );
+}
+
 function missingTemplate(
-  name: string,
-  kind: WhatsAppTemplateSnapshot["kind"],
+  definition: WhatsAppTemplateDefinition,
   syncedAt: Date,
 ): WhatsAppTemplateSnapshot {
   return {
-    category: null,
-    kind,
-    locale: "",
-    name,
+    category: definition.category,
+    catalogVersion: definition.version,
+    content: definition.content,
+    examples: { ...definition.examples },
+    kind: definition.kind,
+    locale: definition.locale,
+    name: definition.name,
     providerTemplateId: null,
+    provisioningStatus: "missing",
     rejectionReason: null,
     status: "PENDING",
     syncedAt,
-    variables: [],
+    variables: [...definition.variables],
   };
 }
 
 function toTemplateSnapshot(
   remote: Record<string, unknown>,
-  definition: (typeof whatsappCriticalTemplateCatalog)[number],
+  definition: WhatsAppTemplateDefinition,
   syncedAt: Date,
+  provisioningStatus?: WhatsAppTemplateProvisioningStatus,
 ): WhatsAppTemplateSnapshot {
+  const status = normalizeTemplateStatus(readString(remote, "status"));
+  const remoteVariables = extractVariables(remote);
   return {
-    category: normalizeTemplateCategory(readString(remote, "category")),
+    category:
+      normalizeTemplateCategory(readString(remote, "category")) ??
+      definition.category,
+    catalogVersion: definition.version,
+    content: definition.content,
+    examples: { ...definition.examples },
     kind: definition.kind,
     locale:
-      readString(remote, "language") ?? readString(remote, "locale") ?? "",
+      readString(remote, "language") ??
+      readString(remote, "locale") ??
+      definition.locale,
     name: readString(remote, "name") ?? definition.name,
     providerTemplateId: readString(remote, "id"),
+    provisioningStatus:
+      provisioningStatus ?? provisioningStatusForRemoteStatus(status),
     rejectionReason:
       readString(remote, "rejected_reason") ??
       readString(remote, "rejection_reason") ??
       readString(remote, "reason"),
-    status: normalizeTemplateStatus(readString(remote, "status")),
+    status,
     syncedAt,
-    variables: extractVariables(remote),
+    variables:
+      remoteVariables.length === 0
+        ? [...definition.variables]
+        : remoteVariables,
   };
+}
+
+function rejectedTemplate(
+  definition: WhatsAppTemplateDefinition,
+  syncedAt: Date,
+  error: unknown,
+): WhatsAppTemplateSnapshot {
+  return {
+    ...missingTemplate(definition, syncedAt),
+    provisioningStatus: "rejected",
+    rejectionReason:
+      error instanceof Error ? error.message : "Meta rechazó la plantilla",
+    status: "REJECTED",
+  };
+}
+
+function provisioningStatusForRemoteStatus(
+  status: WhatsAppTemplateSnapshot["status"],
+): WhatsAppTemplateProvisioningStatus {
+  switch (status) {
+    case "APPROVED":
+      return "approved";
+    case "REJECTED":
+    case "DISABLED":
+      return "rejected";
+    case "PENDING":
+    default:
+      return "in_review";
+  }
 }
 
 function normalizeTemplateStatus(value: string | null) {
@@ -614,9 +793,26 @@ async function requestJson(
     clearTimeout(timeout);
   }
   if (!response.ok) {
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      // La causa útil puede no venir en respuestas de error parciales.
+    }
+    const data = isRecord(payload) ? unwrapData(payload) : {};
+    const reason = readString(data, [
+      "error",
+      "error_message",
+      "message",
+      "reason",
+      "rejected_reason",
+      "rejection_reason",
+    ]);
     throw new KapsoReadinessProviderError(
       response.status,
-      "Kapso rechazó la verificación de readiness",
+      reason === null
+        ? "Kapso rechazó la verificación de readiness"
+        : sanitizeWhatsAppOperationalText(reason),
     );
   }
   if (response.status === 204) return {};
