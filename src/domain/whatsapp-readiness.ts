@@ -577,6 +577,17 @@ function evaluateTemplates(
         "Sincronizar la versión vigente de las plantillas críticas",
       );
     }
+    if (
+      template.content !== undefined &&
+      template.content !== definition.content
+    ) {
+      return gate(
+        "templates",
+        "blocked",
+        `La plantilla ${definition.name} tiene contenido distinto al catálogo vigente`,
+        "Revisar el contenido remoto y sincronizar la versión vigente",
+      );
+    }
     const missingVariables = definition.variables.filter(
       (variable) => !template.variables.includes(variable),
     );

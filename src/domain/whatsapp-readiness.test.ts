@@ -169,6 +169,23 @@ describe("readiness técnico de la Conexión de WhatsApp", () => {
     );
   });
 
+  it("bloquea una plantilla aprobada cuyo contenido remoto difiere del catálogo", () => {
+    const templates = approvedTemplates({
+      content: "Contenido obsoleto: {{patient_name}}",
+      kind: "confirmation",
+    });
+
+    const result = evaluateWhatsAppReadiness(readyInput({ templates }));
+
+    expect(result.status).toBe("blocked");
+    expect(
+      result.gates.find((gate) => gate.code === "templates"),
+    ).toMatchObject({
+      status: "blocked",
+    });
+    expect(result.nextAction).toContain("contenido");
+  });
+
   it("bloquea un locale incorrecto o variables incompletas con una acción concreta", () => {
     const templates = approvedTemplates({
       kind: "reminder",

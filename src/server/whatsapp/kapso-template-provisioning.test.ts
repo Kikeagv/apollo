@@ -204,7 +204,8 @@ describe("provisionamiento de plantillas de Kapso", () => {
       result.templates.find((template) => template.kind === "reminder"),
     ).toMatchObject({
       providerTemplateId: "recovered-reminder",
-      provisioningStatus: "submitted",
+      provisioningStatus: "in_review",
+      status: "PENDING",
     });
   });
 

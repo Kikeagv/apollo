@@ -118,14 +118,14 @@ export function createKapsoReadinessProvider(
             existingTemplates: remoteTemplates,
           });
           remoteTemplates = created.templates;
-          const recovered = findRemoteTemplate(remoteTemplates, definition);
           templates.push(
-            toTemplateSnapshot(
-              recovered ?? created.template,
-              definition,
-              syncedAt,
-              "submitted",
-            ),
+            created.recovered
+              ? toTemplateSnapshot(created.template, definition, syncedAt)
+              : toSubmittedTemplateSnapshot(
+                  created.template,
+                  definition,
+                  syncedAt,
+                ),
           );
         } catch (error) {
           if (!isTemplateSubmissionRejection(error)) throw error;
@@ -400,14 +400,29 @@ async function createMessageTemplateAndRecover(input: {
     return {
       template,
       templates: [...input.existingTemplates, template],
+      recovered: false,
     };
   } catch (error) {
-    if (!isAmbiguousTemplateCreateError(error)) throw error;
+    if (
+      !isAmbiguousTemplateCreateError(error) &&
+      !isTemplateAlreadyExistsError(error)
+    ) {
+      throw error;
+    }
 
-    const recoveredTemplates = await input.listTemplates();
+    let recoveredTemplates: Record<string, unknown>[];
+    try {
+      recoveredTemplates = await input.listTemplates();
+    } catch {
+      throw retryableTemplateCreateError(error);
+    }
     const recovered = findRemoteTemplate(recoveredTemplates, input.definition);
     if (recovered !== undefined) {
-      return { template: recovered, templates: recoveredTemplates };
+      return {
+        template: recovered,
+        templates: recoveredTemplates,
+        recovered: true,
+      };
     }
     throw retryableTemplateCreateError(error);
   }
@@ -476,6 +491,15 @@ function isTemplateSubmissionRejection(error: unknown) {
   );
 }
 
+function isTemplateAlreadyExistsError(error: unknown) {
+  return (
+    error instanceof KapsoReadinessProviderError &&
+    /\b(?:already exists|duplicate|ya existe|duplicad[oa])\b/i.test(
+      error.message,
+    )
+  );
+}
+
 function findRemoteTemplate(
   remoteTemplates: Record<string, unknown>[],
   definition: WhatsAppTemplateDefinition,
@@ -517,11 +541,9 @@ function toTemplateSnapshot(
   const status = normalizeTemplateStatus(readString(remote, "status"));
   const remoteVariables = extractVariables(remote);
   return {
-    category:
-      normalizeTemplateCategory(readString(remote, "category")) ??
-      definition.category,
+    category: normalizeTemplateCategory(readString(remote, "category")),
     catalogVersion: definition.version,
-    content: definition.content,
+    content: extractTemplateContent(remote),
     examples: { ...definition.examples },
     kind: definition.kind,
     locale:
@@ -538,11 +560,34 @@ function toTemplateSnapshot(
       readString(remote, "reason"),
     status,
     syncedAt,
-    variables:
-      remoteVariables.length === 0
-        ? [...definition.variables]
-        : remoteVariables,
+    variables: remoteVariables,
   };
+}
+
+function toSubmittedTemplateSnapshot(
+  remote: Record<string, unknown>,
+  definition: WhatsAppTemplateDefinition,
+  syncedAt: Date,
+): WhatsAppTemplateSnapshot {
+  const components =
+    extractTemplateContent(remote) === ""
+      ? [{ text: definition.content, type: "BODY" }]
+      : remote.components;
+  const status = normalizeTemplateStatus(readString(remote, "status"));
+  const provisioningStatus =
+    status === "PENDING"
+      ? "submitted"
+      : provisioningStatusForRemoteStatus(status);
+  return toTemplateSnapshot(
+    {
+      ...remote,
+      category: readString(remote, "category") ?? definition.category,
+      components,
+    },
+    definition,
+    syncedAt,
+    provisioningStatus,
+  );
 }
 
 function rejectedTemplate(
@@ -618,6 +663,14 @@ function normalizeNumberHealth(value: string | null): WhatsAppNumberHealth {
     default:
       return "unknown";
   }
+}
+
+function extractTemplateContent(remote: Record<string, unknown>) {
+  const components = readArray({ components: remote.components }, "components");
+  const body = components.find(
+    (component) => readString(component, "type")?.toUpperCase() === "BODY",
+  );
+  return body !== undefined && typeof body.text === "string" ? body.text : "";
 }
 
 function extractVariables(remote: Record<string, unknown>) {
@@ -800,14 +853,23 @@ async function requestJson(
       // La causa útil puede no venir en respuestas de error parciales.
     }
     const data = isRecord(payload) ? unwrapData(payload) : {};
-    const reason = readString(data, [
-      "error",
-      "error_message",
-      "message",
-      "reason",
-      "rejected_reason",
-      "rejection_reason",
-    ]);
+    const nestedError = isRecord(data.error) ? data.error : null;
+    const reason =
+      (nestedError === null
+        ? null
+        : readString(nestedError, [
+            "message",
+            "error_user_msg",
+            "error_description",
+          ])) ??
+      readString(data, [
+        "error",
+        "error_message",
+        "message",
+        "reason",
+        "rejected_reason",
+        "rejection_reason",
+      ]);
     throw new KapsoReadinessProviderError(
       response.status,
       reason === null

@@ -178,6 +178,373 @@ describe("adaptador de readiness de Kapso", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("conserva el contenido remoto de una plantilla existente", async () => {
+    const remoteContent = "Contenido obsoleto: {{patient_name}}";
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ account_mode: "LIVE" })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { status: "healthy" } })),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                category: "UTILITY",
+                components: [{ text: remoteContent, type: "BODY" }],
+                id: "old-confirmation",
+                language: "es",
+                name: templateNames[0],
+                status: "APPROVED",
+              },
+              {
+                category: "UTILITY",
+                components: [],
+                id: "missing-body-reminder",
+                language: "es",
+                name: templateNames[1],
+                status: "APPROVED",
+              },
+              {
+                components: [
+                  { text: "Contenido remoto de cancelación", type: "BODY" },
+                ],
+                id: "missing-category-cancellation",
+                language: "es",
+                name: templateNames[2],
+                status: "APPROVED",
+              },
+            ],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              category: "UTILITY",
+              components: [
+                { text: "Contenido de reprogramación", type: "BODY" },
+              ],
+              id: "created-reschedule",
+              language: "es",
+              name: templateNames[3],
+              status: "PENDING",
+            },
+          }),
+        ),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    const result = await provider.syncTemplates({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+
+    expect(
+      result.templates.find((template) => template.kind === "confirmation"),
+    ).toMatchObject({
+      content: remoteContent,
+      status: "APPROVED",
+      variables: ["patient_name"],
+    });
+    expect(
+      result.templates.find((template) => template.kind === "reminder"),
+    ).toMatchObject({
+      content: "",
+      status: "APPROVED",
+      variables: [],
+    });
+    expect(
+      result.templates.find((template) => template.kind === "cancellation"),
+    ).toMatchObject({ category: null });
+  });
+
+  it("conserva la definición del catálogo al aceptar una respuesta mínima de creación", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ account_mode: "LIVE" })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { status: "healthy" } })),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] })))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "created-confirmation",
+              language: "es",
+              name: templateNames[0],
+              status: "PENDING",
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "created-reminder",
+              name: templateNames[1],
+              status: "PENDING",
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "created-cancellation",
+              name: templateNames[2],
+              status: "PENDING",
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "created-reschedule",
+              name: templateNames[3],
+              status: "PENDING",
+            },
+          }),
+        ),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    const result = await provider.syncTemplates({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+
+    expect(
+      result.templates.find((template) => template.kind === "confirmation"),
+    ).toMatchObject({
+      category: "UTILITY",
+      catalogVersion: 1,
+      content:
+        "Hola {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
+      examples: {
+        appointment_date: "25 de septiembre de 2026",
+        appointment_time: "08:30",
+        clinic_name: "Clínica Central",
+        doctor_name: "Dra. Ana López",
+        patient_name: "María Hernández",
+      },
+      locale: "es",
+      provisioningStatus: "submitted",
+      variables: [
+        "patient_name",
+        "clinic_name",
+        "appointment_date",
+        "appointment_time",
+        "doctor_name",
+      ],
+    });
+  });
+
+  it("conserva un estado aprobado que ya devuelve la creación remota", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ account_mode: "LIVE" })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { status: "healthy" } })),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] })))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "created-approved-confirmation",
+              language: "es",
+              name: templateNames[0],
+              status: "APPROVED",
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "created-reminder",
+              name: templateNames[1],
+              status: "PENDING",
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "created-cancellation",
+              name: templateNames[2],
+              status: "PENDING",
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "created-reschedule",
+              name: templateNames[3],
+              status: "PENDING",
+            },
+          }),
+        ),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    const result = await provider.syncTemplates({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+
+    expect(
+      result.templates.find((template) => template.kind === "confirmation"),
+    ).toMatchObject({
+      providerTemplateId: "created-approved-confirmation",
+      provisioningStatus: "approved",
+      status: "APPROVED",
+    });
+  });
+
+  it("recupera una plantilla creada concurrentemente tras un conflicto de nombre", async () => {
+    const confirmation =
+      "Hola {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.";
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ account_mode: "LIVE" })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { status: "healthy" } })),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] })))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: { message: "El nombre de la plantilla ya existe" },
+          }),
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                category: "UTILITY",
+                components: [{ text: confirmation, type: "BODY" }],
+                id: "existing-confirmation",
+                language: "es",
+                name: templateNames[0],
+                status: "APPROVED",
+              },
+            ],
+          }),
+        ),
+      )
+      .mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: {
+                id: "created-template",
+                name: "created-template",
+                status: "PENDING",
+              },
+            }),
+          ),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    const result = await provider.syncTemplates({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+
+    expect(
+      result.templates.find((template) => template.kind === "confirmation"),
+    ).toMatchObject({
+      providerTemplateId: "existing-confirmation",
+      provisioningStatus: "approved",
+      status: "APPROVED",
+    });
+    expect(
+      fetchImpl.mock.calls.filter(
+        ([url, init]) =>
+          typeof url === "string" &&
+          url.endsWith("/message_templates") &&
+          init?.method === "POST",
+      ),
+    ).toHaveLength(4);
+  });
+
+  it("conserva la causa de rechazo anidada que devuelve el proveedor", async () => {
+    const rejectionReason = "La plantilla incumple la política de contenido";
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ account_mode: "LIVE" })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { status: "healthy" } })),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] })))
+      .mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: { message: rejectionReason, type: "OAuthException" },
+            }),
+            { status: 400 },
+          ),
+      );
+    const provider = createKapsoReadinessProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+    });
+
+    const result = await provider.syncTemplates({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+    });
+
+    expect(
+      result.templates.find((template) => template.kind === "confirmation"),
+    ).toMatchObject({
+      provisioningStatus: "rejected",
+      rejectionReason,
+      status: "REJECTED",
+    });
+  });
+
   it("mantiene fuera de readiness un número productivo con salud UNHEALTHY", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
