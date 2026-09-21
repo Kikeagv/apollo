@@ -424,6 +424,24 @@ export const whatsappReadiness = createTable(
       .notNull(),
     nextAction: text("next_action"),
     statusReason: text("status_reason").notNull(),
+    reconciliationStatus: text("reconciliation_status")
+      .$type<"blocked" | "pending" | "processing" | "succeeded">()
+      .default("pending")
+      .notNull(),
+    reconciliationAttempts: integer("reconciliation_attempts")
+      .default(0)
+      .notNull(),
+    reconciliationNextAttemptAt: timestamp("reconciliation_next_attempt_at", {
+      withTimezone: true,
+    }),
+    reconciliationLeaseToken: text("reconciliation_lease_token"),
+    reconciliationLeaseExpiresAt: timestamp("reconciliation_lease_expires_at", {
+      withTimezone: true,
+    }),
+    reconciliationLastAttemptAt: timestamp("reconciliation_last_attempt_at", {
+      withTimezone: true,
+    }),
+    reconciliationLastError: text("reconciliation_last_error"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -471,6 +489,14 @@ export const whatsappReadiness = createTable(
     check(
       "whatsapp_readiness_revision_non_negative",
       sql`${table.revision} >= 0`,
+    ),
+    check(
+      "whatsapp_readiness_reconciliation_status",
+      sql`${table.reconciliationStatus} IN ('blocked', 'pending', 'processing', 'succeeded')`,
+    ),
+    check(
+      "whatsapp_readiness_reconciliation_attempts_non_negative",
+      sql`${table.reconciliationAttempts} >= 0`,
     ),
     check(
       "whatsapp_readiness_status_reason_not_blank",

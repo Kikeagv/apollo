@@ -1,4 +1,5 @@
 import type {
+  WhatsAppConnection,
   WhatsAppConnectionStatus,
   WhatsAppConnectionType,
 } from "./whatsapp-connection";
@@ -199,6 +200,40 @@ export type WhatsAppReadinessInput = {
     project: WhatsAppWebhookSnapshot;
   };
 };
+
+/** Identidad durable de una ejecución de reconciliación de WhatsApp. */
+export type WhatsAppReadinessGeneration = {
+  businessAccountId: string | null;
+  phoneNumberId: string | null;
+  projectId: string | null;
+  provisioningEventId: string | null;
+};
+
+export function getWhatsAppReadinessGeneration(
+  connection: Pick<
+    WhatsAppConnection,
+    "businessAccountId" | "metadata" | "phoneNumberId"
+  >,
+): WhatsAppReadinessGeneration {
+  return {
+    businessAccountId: connection.businessAccountId ?? null,
+    phoneNumberId: connection.phoneNumberId,
+    projectId: connection.metadata.projectId ?? null,
+    provisioningEventId: connection.metadata.provisioningEventId ?? null,
+  };
+}
+
+export function isSameWhatsAppReadinessGeneration(
+  left: WhatsAppReadinessGeneration,
+  right: WhatsAppReadinessGeneration,
+) {
+  return (
+    left.businessAccountId === right.businessAccountId &&
+    left.phoneNumberId === right.phoneNumberId &&
+    left.projectId === right.projectId &&
+    left.provisioningEventId === right.provisioningEventId
+  );
+}
 
 export type WhatsAppWebhookSnapshot = {
   status: "ready" | "pending" | "failed";

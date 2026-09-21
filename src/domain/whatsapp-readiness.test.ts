@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   evaluateWhatsAppReadiness,
+  getWhatsAppReadinessGeneration,
+  isSameWhatsAppReadinessGeneration,
   whatsappCriticalTemplateCatalog,
   type WhatsAppReadinessInput,
   type WhatsAppTemplateSnapshot,
@@ -69,6 +71,30 @@ function readyInput(
 }
 
 describe("readiness técnico de la Conexión de WhatsApp", () => {
+  it("considera el número, WABA, proyecto y evento como una sola generación", () => {
+    const first = getWhatsAppReadinessGeneration({
+      businessAccountId: "waba-1",
+      metadata: {
+        projectId: "project-1",
+        provisioningEventId: "event-1",
+      },
+      phoneNumberId: "phone-1",
+    });
+
+    expect(first).toEqual({
+      businessAccountId: "waba-1",
+      phoneNumberId: "phone-1",
+      projectId: "project-1",
+      provisioningEventId: "event-1",
+    });
+    expect(
+      isSameWhatsAppReadinessGeneration(first, {
+        ...first,
+        provisioningEventId: "event-2",
+      }),
+    ).toBe(false);
+  });
+
   it("solo declara ready cuando número, webhooks, plantillas, billing y E2E pasan", () => {
     const result = evaluateWhatsAppReadiness(readyInput());
 

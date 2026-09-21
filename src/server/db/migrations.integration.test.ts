@@ -795,10 +795,15 @@ describe("migraciones de PostgreSQL", () => {
         };
         await rlsAdmin`
           insert into "pg-drizzle_whatsapp_connection" (
-            clinic_id, provider, status, connection_type, customer, metadata
+            clinic_id, provider, status, connection_type, customer,
+            phone_number_id, metadata
           ) values (
             ${rlsClinicId}, 'simulated', 'ready', 'simulated',
-            ${`rls-simulated:${rlsClinicId}`}, '{}'::jsonb
+            ${`rls-simulated:${rlsClinicId}`}, 'phone-92',
+            ${JSON.stringify({
+              projectId: "project-92",
+              provisioningEventId: apo92Generations.clinic,
+            })}::jsonb
           )
         `;
         await rlsAdmin`
@@ -816,8 +821,35 @@ describe("migraciones de PostgreSQL", () => {
         `;
         await rlsAdmin`
           insert into "pg-drizzle_whatsapp_readiness" (
-            clinic_id, provisioning_event_id, status_reason
-          ) values (${rlsClinicId}, ${apo92Generations.clinic}, 'ready')
+            clinic_id, phone_number_id, project_id, provisioning_event_id,
+            status_reason
+          ) values (
+            ${rlsClinicId}, 'phone-92', 'project-92',
+            ${apo92Generations.clinic}, 'ready'
+          )
+        `;
+        await rlsAdmin`
+          update "pg-drizzle_whatsapp_connection"
+          set metadata = ${JSON.stringify({
+            projectId: "project-92",
+            provisioningEventId: apo92Generations.other,
+          })}::jsonb
+          where clinic_id = ${rlsClinicId}
+        `;
+        await expect(
+          rlsAdmin`
+            update "pg-drizzle_whatsapp_readiness"
+            set status_reason = 'resultado obsoleto'
+            where clinic_id = ${rlsClinicId}
+          `,
+        ).rejects.toThrow(/generación vigente/i);
+        await rlsAdmin`
+          update "pg-drizzle_whatsapp_connection"
+          set metadata = ${JSON.stringify({
+            projectId: "project-92",
+            provisioningEventId: apo92Generations.clinic,
+          })}::jsonb
+          where clinic_id = ${rlsClinicId}
         `;
         await rlsAdmin`
           insert into "pg-drizzle_whatsapp_provisioning_step" (
@@ -1412,7 +1444,8 @@ describe("migraciones de PostgreSQL", () => {
                 'pg-drizzle_whatsapp_readiness',
                 'pg-drizzle_whatsapp_critical_template',
                 'pg-drizzle_whatsapp_billing',
-                'pg-drizzle_whatsapp_connection_alert'
+                'pg-drizzle_whatsapp_connection_alert',
+                'pg-drizzle_whatsapp_connection'
               )
             order by c.relname
           `;
@@ -1479,6 +1512,18 @@ describe("migraciones de PostgreSQL", () => {
                 table_name: "pg-drizzle_whatsapp_readiness",
               },
               {
+                name: "whatsapp_readiness_current_generation_insert",
+                table_name: "pg-drizzle_whatsapp_readiness",
+              },
+              {
+                name: "whatsapp_readiness_current_generation_update",
+                table_name: "pg-drizzle_whatsapp_readiness",
+              },
+              {
+                name: "whatsapp_readiness_reconciliation_worker_manage",
+                table_name: "pg-drizzle_whatsapp_readiness",
+              },
+              {
                 name: "whatsapp_critical_template_provisioning_worker_manage",
                 table_name: "pg-drizzle_whatsapp_critical_template",
               },
@@ -1493,6 +1538,14 @@ describe("migraciones de PostgreSQL", () => {
               {
                 name: "whatsapp_connection_alert_provisioning_worker_manage",
                 table_name: "pg-drizzle_whatsapp_connection_alert",
+              },
+              {
+                name: "whatsapp_connection_alert_reconciliation_worker_manage",
+                table_name: "pg-drizzle_whatsapp_connection_alert",
+              },
+              {
+                name: "whatsapp_connection_reconciliation_worker_update",
+                table_name: "pg-drizzle_whatsapp_connection",
               },
             ]),
           );
@@ -1578,7 +1631,7 @@ describe("migraciones de PostgreSQL", () => {
             from information_schema.columns
             where table_schema = 'public'
               and table_name = 'pg-drizzle_whatsapp_readiness'
-              and column_name in ('e2e_evidence_scope', 'number_health', 'number_health_checked_at', 'project_id', 'provisioning_event_id')
+              and column_name in ('e2e_evidence_scope', 'number_health', 'number_health_checked_at', 'project_id', 'provisioning_event_id', 'reconciliation_attempts', 'reconciliation_last_attempt_at', 'reconciliation_last_error', 'reconciliation_next_attempt_at', 'reconciliation_status')
             order by column_name
           `;
           expect(readinessColumns).toEqual([
@@ -1587,6 +1640,26 @@ describe("migraciones de PostgreSQL", () => {
             { column_name: "number_health_checked_at" },
             { column_name: "project_id" },
             { column_name: "provisioning_event_id" },
+            { column_name: "reconciliation_attempts" },
+            { column_name: "reconciliation_last_attempt_at" },
+            { column_name: "reconciliation_last_error" },
+            { column_name: "reconciliation_next_attempt_at" },
+            { column_name: "reconciliation_status" },
+          ]);
+
+          const readinessTriggers = await migrated<
+            Array<{ trigger_name: string }>
+          >`
+            select trigger_name
+            from information_schema.triggers
+            where trigger_schema = 'public'
+              and event_object_table = 'pg-drizzle_whatsapp_readiness'
+              and trigger_name = 'whatsapp_readiness_current_generation_guard'
+          `;
+          expect(readinessTriggers).toEqual([
+            {
+              trigger_name: "whatsapp_readiness_current_generation_guard",
+            },
           ]);
 
           const provisioningColumns = await migrated<

@@ -999,6 +999,61 @@ export function ApoloOperations() {
                 }
               />
             </dl>
+            <div
+              className="rounded-lg border border-slate-700 bg-slate-900/60 p-3"
+              data-whatsapp-readiness-reconciliation="true"
+            >
+              <p className="font-medium">Reconciliación automática</p>
+              <dl className="mt-2 grid gap-2 text-sm text-slate-300 sm:grid-cols-4">
+                <div>
+                  <dt className="text-xs tracking-wide text-slate-400 uppercase">
+                    Estado
+                  </dt>
+                  <dd className="mt-1">
+                    {apoloReadinessReconciliationStatusLabel(
+                      readiness.data.reconciliation.status,
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs tracking-wide text-slate-400 uppercase">
+                    Intentos
+                  </dt>
+                  <dd className="mt-1">
+                    {readiness.data.reconciliation.attempts}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs tracking-wide text-slate-400 uppercase">
+                    Próxima ejecución
+                  </dt>
+                  <dd className="mt-1">
+                    {readiness.data.reconciliation.nextAttemptAt === null
+                      ? "No programada"
+                      : formatDateTime(
+                          readiness.data.reconciliation.nextAttemptAt,
+                        )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs tracking-wide text-slate-400 uppercase">
+                    Último intento
+                  </dt>
+                  <dd className="mt-1">
+                    {readiness.data.reconciliation.lastAttemptAt === null
+                      ? "Sin intentos"
+                      : formatDateTime(
+                          readiness.data.reconciliation.lastAttemptAt,
+                        )}
+                  </dd>
+                </div>
+              </dl>
+              {readiness.data.reconciliation.lastError !== null ? (
+                <p className="mt-2 text-sm text-amber-200" role="alert">
+                  {readiness.data.reconciliation.lastError}
+                </p>
+              ) : null}
+            </div>
             <div className="grid gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
                 <p className="font-medium">Billing atribuido</p>
@@ -2085,6 +2140,17 @@ function apoloReadinessStatusLabel(
     degraded: "Degradado",
     pending: "Pendiente",
     ready: "Listo técnicamente",
+  }[status];
+}
+
+function apoloReadinessReconciliationStatusLabel(
+  status: "blocked" | "pending" | "processing" | "succeeded",
+) {
+  return {
+    blocked: "Bloqueada; requiere intervención",
+    pending: "Pendiente",
+    processing: "En ejecución",
+    succeeded: "Programada y saludable",
   }[status];
 }
 

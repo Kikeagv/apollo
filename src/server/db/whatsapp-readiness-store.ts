@@ -1,14 +1,18 @@
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 
 import {
   WhatsAppReadinessConflictError,
   type WhatsAppReadinessAlertSyncInput,
   type WhatsAppReadinessRecord,
   type WhatsAppReadinessProvisioningStore,
+  type WhatsAppReadinessReconciliationStore,
   type WhatsAppReadinessStore,
 } from "~/server/application/whatsapp-readiness";
 import { publicWhatsAppConnectionMetadata } from "~/domain/whatsapp-connection";
 import {
+  getWhatsAppReadinessGeneration,
+  isSameWhatsAppReadinessGeneration,
   whatsappCriticalTemplateCatalog,
   type WhatsAppTemplateProvisioningStatus,
   type WhatsAppTemplateSnapshot,
@@ -39,7 +43,8 @@ import {
 } from "~/server/db/schema";
 
 export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
-  WhatsAppReadinessProvisioningStore = {
+  WhatsAppReadinessProvisioningStore &
+  WhatsAppReadinessReconciliationStore = {
   async read(input) {
     const operation = async (transaction: ClinicTransaction) => {
       if (input.access === "clinic-owner") {
@@ -112,16 +117,241 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
     });
   },
 
+  async claimDueReconciliations({ limit, now }) {
+    const leaseExpiresAt = new Date(now.valueOf() + 10 * 60_000);
+    return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+      const candidates = await transaction
+        .select({ clinicId: whatsappConnections.clinicId })
+        .from(whatsappConnections)
+        .where(
+          and(
+            eq(whatsappConnections.provider, "kapso"),
+            inArray(whatsappConnections.status, [
+              "pending",
+              "provisioning",
+              "degraded",
+              "ready",
+            ]),
+          ),
+        )
+        .limit(Math.max(limit * 4, limit));
+      const claimed = [];
+      for (const candidate of candidates) {
+        if (claimed.length >= limit) break;
+        await setProvisioningClinicId(transaction, candidate.clinicId);
+        await lockWhatsAppCircuit(transaction, candidate.clinicId);
+        const clinic = await transaction.query.clinics.findFirst({
+          columns: { subscriptionStatus: true },
+          where: eq(clinics.id, candidate.clinicId),
+        });
+        if (clinic?.subscriptionStatus !== "active") continue;
+        let readiness = await transaction.query.whatsappReadiness.findFirst({
+          where: eq(whatsappReadiness.clinicId, candidate.clinicId),
+        });
+        if (readiness === undefined) {
+          const initial = await readRecord(
+            transaction,
+            candidate.clinicId,
+            false,
+          );
+          await transaction
+            .insert(whatsappReadiness)
+            .values(toReadinessRow(initial))
+            .onConflictDoNothing({ target: whatsappReadiness.clinicId });
+          readiness = await transaction.query.whatsappReadiness.findFirst({
+            where: eq(whatsappReadiness.clinicId, candidate.clinicId),
+          });
+        }
+        if (readiness === undefined) continue;
+        const [claimedRow] = await transaction
+          .update(whatsappReadiness)
+          .set({
+            reconciliationAttempts: sql`${whatsappReadiness.reconciliationAttempts} + 1`,
+            reconciliationLastAttemptAt: now,
+            reconciliationLeaseExpiresAt: leaseExpiresAt,
+            reconciliationLeaseToken: randomUUID(),
+            reconciliationStatus: "processing",
+          })
+          .where(
+            and(
+              eq(whatsappReadiness.clinicId, candidate.clinicId),
+              or(
+                and(
+                  inArray(whatsappReadiness.reconciliationStatus, [
+                    "pending",
+                    "succeeded",
+                  ]),
+                  or(
+                    isNull(whatsappReadiness.reconciliationNextAttemptAt),
+                    lte(whatsappReadiness.reconciliationNextAttemptAt, now),
+                  ),
+                ),
+                and(
+                  eq(whatsappReadiness.reconciliationStatus, "processing"),
+                  lte(whatsappReadiness.reconciliationLeaseExpiresAt, now),
+                ),
+              ),
+            ),
+          )
+          .returning({
+            attempts: whatsappReadiness.reconciliationAttempts,
+            leaseToken: whatsappReadiness.reconciliationLeaseToken,
+          });
+        if (claimedRow?.leaseToken == null) {
+          continue;
+        }
+        const connection =
+          await transaction.query.whatsappConnections.findFirst({
+            where: eq(whatsappConnections.clinicId, candidate.clinicId),
+          });
+        if (connection === undefined) continue;
+        claimed.push({
+          attempts: claimedRow.attempts,
+          claimedGeneration: getWhatsAppReadinessGeneration(connection),
+          clinicId: candidate.clinicId,
+          expectedGeneration: getWhatsAppReadinessGeneration(connection),
+          leaseToken: claimedRow.leaseToken,
+        });
+      }
+      return claimed;
+    });
+  },
+
+  async readForReconciliation(input) {
+    return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+      await setProvisioningClinicId(transaction, input.clinicId);
+      await assertActiveReconciliationLease(
+        transaction,
+        input.clinicId,
+        input.leaseToken,
+        input.now,
+      );
+      const clinic = await transaction.query.clinics.findFirst({
+        columns: { subscriptionStatus: true },
+        where: eq(clinics.id, input.clinicId),
+      });
+      if (clinic === undefined) throw new Error("La Clínica no existe");
+      await setProvisioningClinicContext(
+        transaction,
+        input.clinicId,
+        clinic.subscriptionStatus,
+      );
+      await setReconciliationContext(transaction, input.leaseToken);
+      return readRecord(transaction, input.clinicId, false);
+    });
+  },
+
+  async saveForReconciliation(input) {
+    if (input.state.clinicId !== input.clinicId) {
+      throw new Error("El estado de readiness no pertenece a la Clínica");
+    }
+    if (input.state.connection === null) {
+      throw new WhatsAppReadinessConflictError();
+    }
+    if (
+      !isSameWhatsAppReadinessGeneration(
+        input.expectedGeneration,
+        getWhatsAppReadinessGeneration(input.state.connection),
+      )
+    ) {
+      throw new WhatsAppReadinessConflictError();
+    }
+    return inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+      await setProvisioningClinicId(transaction, input.clinicId);
+      await assertActiveReconciliationLease(
+        transaction,
+        input.clinicId,
+        input.leaseToken,
+        input.now,
+      );
+      await setProvisioningClinicContextForWorker(transaction, input.clinicId);
+      await setReconciliationContext(transaction, input.leaseToken);
+      await lockWhatsAppCircuit(transaction, input.clinicId);
+      const [persistedConnection] = await transaction
+        .select()
+        .from(whatsappConnections)
+        .where(eq(whatsappConnections.clinicId, input.clinicId))
+        .for("update");
+      if (
+        persistedConnection === undefined ||
+        !isSameWhatsAppReadinessGeneration(
+          input.claimedGeneration,
+          getWhatsAppReadinessGeneration(persistedConnection),
+        )
+      ) {
+        throw new WhatsAppReadinessConflictError();
+      }
+      const stateConnection = input.state.connection;
+      if (stateConnection === null) {
+        throw new WhatsAppReadinessConflictError();
+      }
+      await transaction
+        .update(whatsappConnections)
+        .set({
+          businessAccountId: stateConnection.businessAccountId,
+          lastTestAt: stateConnection.lastTestAt,
+          metadata: mergeOperationalMetadata(
+            persistedConnection.metadata,
+            stateConnection.metadata,
+          ),
+          phoneNumberE164: stateConnection.phoneNumberE164,
+          phoneNumberId: stateConnection.phoneNumberId,
+          status: (await isCircuitOpen(transaction, input.clinicId))
+            ? "blocked"
+            : stateConnection.status,
+          updatedAt: stateConnection.updatedAt,
+        })
+        .where(eq(whatsappConnections.clinicId, input.clinicId));
+      await persistReadinessState(transaction, input.state);
+      return readRecord(transaction, input.clinicId, false);
+    });
+  },
+
+  async completeReconciliation(input) {
+    await inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
+      await setProvisioningClinicId(transaction, input.clinicId);
+      await assertActiveReconciliationLease(
+        transaction,
+        input.clinicId,
+        input.leaseToken,
+        input.now,
+      );
+      await setReconciliationContext(transaction, input.leaseToken);
+      await lockWhatsAppCircuit(transaction, input.clinicId);
+      await transaction
+        .update(whatsappReadiness)
+        .set({
+          reconciliationAttempts: input.attempts ?? 0,
+          reconciliationLastError: input.lastError?.slice(0, 1_000) ?? null,
+          reconciliationNextAttemptAt: input.nextAttemptAt,
+          reconciliationStatus: input.status,
+          reconciliationLeaseExpiresAt: null,
+          reconciliationLeaseToken: null,
+        })
+        .where(
+          and(
+            eq(whatsappReadiness.clinicId, input.clinicId),
+            eq(whatsappReadiness.reconciliationLeaseToken, input.leaseToken),
+          ),
+        );
+    });
+  },
+
   async retryWebhooks(input) {
     await inSuperadminTransaction(
       input.actorIdentityId,
       async (transaction) => {
         const connection =
           await transaction.query.whatsappConnections.findFirst({
-            columns: { metadata: true },
             where: eq(whatsappConnections.clinicId, input.clinicId),
           });
-        if (connection?.metadata.provisioningEventId !== input.eventId) {
+        if (
+          connection === undefined ||
+          !isSameWhatsAppReadinessGeneration(
+            input.expectedGeneration,
+            getWhatsAppReadinessGeneration(connection),
+          )
+        ) {
           throw new WhatsAppReadinessConflictError();
         }
 
@@ -252,13 +482,25 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
 
   async openAlert(input) {
     await inWhatsAppProvisioningWorkerTransaction(async (transaction) => {
-      await assertActiveProvisioningLease(
-        transaction,
-        input.eventId,
-        input.leaseToken,
-        input.now,
-      );
       await setProvisioningClinicId(transaction, input.clinicId);
+      if (input.access === "provisioning-worker") {
+        await assertActiveProvisioningLease(
+          transaction,
+          input.eventId,
+          input.leaseToken,
+          input.now,
+        );
+      } else {
+        await assertActiveReconciliationLease(
+          transaction,
+          input.clinicId,
+          input.leaseToken,
+          input.now,
+        );
+      }
+      if (input.access === "reconciliation-worker") {
+        await setReconciliationContext(transaction, input.leaseToken);
+      }
       await insertOrUpdateAlert(transaction, {
         clinicId: input.clinicId,
         gateCode: input.gateCode,
@@ -272,12 +514,22 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
 
   async syncAlerts(input) {
     const operation = async (transaction: ClinicTransaction) => {
-      if (input.access === "provisioning-worker") {
-        await setProvisioningClinicId(transaction, input.clinicId);
+      await setProvisioningClinicId(transaction, input.clinicId);
+      if (input.access === "reconciliation-worker") {
+        await assertActiveReconciliationLease(
+          transaction,
+          input.clinicId,
+          input.leaseToken,
+          input.now,
+        );
+        await setReconciliationContext(transaction, input.leaseToken);
       }
       return syncAlertsInTransaction(transaction, input);
     };
-    if (input.access === "provisioning-worker") {
+    if (
+      input.access === "provisioning-worker" ||
+      input.access === "reconciliation-worker"
+    ) {
       await inWhatsAppProvisioningWorkerTransaction(operation);
       return;
     }
@@ -342,6 +594,21 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
       ) {
         throw new WhatsAppReadinessConflictError();
       }
+      if (
+        !isSameWhatsAppReadinessGeneration(
+          input.expectedGeneration,
+          getWhatsAppReadinessGeneration(persistedConnection),
+        ) ||
+        !isSameWhatsAppReadinessGeneration(
+          input.expectedGeneration,
+          getWhatsAppReadinessGeneration(connection),
+        ) ||
+        input.state.projectId !== input.expectedGeneration.projectId ||
+        input.state.provisioningEventId !==
+          input.expectedGeneration.provisioningEventId
+      ) {
+        throw new WhatsAppReadinessConflictError();
+      }
       const metadata = publicWhatsAppConnectionMetadata(
         persistedConnection.metadata,
       );
@@ -391,10 +658,7 @@ async function readRecord(
   const projectId = connection?.metadata.projectId ?? null;
   const provisioningEventId = connection?.metadata.provisioningEventId ?? null;
   const hasCurrentGeneration =
-    phoneNumberId !== null &&
-    phoneNumberId !== undefined &&
-    projectId !== null &&
-    provisioningEventId !== null;
+    phoneNumberId !== null && phoneNumberId !== undefined;
   const [readiness, billing, templates, projectWebhook, phoneWebhook, alerts] =
     await Promise.all([
       transaction.query.whatsappReadiness.findFirst({
@@ -407,11 +671,15 @@ async function readRecord(
         ? transaction.query.whatsappCriticalTemplates.findMany({
             where: and(
               eq(whatsappCriticalTemplates.clinicId, clinicId),
-              eq(whatsappCriticalTemplates.projectId, projectId),
-              eq(
-                whatsappCriticalTemplates.provisioningEventId,
-                provisioningEventId,
-              ),
+              projectId === null
+                ? isNull(whatsappCriticalTemplates.projectId)
+                : eq(whatsappCriticalTemplates.projectId, projectId),
+              provisioningEventId === null
+                ? isNull(whatsappCriticalTemplates.provisioningEventId)
+                : eq(
+                    whatsappCriticalTemplates.provisioningEventId,
+                    provisioningEventId,
+                  ),
             ),
             orderBy: (items, { asc }) => [asc(items.kind)],
           })
@@ -448,6 +716,7 @@ async function readRecord(
           }),
       includeAlerts &&
       hasCurrentGeneration &&
+      provisioningEventId !== null &&
       connection?.status !== "disconnected"
         ? transaction
             .select()
@@ -466,8 +735,6 @@ async function readRecord(
     ]);
   const evidenceMatchesConnection =
     connection !== undefined &&
-    projectId !== null &&
-    provisioningEventId !== null &&
     readiness?.provisioningEventId === provisioningEventId &&
     readiness?.projectId === projectId &&
     readiness?.phoneNumberId === (connection.phoneNumberId ?? null) &&
@@ -506,6 +773,54 @@ async function assertActiveProvisioningLease(
   if (event === undefined) {
     throw new WhatsAppReadinessConflictError();
   }
+}
+
+async function assertActiveReconciliationLease(
+  transaction: ClinicTransaction,
+  clinicId: string,
+  leaseToken: string,
+  now: Date,
+) {
+  const [lease] = await transaction
+    .select({ clinicId: whatsappReadiness.clinicId })
+    .from(whatsappReadiness)
+    .where(
+      and(
+        eq(whatsappReadiness.clinicId, clinicId),
+        eq(whatsappReadiness.reconciliationLeaseToken, leaseToken),
+        eq(whatsappReadiness.reconciliationStatus, "processing"),
+        gt(whatsappReadiness.reconciliationLeaseExpiresAt, now),
+      ),
+    );
+  if (lease === undefined) throw new WhatsAppReadinessConflictError();
+}
+
+async function setReconciliationContext(
+  transaction: ClinicTransaction,
+  leaseToken: string,
+) {
+  await transaction.execute(
+    sql`select set_config('app.whatsapp_readiness_reconciliation_worker', 'true', true)`,
+  );
+  await transaction.execute(
+    sql`select set_config('app.whatsapp_reconciliation_lease_token', ${leaseToken}, true)`,
+  );
+}
+
+async function setProvisioningClinicContextForWorker(
+  transaction: ClinicTransaction,
+  clinicId: string,
+) {
+  const clinic = await transaction.query.clinics.findFirst({
+    columns: { subscriptionStatus: true },
+    where: eq(clinics.id, clinicId),
+  });
+  if (clinic === undefined) throw new Error("La Clínica no existe");
+  await setProvisioningClinicContext(
+    transaction,
+    clinicId,
+    clinic.subscriptionStatus,
+  );
 }
 
 async function setProvisioningClinicContext(
@@ -949,6 +1264,13 @@ function toRecord(input: {
           ? (input.readiness?.projectWebhookStatus ?? metadataWebhookStatus)
           : provisioningStepStatus(input.projectWebhook.status),
     },
+    reconciliation: {
+      attempts: input.readiness?.reconciliationAttempts ?? 0,
+      lastAttemptAt: input.readiness?.reconciliationLastAttemptAt ?? null,
+      lastError: input.readiness?.reconciliationLastError ?? null,
+      nextAttemptAt: input.readiness?.reconciliationNextAttemptAt ?? null,
+      status: input.readiness?.reconciliationStatus ?? "pending",
+    },
     statusReason:
       input.readiness?.statusReason ??
       metadata.statusReason ??
@@ -1040,6 +1362,11 @@ function toReadinessRow(state: WhatsAppReadinessRecord) {
     projectWebhookStatus: state.projectWebhook.status,
     projectId: state.projectId,
     provisioningEventId: state.provisioningEventId,
+    reconciliationAttempts: state.reconciliation.attempts,
+    reconciliationLastAttemptAt: state.reconciliation.lastAttemptAt,
+    reconciliationLastError: state.reconciliation.lastError,
+    reconciliationNextAttemptAt: state.reconciliation.nextAttemptAt,
+    reconciliationStatus: state.reconciliation.status,
     revision: (state.revision ?? 0) + 1,
     statusReason: state.statusReason,
     technicalStatus: state.technicalStatus,

@@ -9,8 +9,12 @@ import {
 import {
   getWhatsAppReadiness,
   retryWhatsAppReadiness,
+  runWhatsAppReadinessReconciliation,
+  WhatsAppReadinessConflictError,
   type WhatsAppReadinessProvider,
+  type WhatsAppReadinessReconciliationProvider,
   type WhatsAppReadinessRecord,
+  type WhatsAppReadinessReconciliationStore,
   type WhatsAppReadinessStore,
 } from "./whatsapp-readiness";
 
@@ -26,7 +30,11 @@ function connection(
     createdAt: now,
     customer: "customer-1",
     lastTestAt: null,
-    metadata: { projectId: "project-1", webhookStatus: "ready" },
+    metadata: {
+      projectId: "project-1",
+      provisioningEventId: "event-1",
+      webhookStatus: "ready",
+    },
     phoneNumberE164: "+50370000000",
     phoneNumberId: "phone-1",
     provider: "kapso",
@@ -95,6 +103,13 @@ function record(
       status: "ready",
     },
     provisioningEventId: "event-1",
+    reconciliation: {
+      attempts: 0,
+      lastAttemptAt: null,
+      lastError: null,
+      nextAttemptAt: null,
+      status: "pending",
+    },
     statusReason: "Pendiente de sincronización",
     templates: [],
     templatesSync: {
@@ -174,6 +189,108 @@ function fakeProvider(
       syncedAt: now,
       templates: approvedTemplates(),
     }),
+    ...overrides,
+  };
+}
+
+function fakeReconciliationStore(initial = record()) {
+  let current = initial;
+  let attempts = 1;
+  const leaseToken = "reconciliation-lease-1";
+  const claimDueReconciliations = vi.fn<
+    WhatsAppReadinessReconciliationStore["claimDueReconciliations"]
+  >(async () => [
+    {
+      attempts,
+      clinicId: current.clinicId,
+      expectedGeneration: {
+        businessAccountId: current.connection?.businessAccountId ?? null,
+        phoneNumberId: current.connection?.phoneNumberId ?? null,
+        projectId: current.projectId,
+        provisioningEventId: current.provisioningEventId,
+      },
+      claimedGeneration: {
+        businessAccountId: current.connection?.businessAccountId ?? null,
+        phoneNumberId: current.connection?.phoneNumberId ?? null,
+        projectId: current.projectId,
+        provisioningEventId: current.provisioningEventId,
+      },
+      leaseToken,
+    },
+  ]);
+  const readForReconciliation = vi.fn<
+    WhatsAppReadinessReconciliationStore["readForReconciliation"]
+  >(async () => current);
+  const saveForReconciliation = vi.fn<
+    WhatsAppReadinessReconciliationStore["saveForReconciliation"]
+  >(async ({ state }) => {
+    current = { ...state, revision: (state.revision ?? 0) + 1 };
+    return current;
+  });
+  const completeReconciliation = vi.fn<
+    WhatsAppReadinessReconciliationStore["completeReconciliation"]
+  >(
+    async ({
+      attempts: completedAttempts,
+      lastError,
+      nextAttemptAt,
+      status,
+    }) => {
+      attempts = completedAttempts ?? attempts;
+      current = {
+        ...current,
+        reconciliation: {
+          ...current.reconciliation,
+          attempts,
+          lastError,
+          nextAttemptAt,
+          status,
+        },
+      };
+    },
+  );
+  const syncAlerts = vi.fn<
+    NonNullable<WhatsAppReadinessReconciliationStore["syncAlerts"]>
+  >(async () => undefined);
+  const withTemplateProvisioningLock = async <T>({
+    operation,
+  }: {
+    businessAccountId: string;
+    operation: () => Promise<T>;
+  }) => operation();
+  const store: WhatsAppReadinessReconciliationStore = {
+    claimDueReconciliations,
+    completeReconciliation,
+    readForReconciliation,
+    saveForReconciliation,
+    syncAlerts,
+    withTemplateProvisioningLock,
+  };
+  return {
+    claimDueReconciliations,
+    completeReconciliation,
+    getState: () => current,
+    readForReconciliation,
+    saveForReconciliation,
+    store,
+    syncAlerts,
+    setAttempts: (nextAttempts: number) => {
+      attempts = nextAttempts;
+    },
+  };
+}
+
+function fakeReconciliationProvider(
+  overrides: Partial<WhatsAppReadinessReconciliationProvider> = {},
+): WhatsAppReadinessReconciliationProvider {
+  return {
+    ...fakeProvider(),
+    ensurePhoneNumberWebhook: vi
+      .fn()
+      .mockResolvedValue({ remoteId: "phone-webhook-reconciled" }),
+    ensureProjectWebhook: vi
+      .fn()
+      .mockResolvedValue({ remoteId: "project-webhook-reconciled" }),
     ...overrides,
   };
 }
@@ -558,6 +675,12 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
       actorIdentityId: "superadmin-1",
       clinicId: "clinic-1",
       eventId: "event-1",
+      expectedGeneration: {
+        businessAccountId: "waba-1",
+        phoneNumberId: "phone-1",
+        projectId: "project-1",
+        provisioningEventId: "event-1",
+      },
       now,
     });
     expect(syncTemplates).not.toHaveBeenCalled();
@@ -640,5 +763,279 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
     expect(getBilling).toHaveBeenCalledTimes(2);
     expect(fake.getState().billing.status).toBe("ready");
     expect(fake.getState().connection?.status).toBe("degraded");
+  });
+
+  it("conserva el bloqueo cuando la generación cambia durante la reconciliación", async () => {
+    const fake = fakeStore();
+    let currentProvisioningEventId = "event-2";
+    const save = vi.fn(
+      async (input: Parameters<WhatsAppReadinessStore["save"]>[0]) => {
+        const expectedGeneration = (
+          input as Parameters<WhatsAppReadinessStore["save"]>[0] & {
+            expectedGeneration?: { provisioningEventId: string | null };
+          }
+        ).expectedGeneration;
+        if (
+          expectedGeneration?.provisioningEventId !== currentProvisioningEventId
+        ) {
+          throw new WhatsAppReadinessConflictError();
+        }
+        return fake.getState();
+      },
+    );
+    const provider = fakeProvider({
+      getBilling: vi.fn().mockImplementation(async () => {
+        currentProvisioningEventId = "event-2";
+        return {
+          alertThresholdCents: 1_000,
+          chargesSeparated: true,
+          consumedCents: 2_000,
+          creditCents: 10_000,
+          mode: "partner_managed" as const,
+          status: "ready" as const,
+        };
+      }),
+    });
+
+    await expect(
+      retryWhatsAppReadiness(
+        {
+          action: "billing",
+          actorIdentityId: "superadmin-1",
+          clinicId: "clinic-1",
+        },
+        {
+          now,
+          provider,
+          store: { ...fake.store, save },
+        },
+      ),
+    ).rejects.toBeInstanceOf(WhatsAppReadinessConflictError);
+
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedGeneration: {
+          businessAccountId: "waba-1",
+          phoneNumberId: "phone-1",
+          projectId: "project-1",
+          provisioningEventId: "event-1",
+        },
+      }),
+    );
+    expect(fake.getState().billing.status).toBe("pending");
+  });
+
+  it("reconcilia los gates completos y programa la siguiente comprobación de salud", async () => {
+    const fake = fakeReconciliationStore();
+    const provider = fakeReconciliationProvider();
+    const providerMocks = provider as unknown as Record<
+      string,
+      ReturnType<typeof vi.fn>
+    >;
+    const ensureProjectWebhook = providerMocks.ensureProjectWebhook;
+    const ensurePhoneNumberWebhook = providerMocks.ensurePhoneNumberWebhook;
+    const syncTemplates = providerMocks.syncTemplates;
+    const providerGetBilling = providerMocks.getBilling;
+    const runE2ETest = providerMocks.runE2ETest;
+
+    const result = await runWhatsAppReadinessReconciliation(
+      { now },
+      { provider, store: fake.store },
+    );
+
+    expect(result).toEqual({
+      blocked: 0,
+      claimed: 1,
+      pending: 0,
+      retried: 0,
+      succeeded: 1,
+    });
+    expect(ensureProjectWebhook).toHaveBeenCalledOnce();
+    expect(ensurePhoneNumberWebhook).toHaveBeenCalledWith("phone-1");
+    expect(syncTemplates).toHaveBeenCalledOnce();
+    expect(providerGetBilling).toHaveBeenCalledOnce();
+    expect(runE2ETest).toHaveBeenCalledOnce();
+    expect(fake.completeReconciliation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nextAttemptAt: new Date("2026-09-07T12:05:00.000Z"),
+        status: "succeeded",
+      }),
+    );
+    expect(fake.getState().connection?.status).toBe("ready");
+  });
+
+  it("acepta la recuperación idempotente de un webhook pausado", async () => {
+    const fake = fakeReconciliationStore();
+    const provider = fakeReconciliationProvider({
+      ensurePhoneNumberWebhook: vi
+        .fn()
+        .mockResolvedValue({
+          remoteId: "phone-webhook-recovered",
+          wasPaused: true,
+        }),
+      ensureProjectWebhook: vi
+        .fn()
+        .mockResolvedValue({
+          remoteId: "project-webhook-recovered",
+          wasPaused: true,
+        }),
+    });
+
+    const result = await runWhatsAppReadinessReconciliation(
+      { now },
+      { provider, store: fake.store },
+    );
+
+    expect(result.succeeded).toBe(1);
+    expect(fake.getState().reconciliation.status).toBe("succeeded");
+  });
+
+  it("aplica backoff y alerta después del máximo de fallos del proveedor", async () => {
+    const fake = fakeReconciliationStore();
+    const getBilling = vi
+      .fn<WhatsAppReadinessProvider["getBilling"]>()
+      .mockRejectedValue(new Error("Kapso timeout"));
+    const provider = fakeReconciliationProvider({ getBilling });
+
+    await runWhatsAppReadinessReconciliation(
+      { now },
+      { provider, store: fake.store },
+    );
+    expect(fake.completeReconciliation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        nextAttemptAt: new Date("2026-09-07T12:00:10.000Z"),
+        status: "pending",
+      }),
+    );
+    expect(fake.syncAlerts).toHaveBeenCalled();
+  });
+
+  it("marca bloqueada una reconciliación que agota sus intentos", async () => {
+    const fake = fakeReconciliationStore();
+    fake.setAttempts(3);
+    const provider = fakeReconciliationProvider({
+      getBilling: vi
+        .fn<WhatsAppReadinessProvider["getBilling"]>()
+        .mockRejectedValue(new Error("Kapso timeout")),
+    });
+
+    await runWhatsAppReadinessReconciliation(
+      { now },
+      { provider, store: fake.store },
+    );
+    expect(fake.completeReconciliation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        lastError: "Kapso timeout",
+        nextAttemptAt: null,
+        status: "blocked",
+      }),
+    );
+    expect(fake.getState().reconciliation.status).toBe("blocked");
+  });
+
+  it("vuelve a avanzar automáticamente cuando Kapso aprueba una plantilla pendiente", async () => {
+    const fake = fakeReconciliationStore();
+    const syncTemplates = vi
+      .fn<WhatsAppReadinessProvider["syncTemplates"]>()
+      .mockResolvedValueOnce({
+        numberHealth: "healthy",
+        numberHealthCheckedAt: now,
+        numberEnvironment: "production",
+        syncedAt: now,
+        templates: approvedTemplates({
+          provisioningStatus: "in_review",
+          status: "PENDING",
+        }),
+      })
+      .mockResolvedValueOnce({
+        numberHealth: "healthy",
+        numberHealthCheckedAt: now,
+        numberEnvironment: "production",
+        syncedAt: now,
+        templates: approvedTemplates(),
+      });
+    const provider = fakeReconciliationProvider({ syncTemplates });
+    const providerMocks = provider as unknown as Record<
+      string,
+      ReturnType<typeof vi.fn>
+    >;
+    const providerGetBilling = providerMocks.getBilling;
+    const runE2ETest = providerMocks.runE2ETest;
+
+    await runWhatsAppReadinessReconciliation(
+      { now },
+      { provider, store: fake.store },
+    );
+    expect(fake.getState().reconciliation.status).toBe("pending");
+    expect(providerGetBilling).not.toHaveBeenCalled();
+
+    await runWhatsAppReadinessReconciliation(
+      { now: new Date("2026-09-07T12:05:00.000Z") },
+      { provider, store: fake.store },
+    );
+    expect(providerGetBilling).toHaveBeenCalledOnce();
+    expect(runE2ETest).toHaveBeenCalledOnce();
+    expect(fake.getState().reconciliation.status).toBe("succeeded");
+  });
+
+  it("mantiene pendiente una asociación sin phone_number_id en lugar de bloquearla", async () => {
+    const fake = fakeReconciliationStore(
+      record({
+        connection: connection({ phoneNumberId: null }),
+      }),
+    );
+    const provider = fakeReconciliationProvider();
+    const providerMocks = provider as unknown as Record<
+      string,
+      ReturnType<typeof vi.fn>
+    >;
+
+    await runWhatsAppReadinessReconciliation(
+      { now },
+      { provider, store: fake.store },
+    );
+    const ensureProjectWebhook = providerMocks.ensureProjectWebhook;
+    const getNumberHealth = providerMocks.getNumberHealth;
+
+    expect(ensureProjectWebhook).not.toHaveBeenCalled();
+    expect(getNumberHealth).not.toHaveBeenCalled();
+    expect(fake.getState().reconciliation.status).toBe("pending");
+    expect(fake.getState().reconciliation.nextAttemptAt).toEqual(
+      new Date("2026-09-07T12:05:00.000Z"),
+    );
+  });
+
+  it("recupera la asociación de un evento perdido sin repetir Embedded Signup", async () => {
+    const fake = fakeReconciliationStore(
+      record({
+        connection: connection({ phoneNumberId: null }),
+      }),
+    );
+    const provider = fakeReconciliationProvider({
+      listPhoneNumbers: vi.fn().mockResolvedValue([
+        {
+          businessAccountId: "waba-1",
+          customerId: "customer-1",
+          displayPhoneE164: "+50370000000",
+          phoneNumberId: "phone-1",
+        },
+      ]),
+    });
+
+    await runWhatsAppReadinessReconciliation(
+      { now },
+      { provider, store: fake.store },
+    );
+    const providerMocks = provider as unknown as Record<
+      string,
+      ReturnType<typeof vi.fn>
+    >;
+    const ensureProjectWebhook = providerMocks.ensureProjectWebhook;
+    const listPhoneNumbers = providerMocks.listPhoneNumbers;
+
+    expect(listPhoneNumbers).toHaveBeenCalledWith("customer-1");
+    expect(fake.getState().connection?.phoneNumberId).toBe("phone-1");
+    expect(ensureProjectWebhook).toHaveBeenCalledOnce();
+    expect(fake.getState().reconciliation.status).toBe("succeeded");
   });
 });

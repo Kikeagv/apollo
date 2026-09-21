@@ -258,6 +258,13 @@ function createFakeReadiness(overrides: Partial<WhatsAppReadinessRecord> = {}) {
       status: "ready",
     },
     provisioningEventId: "event-1",
+    reconciliation: {
+      attempts: 0,
+      lastAttemptAt: null,
+      lastError: null,
+      nextAttemptAt: null,
+      status: "pending",
+    },
     statusReason: "Pendiente de sincronización",
     templates: whatsappCriticalTemplateCatalog.map((template) => ({
       category: template.category,

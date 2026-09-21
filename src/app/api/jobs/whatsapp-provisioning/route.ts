@@ -1,5 +1,6 @@
 import { env } from "~/env";
 import { runKapsoProvisioningWorker } from "~/server/application/whatsapp-provisioning";
+import { runWhatsAppReadinessReconciliation } from "~/server/application/whatsapp-readiness";
 import { drizzleWhatsAppProvisioningStore } from "~/server/db/whatsapp-provisioning-store";
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
@@ -36,8 +37,9 @@ export async function POST(request: Request) {
     // el paso de proyecto desde cada evento `created`.
     projectWebhook = "unavailable";
   }
+  const now = new Date();
   const result = await runKapsoProvisioningWorker(
-    { now: new Date() },
+    { now },
     drizzleWhatsAppProvisioningStore,
     provider,
     {
@@ -47,5 +49,12 @@ export async function POST(request: Request) {
     },
     drizzleWhatsAppCircuitBreakerStore,
   );
-  return Response.json({ ...result, projectWebhook });
+  const reconciliation = await runWhatsAppReadinessReconciliation(
+    { now },
+    {
+      provider: { ...provider, ...readinessProvider },
+      store: drizzleWhatsAppReadinessStore,
+    },
+  );
+  return Response.json({ ...result, projectWebhook, reconciliation });
 }

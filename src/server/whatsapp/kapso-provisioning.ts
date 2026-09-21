@@ -40,6 +40,12 @@ const listResponseSchema = z.object({
     .object({ total_pages: z.number().int().positive().optional() })
     .optional(),
 });
+const phoneNumbersListResponseSchema = z.object({
+  data: z.array(phoneNumberSchema),
+  meta: z
+    .object({ total_pages: z.number().int().positive().optional() })
+    .optional(),
+});
 
 const webhookResponseSchema = z.object({ data: webhookSchema });
 const phoneNumberResponseSchema = z.object({ data: phoneNumberSchema });
@@ -258,6 +264,31 @@ export function createKapsoProvisioningProvider(
           return undefined;
         }
         throw error;
+      }
+    },
+
+    async listPhoneNumbers(customerId) {
+      const phoneNumbers: KapsoProvisioningPhoneNumber[] = [];
+      let page = 1;
+      while (true) {
+        const query = new URLSearchParams({
+          customer_id: customerId,
+          page: String(page),
+          per_page: "100",
+        });
+        const payload = await requestJson(
+          fetchImpl,
+          options.apiKey,
+          `/whatsapp/phone_numbers?${query.toString()}`,
+          { method: "GET" },
+        );
+        const response = phoneNumbersListResponseSchema.parse(payload);
+        phoneNumbers.push(...response.data.map(toPhoneNumber));
+        const totalPages = response.meta?.total_pages;
+        if (totalPages === undefined || page >= totalPages) {
+          return phoneNumbers;
+        }
+        page += 1;
       }
     },
   };

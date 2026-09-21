@@ -46,6 +46,43 @@ describe("adaptador de provisión de Kapso", () => {
     );
   });
 
+  it("puede reconciliar un evento perdido listando únicamente los números del customer", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              business_account_id: "waba-1",
+              customer_id: "customer-1",
+              display_phone_number: "+503 7000 0000",
+              phone_number_id: "phone-1",
+            },
+          ],
+          meta: { total_pages: 1 },
+        }),
+      ),
+    );
+    const provider = createKapsoProvisioningProvider({
+      apiKey: "kapso-api-key",
+      fetchImpl,
+      secretKey: "webhook-secret",
+      webhookUrl: "https://app.usepraxia.com/api/webhooks/kapso",
+    });
+
+    await expect(provider.listPhoneNumbers?.("customer-1")).resolves.toEqual([
+      {
+        businessAccountId: "waba-1",
+        customerId: "customer-1",
+        displayPhoneE164: "+50370000000",
+        phoneNumberId: "phone-1",
+      },
+    ]);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.kapso.ai/platform/v1/whatsapp/phone_numbers?customer_id=customer-1&page=1&per_page=100",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("crea el webhook de proyecto solo cuando no existe uno equivalente", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

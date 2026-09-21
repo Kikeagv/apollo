@@ -174,6 +174,9 @@ export type KapsoProvisioningProvider = {
   getPhoneNumber: (
     phoneNumberId: string,
   ) => Promise<KapsoProvisioningPhoneNumber | undefined>;
+  listPhoneNumbers?: (
+    customerId: string,
+  ) => Promise<KapsoProvisioningPhoneNumber[]>;
 };
 
 export type KapsoProvisioningReadiness = {
