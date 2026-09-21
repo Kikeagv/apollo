@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { buildWhatsAppConsentPolicy } from "~/domain/whatsapp-consent";
+import {
+  buildWhatsAppConsentPolicy,
+  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+  WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
+} from "~/domain/whatsapp-consent";
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import type { WhatsAppInboundMessage } from "~/domain/whatsapp-inbound";
 import { createWhatsAppConsentGate } from "./whatsapp-consent";
@@ -14,6 +18,7 @@ import {
 import {
   activateWhatsAppHumanTakeover,
   isWhatsAppHumanTakeoverActive,
+  processWhatsAppTextForContact,
   processSimulatedWhatsAppMessage,
 } from "./simulated-whatsapp-booking";
 import { listPendingGuardianshipVerifications } from "./administrative-records";
@@ -51,7 +56,10 @@ import {
 } from "../db/pending-store";
 import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-store";
 import { drizzleManualAppointmentStore } from "../db/manual-appointment-store";
-import { reactivatePendingWhatsAppDeliveries } from "../db/transactional-delivery-store";
+import {
+  drizzleTransactionalDeliveryStore,
+  reactivatePendingWhatsAppDeliveries,
+} from "../db/transactional-delivery-store";
 import { drizzleWhatsAppInboundStore } from "../db/whatsapp-inbound-store";
 import {
   getSentSimulatedAppointmentReminders,
@@ -432,6 +440,240 @@ describe("Reserva simulada de WhatsApp persistente", () => {
   );
 
   databaseTest(
+    "bloquea al Tutor pendiente aunque el canal esté aceptado y RLS rechaza su consentimiento por Paciente",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-14T12:00:00.000Z");
+      try {
+        const tutor = await inClinicTransaction(
+          fixture,
+          async (transaction) => {
+            const [createdTutor] = await transaction
+              .insert(contacts)
+              .values({
+                clinicId: fixture.clinicId,
+                name: "Carlos Tutor pendiente",
+                phoneE164: "+50370000003",
+              })
+              .returning({ id: contacts.id });
+            const doctor = await transaction.query.doctors.findFirst({
+              columns: { id: true },
+              where: eq(doctors.clinicId, fixture.clinicId),
+            });
+            if (createdTutor === undefined || doctor === undefined) {
+              throw new Error("Falta el Tutor o el Médico de prueba");
+            }
+            await transaction.insert(contactPatientLinks).values({
+              clinicId: fixture.clinicId,
+              contactId: createdTutor.id,
+              guardianDeclaration: "DECLARO REPRESENTACIÓN AUTORIZADA",
+              guardianDui: "01234567-8",
+              guardianshipVerificationStatus: "pending",
+              patientId: fixture.patientId,
+              relationship: "tutor",
+            });
+            const startsAt = new Date("2026-08-20T14:00:00.000Z");
+            const endsAt = new Date("2026-08-20T14:30:00.000Z");
+            const [appointment] = await transaction
+              .insert(appointments)
+              .values({
+                bufferMinutes: 0,
+                clinicId: fixture.clinicId,
+                doctorId: doctor.id,
+                durationMinutes: 30,
+                endsAt,
+                occupiedUntil: endsAt,
+                origin: "manual",
+                patientId: fixture.patientId,
+                serviceOfferId: fixture.offerId,
+                startsAt,
+              })
+              .returning({ id: appointments.id });
+            if (appointment === undefined) {
+              throw new Error("No se creó la Cita del Tutor pendiente");
+            }
+            return {
+              appointmentId: appointment.id,
+              contactId: createdTutor.id,
+            };
+          },
+        );
+        const identity = await inWhatsAppInboundWorkerTransaction(
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const [createdIdentity] = await transaction
+              .insert(whatsappIdentities)
+              .values({
+                clinicId: fixture.clinicId,
+                contactId: tutor.contactId,
+                phoneE164: "+50370000003",
+                phoneNumberId: `simulated-${fixture.clinicId}`,
+                status: "active",
+              })
+              .returning({ id: whatsappIdentities.id });
+            const termsContract =
+              await transaction.query.clinicTermsContract.findFirst({
+                columns: { currentVersion: true },
+                where: eq(clinicTermsContract.id, true),
+              });
+            if (createdIdentity === undefined || termsContract === undefined) {
+              throw new Error("Falta la Identidad o los Términos de prueba");
+            }
+            const policy = buildWhatsAppConsentPolicy(
+              termsContract.currentVersion,
+            );
+            await transaction.insert(whatsappContactConsents).values({
+              acceptedAt: now,
+              acceptedRole: "contact",
+              clinicId: fixture.clinicId,
+              contactId: tutor.contactId,
+              declaration: "CONTINUAR",
+              identityId: createdIdentity.id,
+              interactionId: `pending-tutor-channel-${fixture.clinicId}`,
+              patientId: null,
+              phoneE164: "+50370000003",
+              privacyVersion: policy.privacyVersion,
+              provider: "kapso",
+              scope: "channel",
+              status: "accepted",
+              termsVersion: policy.termsVersion,
+              textReference: policy.immutableTextReference,
+            });
+            return createdIdentity;
+          },
+        );
+
+        await expect(
+          drizzleSimulatedWhatsAppBookingStore.findWhatsAppPatientConsentEligibility(
+            {
+              clinicId: fixture.clinicId,
+              contactId: tutor.contactId,
+              now,
+              patientId: fixture.patientId,
+            },
+          ),
+        ).resolves.toBe("tutor-pending");
+        await expect(
+          processWhatsAppTextForContact(
+            {
+              clinicId: fixture.clinicId,
+              contactId: tutor.contactId,
+              identityId: identity.id,
+              messageId: `pending-tutor-operation-${fixture.clinicId}`,
+              text: `paciente ${fixture.patientId}`,
+            },
+            drizzleSimulatedWhatsAppBookingStore,
+            now,
+          ),
+        ).resolves.toMatchObject({
+          kind: "patient-selection-required",
+          patients: [],
+        });
+        await expect(
+          drizzleManualAppointmentStore.hasCurrentWhatsAppConsent({
+            appointmentId: tutor.appointmentId,
+            clinicId: fixture.clinicId,
+            contactId: tutor.contactId,
+            identityId: fixture.identityId,
+            now,
+          }),
+        ).resolves.toBe(false);
+
+        const [pendingDelivery] = await inAppointmentSchedulerTransaction(
+          (transaction) =>
+            transaction
+              .insert(transactionalDeliveries)
+              .values({
+                appointmentId: tutor.appointmentId,
+                clinicId: fixture.clinicId,
+                idempotencyKey: `pending-tutor-delivery-${fixture.clinicId}`,
+                kind: "appointment-reminder",
+                nextAttemptAt: new Date(now.valueOf() - 60_000),
+                payload: {
+                  appointmentId: tutor.appointmentId,
+                  checkpoint: "24h",
+                  recipient: {
+                    id: tutor.contactId,
+                    name: "Carlos Tutor pendiente",
+                    phoneE164: "+50370000003",
+                  },
+                },
+                recipientContactId: tutor.contactId,
+                retainUntil: new Date(now.valueOf() + 365 * 24 * 60 * 60_000),
+                status: "pending",
+              })
+              .returning({ id: transactionalDeliveries.id }),
+        );
+        if (pendingDelivery === undefined) {
+          throw new Error("No se creó la Entrega pendiente del Tutor");
+        }
+        const claimed =
+          await drizzleTransactionalDeliveryStore.claimReadyDeliveries({ now });
+        expect(
+          claimed.some((delivery) => delivery.id === pendingDelivery.id),
+        ).toBe(false);
+        const deliveryState = await inClinicTransaction(
+          fixture,
+          async (transaction) => {
+            const [delivery] = await transaction
+              .select({
+                lastError: transactionalDeliveries.lastError,
+                status: transactionalDeliveries.status,
+              })
+              .from(transactionalDeliveries)
+              .where(eq(transactionalDeliveries.id, pendingDelivery.id));
+            return delivery;
+          },
+        );
+        expect(deliveryState).toEqual({
+          lastError: "Consentimiento de WhatsApp no vigente",
+          status: "suppressed",
+        });
+
+        await expect(
+          inWhatsAppInboundWorkerTransaction(async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const termsContract =
+              await transaction.query.clinicTermsContract.findFirst({
+                columns: { currentVersion: true },
+                where: eq(clinicTermsContract.id, true),
+              });
+            if (termsContract === undefined) {
+              throw new Error("Faltan los Términos de prueba");
+            }
+            const policy = buildWhatsAppConsentPolicy(
+              termsContract.currentVersion,
+            );
+            return transaction.insert(whatsappContactConsents).values({
+              acceptedAt: now,
+              acceptedRole: "tutor",
+              clinicId: fixture.clinicId,
+              contactId: tutor.contactId,
+              declaration: WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
+              identityId: identity.id,
+              interactionId: `pending-tutor-patient-${fixture.clinicId}`,
+              patientId: fixture.patientId,
+              phoneE164: "+50370000003",
+              privacyVersion: policy.privacyVersion,
+              provider: "kapso",
+              scope: "patient",
+              status: "accepted",
+              termsVersion: policy.termsVersion,
+              textReference: policy.immutableTextReference,
+            });
+          }),
+        ).rejects.toThrow(/row-level security policy/);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
     "resuelve Clínica y Contacto por E.164, confirma una Reserva y aísla sus datos por RLS",
     async () => {
       const fixture = await createFixture();
@@ -487,6 +729,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             await transaction.insert(contactPatientLinks).values({
               clinicId: fixture.clinicId,
               contactId: createdTutor.id,
+              guardianDeclaration: "DECLARO REPRESENTACIÓN AUTORIZADA",
               guardianDui: "01234567-8",
               guardianshipVerificationStatus: "verified",
               patientId: fixture.patientId,
@@ -525,9 +768,10 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           }
           await transaction.insert(whatsappContactConsents).values({
             acceptedAt: new Date("2026-08-12T12:00:00.000Z"),
-            acceptedRole: "tutor",
+            acceptedRole: "contact",
             clinicId: fixture.clinicId,
             contactId: tutor.id,
+            declaration: "CONTINUAR",
             identityId: whatsappIdentity.id,
             interactionId: `fixture-tutor-consent-${fixture.clinicId}`,
             patientId: null,
@@ -538,7 +782,151 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             termsVersion: policy.termsVersion,
             textReference: policy.immutableTextReference,
           });
+          await transaction.insert(whatsappContactConsents).values({
+            acceptedAt: new Date("2026-08-12T12:00:00.000Z"),
+            acceptedRole: "tutor",
+            clinicId: fixture.clinicId,
+            contactId: tutor.id,
+            declaration: WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
+            identityId: whatsappIdentity.id,
+            interactionId: `fixture-tutor-patient-consent-${fixture.clinicId}`,
+            patientId: fixture.patientId,
+            phoneE164: "+50370000003",
+            privacyVersion: policy.privacyVersion,
+            provider: "kapso",
+            scope: "patient",
+            termsVersion: policy.termsVersion,
+            textReference: policy.immutableTextReference,
+          });
         });
+        const patientConsentReferences =
+          await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const consents = await transaction
+              .select({
+                contactId: whatsappContactConsents.contactId,
+                id: whatsappContactConsents.id,
+              })
+              .from(whatsappContactConsents)
+              .where(
+                and(
+                  eq(whatsappContactConsents.clinicId, fixture.clinicId),
+                  eq(whatsappContactConsents.patientId, fixture.patientId),
+                  eq(whatsappContactConsents.scope, "patient"),
+                ),
+              );
+            const adultConsent = consents.find(
+              (consent) => consent.contactId === fixture.contactId,
+            );
+            const tutorConsent = consents.find(
+              (consent) => consent.contactId === tutor.id,
+            );
+            if (adultConsent === undefined || tutorConsent === undefined) {
+              throw new Error("Falta el Consentimiento por Paciente vigente");
+            }
+            return { adult: adultConsent.id, tutor: tutorConsent.id };
+          });
+        const { adult: adultDelivery, tutor: tutorDelivery } =
+          await inAppointmentSchedulerTransaction(async (transaction) => {
+            const retainUntil = new Date("2027-08-12T12:00:00.000Z");
+            const deliveries = [
+              {
+                contactId: fixture.contactId,
+                idempotencyKey: `outbox-adult-consent-${fixture.clinicId}`,
+                name: "Ana",
+                phoneE164: fixture.contactPhone,
+                role: "adult" as const,
+              },
+              {
+                contactId: tutor.id,
+                idempotencyKey: `outbox-tutor-consent-${fixture.clinicId}`,
+                name: "Carlos Tutor",
+                phoneE164: "+50370000003",
+                role: "tutor" as const,
+              },
+            ];
+            const created: {
+              adult?: { id: string };
+              tutor?: { id: string };
+            } = {};
+            for (const recipient of deliveries) {
+              const [delivery] = await transaction
+                .insert(transactionalDeliveries)
+                .values({
+                  appointmentId: confirmed.id,
+                  clinicId: fixture.clinicId,
+                  idempotencyKey: recipient.idempotencyKey,
+                  kind: "appointment-reminder",
+                  nextAttemptAt: now,
+                  payload: {
+                    appointmentId: confirmed.id,
+                    appointmentStartsAt: "2026-08-17T14:00:00.000Z",
+                    checkpoint: "24h",
+                    clinicName: "Clínica de prueba",
+                    recipient: {
+                      id: recipient.contactId,
+                      name: recipient.name,
+                      phoneE164: recipient.phoneE164,
+                    },
+                  },
+                  recipientContactId: recipient.contactId,
+                  retainUntil,
+                  status: "pending",
+                })
+                .returning({ id: transactionalDeliveries.id });
+              if (delivery === undefined) {
+                throw new Error("No se creó la Entrega del outbox");
+              }
+              created[recipient.role] = delivery;
+            }
+            const adult = created.adult;
+            const tutorDelivery = created.tutor;
+            if (adult === undefined || tutorDelivery === undefined) {
+              throw new Error("Falta una Entrega del outbox por rol");
+            }
+            return { adult, tutor: tutorDelivery };
+          });
+
+        const claimedOutboxDeliveries =
+          await drizzleTransactionalDeliveryStore.claimReadyDeliveries({ now });
+        expect(claimedOutboxDeliveries.map((delivery) => delivery.id)).toEqual(
+          expect.arrayContaining([adultDelivery.id, tutorDelivery.id]),
+        );
+        const outboxStates = await inClinicTransaction(
+          fixture,
+          async (transaction) =>
+            transaction
+              .select({
+                id: transactionalDeliveries.id,
+                patientConsentReference:
+                  transactionalDeliveries.patientConsentReference,
+                status: transactionalDeliveries.status,
+              })
+              .from(transactionalDeliveries)
+              .where(
+                inArray(transactionalDeliveries.id, [
+                  adultDelivery.id,
+                  tutorDelivery.id,
+                ]),
+              ),
+        );
+        expect(outboxStates).toEqual(
+          expect.arrayContaining([
+            {
+              id: adultDelivery.id,
+              patientConsentReference: patientConsentReferences.adult,
+              status: "processing",
+            },
+            {
+              id: tutorDelivery.id,
+              patientConsentReference: patientConsentReferences.tutor,
+              status: "processing",
+            },
+          ]),
+        );
+
         const reminder = await sendAppointmentReminder(
           {
             appointmentId: confirmed.id,
@@ -785,6 +1173,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
                 acceptedRole: "contact",
                 clinicId: fixture.clinicId,
                 contactId: fixture.contactId,
+                declaration: "CONTINUAR",
                 identityId: identity.id,
                 interactionId: `reactivation-${fixture.clinicId}`,
                 patientId: null,
@@ -1763,6 +2152,7 @@ async function createFixture() {
       acceptedRole: "contact",
       clinicId: primary.clinicId,
       contactId: records.contactId,
+      declaration: "CONTINUAR",
       identityId: whatsappIdentity.id,
       interactionId: `fixture-consent-${primary.clinicId}`,
       patientId: null,
@@ -1770,6 +2160,22 @@ async function createFixture() {
       privacyVersion: policy.privacyVersion,
       provider: "kapso",
       scope: "channel",
+      termsVersion: policy.termsVersion,
+      textReference: policy.immutableTextReference,
+    });
+    await transaction.insert(whatsappContactConsents).values({
+      acceptedAt: new Date("2026-08-12T12:00:00.000Z"),
+      acceptedRole: "adult-patient",
+      clinicId: primary.clinicId,
+      contactId: records.contactId,
+      declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+      identityId: whatsappIdentity.id,
+      interactionId: `fixture-patient-consent-${primary.clinicId}`,
+      patientId: records.patientId,
+      phoneE164: contactPhone,
+      privacyVersion: policy.privacyVersion,
+      provider: "kapso",
+      scope: "patient",
       termsVersion: policy.termsVersion,
       textReference: policy.immutableTextReference,
     });

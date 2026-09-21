@@ -324,7 +324,7 @@ describe("operaciones finales de WhatsApp", () => {
     expect(failed.blockers.map((blocker) => blocker.code)).toContain("sandbox");
     expect(
       failed.steps.find((step) => step.code === "adult-flow")?.passed,
-    ).toBe(false);
+    ).toBe(true);
     expect(smokeRuns).toHaveLength(1);
 
     runner.run.mockResolvedValueOnce({
@@ -347,9 +347,12 @@ describe("operaciones finales de WhatsApp", () => {
       { idGenerator: () => "smoke-passed-92", runner, store },
     );
     expect(passed.status).toBe("failed");
-    expect(passed.blockers.map((blocker) => blocker.code)).toEqual(
-      expect.arrayContaining(["adult-flow", "guardian-pending"]),
+    expect(passed.blockers.map((blocker) => blocker.code)).toContain(
+      "provider-transport-unverified",
     );
+    expect(
+      passed.steps.find((step) => step.code === "guardian-pending")?.passed,
+    ).toBe(true);
   });
 
   it("no habilita un smoke Kapso basado solo en contratos locales", async () => {
@@ -474,10 +477,13 @@ describe("operaciones finales de WhatsApp", () => {
       { runner, store },
     );
 
-    expect(result.status).toBe("failed");
-    expect(result.blockers.map((blocker) => blocker.code)).toEqual(
-      expect.arrayContaining(["adult-flow", "guardian-pending"]),
-    );
+    expect(result.status).toBe("passed");
+    expect(
+      result.steps.find((step) => step.code === "adult-flow")?.passed,
+    ).toBe(true);
+    expect(
+      result.steps.find((step) => step.code === "guardian-pending")?.passed,
+    ).toBe(true);
     expect(runner.run).toHaveBeenCalledWith(
       expect.objectContaining({
         phoneNumberId: `simulated-phone:${snapshot.clinicId}`,

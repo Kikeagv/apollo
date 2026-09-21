@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
 
+import { isAdultPatient } from "~/domain/patient";
 import { canAuthorSelfManageAppointment } from "~/server/application/appointment-self-management";
 import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
 import {
+  buildWhatsAppConsentPolicy,
   isWhatsAppGuardianDeclaration,
+  isWhatsAppConsentCurrent,
+  type WhatsAppConsentEvidence,
   type WhatsAppConsentSafeRoute,
 } from "~/domain/whatsapp-consent";
+import {
+  createWhatsAppPatientConsentGate,
+  type WhatsAppPatientConsentStore,
+} from "~/server/application/whatsapp-consent";
 import type {
   AudioContentType,
   AudioTranscriber,
@@ -80,6 +88,9 @@ export type WhatsAppBookingResponse =
       text: string;
     }
   | { kind: "patient-registered"; patientId: string; text: string }
+  | { kind: "patient-consent-accepted"; patientId: string; text: string }
+  | { kind: "patient-consent-blocked"; patientId: string; text: string }
+  | { kind: "patient-consent-pending"; patientId: string; text: string }
   | { kind: "invalid-request"; text: string };
 
 export type PatientSummary = {
@@ -112,7 +123,7 @@ type AppointmentSelfManagementResult =
   | { id: string; kind: "rescheduled"; startsAt: Date }
   | { kind: "unavailable" };
 
-export type SimulatedWhatsAppBookingStore = {
+export type SimulatedWhatsAppBookingStore = WhatsAppPatientConsentStore & {
   beginResolvedMessage?(input: {
     clinicId: string;
     contactId: string;
@@ -128,6 +139,7 @@ export type SimulatedWhatsAppBookingStore = {
     | {
         contactId: string;
         clinicId: string;
+        identityId?: string;
         duplicate: WhatsAppBookingResponse | null;
       }
     | undefined
@@ -242,6 +254,12 @@ export type SimulatedWhatsAppBookingStore = {
     contactId: string;
     now: Date;
   }): Promise<number>;
+  reactivatePendingWhatsAppDeliveries?(input: {
+    clinicId: string;
+    consentReference: string;
+    contactId: string;
+    now: Date;
+  }): Promise<number>;
   holdReservation(input: {
     clinicId: string;
     contactId: string;
@@ -316,6 +334,7 @@ export async function processWhatsAppTextForContact(
   input: {
     clinicId: string;
     contactId: string;
+    identityId?: string;
     messageId: string;
     text: string;
   },
@@ -581,7 +600,7 @@ async function processReceivedMessage(
     origin: WhatsAppMessageOrigin;
     text: string;
   },
-  received: { clinicId: string; contactId: string },
+  received: { clinicId: string; contactId: string; identityId?: string },
   store: SimulatedWhatsAppBookingStore,
   now: Date,
 ) {
@@ -603,7 +622,7 @@ async function processReceivedMessage(
 
 async function processMessage(
   text: string,
-  context: { clinicId: string; contactId: string },
+  context: { clinicId: string; contactId: string; identityId?: string },
   store: SimulatedWhatsAppBookingStore,
   now: Date,
   origin: WhatsAppMessageOrigin,
@@ -666,10 +685,8 @@ async function processMessage(
         case "paciente": {
           const patientId = arguments_[0];
           const patients = await store.listLinkedPatients(context);
-          if (
-            patientId === undefined ||
-            !patients.some((patient) => patient.id === patientId)
-          ) {
+          const selectedPatient = selectLinkedPatient(patients, patientId);
+          if (selectedPatient === undefined) {
             return patientSelectionRequired(patients);
           }
           await store.saveConversation({
@@ -677,13 +694,104 @@ async function processMessage(
             conversation: {
               ...conversation,
               reservationId: null,
-              selectedPatientId: patientId,
+              selectedPatientId: selectedPatient.id,
             },
           });
+          const consentStatus = await createWhatsAppPatientConsentGate(
+            store,
+          ).check({
+            clinicId: context.clinicId,
+            contactId: context.contactId,
+            declaration: "",
+            identityId: context.identityId,
+            interactionId: messageId,
+            now,
+            patientId: selectedPatient.id,
+            phoneE164: null,
+          });
+          if (consentStatus.kind === "pending") {
+            return {
+              kind: "patient-consent-pending",
+              patientId: selectedPatient.id,
+              text: consentStatus.prompt,
+            };
+          }
+          if (consentStatus.kind === "blocked") {
+            return {
+              kind: "patient-consent-blocked",
+              patientId: selectedPatient.id,
+              text: "No se pudo verificar el vínculo y la Identidad del Contacto. No se guardó el consentimiento.",
+            };
+          }
           return {
             kind: "patient-selected",
-            patientId,
+            patientId: selectedPatient.id,
             text: "Paciente seleccionado.",
+          };
+        }
+        case "consentir": {
+          const declaration = parsePatientConsentDeclaration(text);
+          if (declaration === undefined) return invalidRequest();
+          const patientId = conversation.selectedPatientId;
+          const patients = await store.listLinkedPatients(context);
+          if (
+            patientId === null ||
+            !patients.some((patient) => patient.id === patientId)
+          ) {
+            return patientSelectionRequired(patients);
+          }
+          const decision = await createWhatsAppPatientConsentGate(store).check({
+            clinicId: context.clinicId,
+            contactId: context.contactId,
+            declaration,
+            identityId: context.identityId,
+            interactionId: messageId,
+            now,
+            patientId,
+            phoneE164: null,
+          });
+          if (decision.kind === "pending") {
+            return {
+              kind: "patient-consent-pending",
+              patientId,
+              text: decision.prompt,
+            };
+          }
+          if (decision.kind === "blocked") {
+            return decision.code === "guardian-verification-required"
+              ? guardianshipPending()
+              : {
+                  kind: "patient-consent-blocked",
+                  patientId,
+                  text: "No se pudo verificar el vínculo y la Identidad del Contacto. No se guardó el consentimiento.",
+                };
+          }
+          const policy = await store.readCurrentWhatsAppConsentPolicy({
+            clinicId: context.clinicId,
+          });
+          const channelConsent = await store.findLatestWhatsAppConsent({
+            clinicId: context.clinicId,
+            contactId: context.contactId,
+            patientId: null,
+            scope: "channel",
+          });
+          if (
+            policy !== undefined &&
+            channelConsent !== null &&
+            channelConsent.acceptedAt <= now &&
+            isWhatsAppConsentCurrent(channelConsent, policy)
+          ) {
+            await store.reactivatePendingWhatsAppDeliveries?.({
+              clinicId: context.clinicId,
+              consentReference: channelConsent.id,
+              contactId: context.contactId,
+              now,
+            });
+          }
+          return {
+            kind: "patient-consent-accepted",
+            patientId,
+            text: "Consentimiento vigente registrado para el Paciente seleccionado.",
           };
         }
         case "registrar": {
@@ -692,7 +800,8 @@ async function processMessage(
           if (registration === undefined && minorRegistration === undefined)
             return invalidRequest();
           if (registration !== undefined) {
-            if (!isAdult(registration.birthDate, now)) return invalidRequest();
+            if (!isAdultPatient(registration.birthDate, now))
+              return invalidRequest();
             const patient = await store.registerAdult({
               ...context,
               ...registration,
@@ -702,12 +811,12 @@ async function processMessage(
             return {
               kind: "patient-registered",
               patientId: patient.id,
-              text: "Paciente registrado. Seleccione explícitamente el Paciente para continuar.",
+              text: "Paciente registrado. Escriba paciente para elegir un Paciente antes de consultar o gestionar una Cita.",
             };
           }
           if (
             minorRegistration === undefined ||
-            isAdult(minorRegistration.birthDate, now) ||
+            isAdultPatient(minorRegistration.birthDate, now) ||
             isFutureBirthDate(minorRegistration.birthDate, now)
           ) {
             return invalidRequest();
@@ -981,8 +1090,32 @@ function patientSelectionRequired(
   return {
     kind: "patient-selection-required",
     patients,
-    text: "Seleccione explícitamente el Paciente antes de consultar o gestionar una Cita.",
+    text:
+      patients.length === 0
+        ? "No hay Pacientes disponibles para este Contacto. Si se registró un menor, espere a que la Clínica verifique la representación."
+        : `Seleccione explícitamente el Paciente respondiendo paciente y su número:\n${patients
+            .map(
+              (patient, index) =>
+                `${index + 1}. ${patient.name} (${patient.birthDate})`,
+            )
+            .join("\n")}`,
   };
+}
+
+function selectLinkedPatient(
+  patients: PatientSummary[],
+  selection: string | undefined,
+) {
+  if (selection === undefined) return undefined;
+  const byId = patients.find((patient) => patient.id === selection);
+  if (byId !== undefined) return byId;
+  if (!/^\d+$/.test(selection)) return undefined;
+  return patients[Number.parseInt(selection, 10) - 1];
+}
+
+function parsePatientConsentDeclaration(text: string) {
+  const match = /^consentir\s+paciente(?:\|(.*))?$/isu.exec(text.trim());
+  return match?.[1]?.trim() ?? (match === null ? undefined : "");
 }
 
 function contactNotFound(): WhatsAppBookingResponse {
@@ -1067,12 +1200,6 @@ function validLocalDate(value: string) {
   );
 }
 
-function isAdult(birthDate: string, now: Date) {
-  const eighteenthBirthday = new Date(`${birthDate}T00:00:00.000Z`);
-  eighteenthBirthday.setUTCFullYear(eighteenthBirthday.getUTCFullYear() + 18);
-  return eighteenthBirthday <= now;
-}
-
 function isFutureBirthDate(birthDate: string, now: Date) {
   return new Date(`${birthDate}T00:00:00.000Z`) > now;
 }
@@ -1124,9 +1251,12 @@ function isManageablePatientLink(
   now: Date,
 ) {
   return link.relationship === "tutor"
-    ? link.guardianshipVerificationStatus === "verified"
+    ? link.guardianshipVerificationStatus === "verified" &&
+        link.guardianDui !== undefined &&
+        /^\d{8}-\d$/.test(link.guardianDui) &&
+        isWhatsAppGuardianDeclaration(link.guardianDeclaration ?? "")
     : (link.relationship === undefined || link.relationship === "contact") &&
-        isAdult(patient.birthDate, now);
+        isAdultPatient(patient.birthDate, now);
 }
 
 function inMemoryMessageKey(
@@ -1212,6 +1342,8 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     contactId: string;
     type: "urgency-protocol";
   }> = [];
+  const patientConsents: WhatsAppConsentEvidence[] = [];
+  const consentPolicy = buildWhatsAppConsentPolicy("1.0");
   const store: SimulatedWhatsAppBookingStore & {
     appointments: typeof appointments;
     conversationEscalations: typeof conversationEscalations;
@@ -1219,6 +1351,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     messageOrigins: typeof messageOrigins;
     appointmentEvents: typeof appointmentEvents;
     escalations: typeof escalations;
+    patientConsents: typeof patientConsents;
     patients: InMemoryPatient[];
     reservations: typeof reservations;
   } = {
@@ -1228,6 +1361,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     messageOrigins,
     appointmentEvents,
     escalations,
+    patientConsents,
     patients: input.patients,
     reservations,
     async beginMessage(message) {
@@ -1241,6 +1375,7 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
       return {
         clinicId: input.clinic.id,
         contactId: contact.id,
+        identityId: `synthetic-identity:${contact.id}`,
         duplicate,
       };
     },
@@ -1374,6 +1509,75 @@ export function createInMemorySimulatedWhatsAppBookingStore(input: {
     },
     async isVoiceTranscriptionEnabled() {
       return input.clinic.voiceTranscriptionEnabled === true;
+    },
+    async findWhatsAppPatientConsentEligibility({ contactId, now, patientId }) {
+      const link = input.links.find(
+        (candidate) =>
+          candidate.contactId === contactId &&
+          candidate.patientId === patientId,
+      );
+      const patient = input.patients.find(
+        (candidate) => candidate.id === patientId,
+      );
+      if (link === undefined || patient === undefined) return null;
+      if (link.relationship === "tutor") {
+        return link.guardianshipVerificationStatus === "verified" &&
+          link.guardianDui !== undefined &&
+          /^\d{8}-\d$/.test(link.guardianDui) &&
+          isWhatsAppGuardianDeclaration(link.guardianDeclaration ?? "")
+          ? "tutor"
+          : "tutor-pending";
+      }
+      return (link.relationship === undefined ||
+        link.relationship === "contact") &&
+        isAdultPatient(patient.birthDate, now)
+        ? "adult-patient"
+        : null;
+    },
+    async findLatestWhatsAppConsent({ clinicId, contactId, patientId, scope }) {
+      return (
+        [...patientConsents]
+          .reverse()
+          .find(
+            (evidence) =>
+              evidence.clinicId === clinicId &&
+              evidence.contactId === contactId &&
+              evidence.patientId === patientId &&
+              evidence.scope === scope,
+          ) ?? null
+      );
+    },
+    async readCurrentWhatsAppConsentPolicy() {
+      return consentPolicy;
+    },
+    async recordWhatsAppConsent(record) {
+      const duplicate = patientConsents.find(
+        (evidence) =>
+          evidence.clinicId === record.clinicId &&
+          evidence.provider === "kapso" &&
+          evidence.interactionId === record.interactionId,
+      );
+      if (duplicate !== undefined) return duplicate;
+      const evidence: WhatsAppConsentEvidence = {
+        acceptedAt: record.acceptedAt,
+        acceptedRole: record.acceptedRole,
+        clinicId: record.clinicId,
+        contactId: record.contactId,
+        declaration: record.declaration,
+        id: randomUUID(),
+        identityId: record.identityId,
+        interactionId: record.interactionId,
+        patientId: record.patientId,
+        phoneE164: record.phoneE164,
+        privacyVersion: record.policy.privacyVersion,
+        provider: "kapso",
+        scope: record.scope,
+        status: record.status ?? "accepted",
+        termsVersion: record.policy.termsVersion,
+        textReference: record.policy.immutableTextReference,
+      };
+      patientConsents.push(evidence);
+      return evidence;
     },
     async recordUrgencyEvent({ clinicId, contactId, messageId }) {
       if (messageId !== undefined) {

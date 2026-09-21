@@ -25,6 +25,7 @@ export type AppointmentReminderCheckpoint =
 
 export type AppointmentReminderStore = {
   hasCurrentWhatsAppConsent(input: {
+    appointmentId: string;
     clinicId: string;
     contactId: string;
     identityId: string;
@@ -114,6 +115,7 @@ export async function sendAppointmentReminder(
   for (const candidate of candidates) {
     if (
       await store.hasCurrentWhatsAppConsent({
+        appointmentId: input.appointmentId,
         clinicId: input.clinicId,
         contactId: candidate.id,
         identityId: input.identityId,

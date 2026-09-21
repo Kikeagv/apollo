@@ -53,6 +53,7 @@ import {
   inWhatsAppDeliveryStatusWorkerTransaction,
   inWhatsAppWebhookIngressTransaction,
   inWhatsAppOutboundWorkerTransaction,
+  setWhatsAppWorkerClinicContext,
 } from "~/server/db/clinic-context";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
 import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
@@ -121,6 +122,15 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
       for (const candidate of candidates) {
         if (
           isWhatsAppDeliveryKind(candidate.kind) &&
+          !(await setWhatsAppWorkerClinicContext(
+            transaction,
+            candidate.clinicId,
+          ))
+        ) {
+          continue;
+        }
+        if (
+          isWhatsAppDeliveryKind(candidate.kind) &&
           (await isWhatsAppCircuitOpenInTransaction(
             transaction,
             candidate.clinicId,
@@ -137,6 +147,18 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
                 clinicId: candidate.clinicId,
                 contactId: candidate.recipientContactId,
                 now,
+                patientId:
+                  candidate.appointmentId === null
+                    ? null
+                    : ((
+                        await transaction.query.appointments.findFirst({
+                          columns: { patientId: true },
+                          where: and(
+                            eq(appointments.clinicId, candidate.clinicId),
+                            eq(appointments.id, candidate.appointmentId),
+                          ),
+                        })
+                      )?.patientId ?? null),
               })
             : undefined;
         const hasCurrentConsent =
@@ -159,6 +181,7 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
                     consentAcceptedAt: consentSnapshot.acceptedAt,
                     consentDecision: consentSnapshot.decision,
                     consentPrivacyVersion: consentSnapshot.privacyVersion,
+                    patientConsentReference: consentSnapshot.patientReference,
                     consentReference: consentSnapshot.reference,
                     consentTermsVersion: consentSnapshot.termsVersion,
                     consentTextReference: consentSnapshot.textReference,
@@ -749,7 +772,7 @@ async function readManualAppointmentDeliveryContext(
   input: ManualAppointmentTransactionalDeliveryInput,
 ) {
   const appointment = await transaction.query.appointments.findFirst({
-    columns: { doctorId: true, startsAt: true },
+    columns: { doctorId: true, patientId: true, startsAt: true },
     where: and(
       eq(appointments.clinicId, input.message.clinicId),
       eq(appointments.id, input.message.appointmentId),
@@ -767,6 +790,7 @@ async function readManualAppointmentDeliveryContext(
   });
   return {
     doctorName: doctor?.publicName ?? null,
+    patientId: appointment.patientId,
     startsAt: appointment.startsAt,
   };
 }
@@ -789,13 +813,12 @@ export async function enqueueManualAppointmentTransactionalDelivery(
       : await readManualAppointmentDeliveryContext(existingTransaction, input);
 
   const insertDelivery = async (transaction: SchedulerTransaction) => {
-    await transaction.execute(
-      sql`select set_config('app.clinic_id', ${input.message.clinicId}, true)`,
-    );
+    await setWhatsAppWorkerClinicContext(transaction, input.message.clinicId);
     const consent = await readWhatsAppConsentSnapshot(transaction, {
       clinicId: input.message.clinicId,
       contactId: input.message.recipient.id,
       now: input.now,
+      patientId: appointment.patientId,
     });
     const clinic = await transaction.query.clinics.findFirst({
       columns: { name: true },
@@ -837,6 +860,7 @@ export async function enqueueManualAppointmentTransactionalDelivery(
         consentAcceptedAt: consent.acceptedAt,
         consentDecision: consent.decision,
         consentPrivacyVersion: consent.privacyVersion,
+        patientConsentReference: consent.patientReference,
         consentReference: consent.reference,
         consentTermsVersion: consent.termsVersion,
         consentTextReference: consent.textReference,
@@ -904,6 +928,7 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
             clinicId: appointment.clinicId,
             contactId: recipient.id,
             now: input.now,
+            patientId: appointment.patientId,
           });
           const template = await readTemplateSnapshot(
             transaction,
@@ -947,6 +972,7 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
               consentAcceptedAt: consent.acceptedAt,
               consentDecision: consent.decision,
               consentPrivacyVersion: consent.privacyVersion,
+              patientConsentReference: consent.patientReference,
               consentReference: consent.reference,
               consentTermsVersion: consent.termsVersion,
               consentTextReference: consent.textReference,
@@ -1096,27 +1122,23 @@ export async function reactivatePendingWhatsAppDeliveries(input: {
   now: Date;
 }) {
   return inAppointmentSchedulerTransaction(async (transaction) => {
-    const consent = await readWhatsAppConsentSnapshot(transaction, input);
+    const channelConsent = await readWhatsAppConsentSnapshot(
+      transaction,
+      input,
+    );
     if (
-      consent.decision !== "allowed" ||
-      consent.reference !== input.consentReference
+      channelConsent.decision !== "allowed" ||
+      channelConsent.reference !== input.consentReference
     ) {
       return 0;
     }
-    const rows = await transaction
-      .update(transactionalDeliveries)
-      .set({
-        consentAcceptedAt: consent.acceptedAt,
-        consentDecision: consent.decision,
-        consentPrivacyVersion: consent.privacyVersion,
-        consentReference: consent.reference,
-        consentTermsVersion: consent.termsVersion,
-        consentTextReference: consent.textReference,
-        lastError: null,
-        leaseExpiresAt: null,
-        status: "pending",
-        updatedAt: input.now,
+    const candidates = await transaction
+      .select({
+        appointmentId: transactionalDeliveries.appointmentId,
+        id: transactionalDeliveries.id,
+        kind: transactionalDeliveries.kind,
       })
+      .from(transactionalDeliveries)
       .where(
         and(
           eq(transactionalDeliveries.clinicId, input.clinicId),
@@ -1161,9 +1183,55 @@ export async function reactivatePendingWhatsAppDeliveries(input: {
             "El Contacto revocó el Consentimiento de WhatsApp",
           ]),
         ),
-      )
-      .returning({ id: transactionalDeliveries.id });
-    return rows.length;
+      );
+    let reactivated = 0;
+    for (const candidate of candidates) {
+      if (candidate.appointmentId === null) continue;
+      const appointment = await transaction.query.appointments.findFirst({
+        columns: { patientId: true },
+        where: and(
+          eq(appointments.clinicId, input.clinicId),
+          eq(appointments.id, candidate.appointmentId),
+        ),
+      });
+      if (appointment?.patientId == null) continue;
+      const consent = await readWhatsAppConsentSnapshot(transaction, {
+        ...input,
+        patientId: appointment.patientId,
+      });
+      if (
+        consent.decision !== "allowed" ||
+        consent.reference !== input.consentReference
+      ) {
+        continue;
+      }
+      const rows = await transaction
+        .update(transactionalDeliveries)
+        .set({
+          consentAcceptedAt: consent.acceptedAt,
+          consentDecision: consent.decision,
+          consentPrivacyVersion: consent.privacyVersion,
+          patientConsentReference: consent.patientReference,
+          consentReference: consent.reference,
+          consentTermsVersion: consent.termsVersion,
+          consentTextReference: consent.textReference,
+          lastError: null,
+          leaseExpiresAt: null,
+          status: "pending",
+          updatedAt: input.now,
+        })
+        .where(
+          and(
+            eq(transactionalDeliveries.clinicId, input.clinicId),
+            eq(transactionalDeliveries.id, candidate.id),
+            eq(transactionalDeliveries.recipientContactId, input.contactId),
+            eq(transactionalDeliveries.status, "suppressed"),
+          ),
+        )
+        .returning({ id: transactionalDeliveries.id });
+      reactivated += rows.length;
+    }
+    return reactivated;
   });
 }
 
@@ -1893,6 +1961,8 @@ function whatsAppManagedPatientLinkCondition() {
     and(
       eq(contactPatientLinks.relationship, "tutor"),
       eq(contactPatientLinks.guardianshipVerificationStatus, "verified"),
+      sql`upper(regexp_replace(btrim(${contactPatientLinks.guardianDeclaration}), '[[:space:]]+', ' ', 'g')) = 'DECLARO REPRESENTACIÓN AUTORIZADA'`,
+      sql`${contactPatientLinks.guardianDui} ~ '^[0-9]{8}-[0-9]$'`,
     ),
   );
 }

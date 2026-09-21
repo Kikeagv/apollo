@@ -25,10 +25,12 @@ describe("smoke sintético simulado de WhatsApp", () => {
     expect(result.steps["consent-idempotent"]?.passed).toBe(true);
     expect(result.steps["consent-rejection"]?.passed).toBe(true);
     expect(result.steps["consent-version"]?.passed).toBe(true);
-    expect(result.steps["adult-flow"]?.passed).toBe(false);
-    expect(result.steps["guardian-pending"]?.passed).toBe(false);
-    expect(result.steps["adult-flow"]?.message).toContain("APO-93");
-    expect(result.steps["guardian-pending"]?.message).toContain("APO-93");
+    expect(result.steps["patient-consent-inbound"]?.passed).toBe(true);
+    expect(result.steps["adult-flow"]?.passed).toBe(true);
+    expect(result.steps["guardian-verified"]?.passed).toBe(true);
+    expect(result.steps["guardian-pending"]?.passed).toBe(true);
+    expect(result.steps["patient-selection"]?.passed).toBe(true);
+    expect(result.steps.urgency?.passed).toBe(true);
     expect(result.steps["legal-block"]?.passed).toBe(true);
     expect(result.steps["phone-number-created"]?.passed).toBe(true);
     expect(result.steps.redirect?.passed).toBe(true);
@@ -55,7 +57,7 @@ describe("smoke sintético simulado de WhatsApp", () => {
         (step) => step?.evidence !== undefined || step?.message !== undefined,
       ),
     ).toBe(true);
-    expect(result.steps["adult-flow"]?.passed).toBe(false);
-    expect(result.steps["guardian-pending"]?.passed).toBe(false);
+    expect(result.steps["adult-flow"]?.passed).toBe(true);
+    expect(result.steps["guardian-pending"]?.passed).toBe(true);
   });
 });

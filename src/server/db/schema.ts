@@ -1902,6 +1902,7 @@ export const transactionalDeliveries = createTable(
       "provider_status",
     ).$type<WhatsAppDeliveryStatus | null>(),
     consentReference: text("consent_reference"),
+    patientConsentReference: text("patient_consent_reference"),
     consentDecision: text("consent_decision").$type<
       "allowed" | "blocked" | null
     >(),
@@ -2609,7 +2610,7 @@ export const contactPatientLinks = createTable(
   ],
 );
 
-/** Evidencia append-only de aceptación explícita del canal de WhatsApp. */
+/** Evidencia append-only de consentimiento para canal o Paciente por WhatsApp. */
 export const whatsappContactConsents = createTable(
   "whatsapp_contact_consent",
   {
@@ -2619,6 +2620,7 @@ export const whatsappContactConsents = createTable(
     identityId: uuid("identity_id").notNull(),
     patientId: uuid("patient_id"),
     phoneE164: text("phone_e164"),
+    declaration: text("declaration").notNull(),
     scope: text("scope").$type<WhatsAppConsentScope>().notNull(),
     acceptedRole: text("accepted_role")
       .$type<WhatsAppConsentAcceptedRole>()
@@ -2690,6 +2692,10 @@ export const whatsappContactConsents = createTable(
     check(
       "whatsapp_contact_consent_reference",
       sql`btrim(${table.textReference}) <> ''`,
+    ),
+    check(
+      "whatsapp_contact_consent_declaration",
+      sql`btrim(${table.declaration}) <> ''`,
     ),
     check(
       "whatsapp_contact_consent_interaction",

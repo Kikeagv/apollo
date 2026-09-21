@@ -1,6 +1,8 @@
 import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 
 import { CLINIC_UTC_OFFSET } from "~/clinic-timezone";
+import { isAdultPatient } from "~/domain/patient";
+import { isWhatsAppGuardianDeclaration } from "~/domain/whatsapp-consent";
 import {
   calculateCareOptionsFromInputs,
   type CareOptionInputs,
@@ -29,6 +31,8 @@ import {
   drizzleAgendaAppointmentRescheduler,
 } from "~/server/db/agenda-appointment-rescheduler";
 import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
+import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
+import { reactivatePendingWhatsAppDeliveries } from "~/server/db/transactional-delivery-store";
 import {
   isAsclepioEnabled,
   listAsclepioOfferIds,
@@ -518,6 +522,71 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
             })
             .then((clinic) => clinic?.voiceTranscriptionEnabled === true),
       );
+    },
+
+    async findWhatsAppPatientConsentEligibility(input) {
+      return inSimulatedWhatsAppClinicTransaction(
+        input.clinicId,
+        async (transaction) => {
+          const [link] = await transaction
+            .select({
+              birthDate: patients.birthDate,
+              guardianDeclaration: contactPatientLinks.guardianDeclaration,
+              guardianDui: contactPatientLinks.guardianDui,
+              guardianshipVerificationStatus:
+                contactPatientLinks.guardianshipVerificationStatus,
+              relationship: contactPatientLinks.relationship,
+            })
+            .from(contactPatientLinks)
+            .innerJoin(
+              patients,
+              and(
+                eq(contactPatientLinks.clinicId, patients.clinicId),
+                eq(contactPatientLinks.patientId, patients.id),
+              ),
+            )
+            .where(
+              and(
+                eq(contactPatientLinks.clinicId, input.clinicId),
+                eq(contactPatientLinks.contactId, input.contactId),
+                eq(contactPatientLinks.patientId, input.patientId),
+              ),
+            )
+            .limit(1);
+          if (link === undefined) return null;
+          if (link.relationship === "tutor") {
+            return link.guardianshipVerificationStatus === "verified" &&
+              link.guardianDui !== null &&
+              /^\d{8}-\d$/.test(link.guardianDui) &&
+              isWhatsAppGuardianDeclaration(link.guardianDeclaration ?? "")
+              ? "tutor"
+              : "tutor-pending";
+          }
+          return link.relationship === "contact" &&
+            link.birthDate !== null &&
+            isAdultPatient(link.birthDate, input.now)
+            ? "adult-patient"
+            : null;
+        },
+      );
+    },
+
+    findLatestWhatsAppConsent(input) {
+      return drizzleWhatsAppInboundStore.findLatestWhatsAppConsent(input);
+    },
+
+    readCurrentWhatsAppConsentPolicy(input) {
+      return drizzleWhatsAppInboundStore.readCurrentWhatsAppConsentPolicy(
+        input,
+      );
+    },
+
+    recordWhatsAppConsent(input) {
+      return drizzleWhatsAppInboundStore.recordWhatsAppConsent(input);
+    },
+
+    reactivatePendingWhatsAppDeliveries(input) {
+      return reactivatePendingWhatsAppDeliveries(input);
     },
 
     async recordUrgencyEvent(input) {
@@ -1695,6 +1764,8 @@ function whatsappManagedPatientLinkCondition() {
     and(
       eq(contactPatientLinks.relationship, "tutor"),
       eq(contactPatientLinks.guardianshipVerificationStatus, "verified"),
+      sql`upper(regexp_replace(btrim(${contactPatientLinks.guardianDeclaration}), '[[:space:]]+', ' ', 'g')) = 'DECLARO REPRESENTACIÓN AUTORIZADA'`,
+      sql`${contactPatientLinks.guardianDui} ~ '^[0-9]{8}-[0-9]$'`,
     ),
   );
 }

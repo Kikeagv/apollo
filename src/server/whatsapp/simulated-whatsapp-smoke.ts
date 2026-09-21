@@ -4,6 +4,9 @@ import {
   isWhatsAppConsentCurrent,
   isWhatsAppConsentOptOut,
   whatsappConsentPrompt,
+  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+  WHATSAPP_GUARDIAN_DECLARATION,
+  WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
   type WhatsAppConsentEvidence,
 } from "~/domain/whatsapp-consent";
 import {
@@ -36,6 +39,11 @@ import {
   type WhatsAppInboundStore,
 } from "~/server/application/whatsapp-inbound";
 import { receiveKapsoWebhook } from "~/server/application/whatsapp-provisioning";
+import {
+  createInMemorySimulatedWhatsAppBookingStore,
+  processWhatsAppTextForContact,
+} from "~/server/application/simulated-whatsapp-booking";
+import { isWhatsAppPatientConsentCurrent } from "~/domain/whatsapp-consent";
 import type {
   WhatsAppSyntheticSmokeRunner,
   WhatsAppSyntheticSmokeRunnerResult,
@@ -82,6 +90,7 @@ export async function runPraxiaWhatsAppSyntheticSmoke(input: {
   const inbound = await runInboundSmoke(input);
   record("reception", inbound.reception);
   record("response", inbound.response);
+  record("urgency", inbound.urgency);
   record("takeover", inbound.takeover);
   record("history-sync", inbound.historySync);
   steps.duplicate = {
@@ -130,6 +139,7 @@ export async function runPraxiaWhatsAppSyntheticSmoke(input: {
   record("timeout", timeoutRetry > SMOKE_NOW);
 
   await runConsentSmoke(input, record, inbound);
+  record("patient-consent-inbound", await runPatientConsentInboundSmoke(input));
 
   const legalEvaluation = evaluateWhatsAppRealTraffic({
     circuitStatus: "closed",
@@ -171,6 +181,7 @@ type PraxiaInboundSmokeResult = {
   reception: boolean;
   response: boolean;
   takeover: boolean;
+  urgency: boolean;
 };
 
 async function runInboundSmoke(input: {
@@ -183,6 +194,12 @@ async function runInboundSmoke(input: {
       id: "synthetic-reception-message",
       idempotencyKey: "synthetic-reception",
       text: "Hola",
+    }),
+    syntheticInboundEvent(input, {
+      eventId: "synthetic-urgency-event",
+      id: "synthetic-urgency-message",
+      idempotencyKey: "synthetic-urgency",
+      text: "Tengo una urgencia médica",
     }),
     syntheticInboundEvent(input, {
       eventId: "synthetic-consent-event",
@@ -283,6 +300,18 @@ async function runInboundSmoke(input: {
         (reply) => reply.text === "Respuesta sintética de la Clínica",
       ),
     takeover: harness.takeoverActivations === 1,
+    urgency:
+      harness.statusByEventId.get("synthetic-urgency-event") === "processed" &&
+      harness.safeRoutes.some(
+        (route) =>
+          route.messageId === "synthetic-urgency-message" &&
+          route.route === "urgency",
+      ) &&
+      harness.sentReplies.some(
+        (reply) =>
+          reply.idempotencyKey === "synthetic-urgency-message" &&
+          reply.text.includes("911"),
+      ),
   };
 }
 
@@ -348,7 +377,13 @@ function syntheticKapsoInboundPayload(event: WhatsAppInboundEvent) {
   };
 }
 
-function createInboundSmokeHarness(input: { clinicId: string }) {
+function createInboundSmokeHarness(input: {
+  assistant?: WhatsAppInboundAssistant;
+  clinicId: string;
+  contactId?: string;
+  identityId?: string;
+  initialConsent?: WhatsAppConsentEvidence;
+}) {
   const statusByEventId = new Map<string, WhatsAppInboundEvent["status"]>();
   // Este smoke identifica de forma explícita la idempotencia de ingress. La
   // deduplicación durable de la persistencia se verifica en la prueba de DB.
@@ -360,7 +395,9 @@ function createInboundSmokeHarness(input: { clinicId: string }) {
     WhatsAppConsentEvidence["status"]
   >();
   const sentReplies: Array<{ idempotencyKey: string; text: string }> = [];
-  let latestConsent: WhatsAppConsentEvidence | null = null;
+  const safeRoutes: Array<{ messageId: string; route: string }> = [];
+  let latestConsent: WhatsAppConsentEvidence | null =
+    input.initialConsent ?? null;
   let consentWrites = 0;
   let assistantCalls = 0;
   let takeoverActivations = 0;
@@ -414,8 +451,8 @@ function createInboundSmokeHarness(input: { clinicId: string }) {
     async resolveMessage() {
       return {
         clinicId: input.clinicId,
-        contactId: "synthetic-contact",
-        identityId: `synthetic-identity:${input.clinicId}`,
+        contactId: input.contactId ?? "synthetic-contact",
+        identityId: input.identityId ?? `synthetic-identity:${input.clinicId}`,
         kind: "matched" as const,
         recipientBusinessScopedUserId: "synthetic-business-scoped-user",
         recipientPhoneE164: null,
@@ -453,6 +490,7 @@ function createInboundSmokeHarness(input: { clinicId: string }) {
         acceptedRole: record.acceptedRole,
         clinicId: record.clinicId,
         contactId: record.contactId,
+        declaration: record.declaration,
         id: `synthetic-consent:${consentWrites}`,
         identityId: record.identityId,
         interactionId: record.interactionId,
@@ -472,12 +510,13 @@ function createInboundSmokeHarness(input: { clinicId: string }) {
       return latestConsent;
     },
   };
-  const assistant: WhatsAppInboundAssistant = {
+  const defaultAssistant: WhatsAppInboundAssistant = {
     async processText() {
       assistantCalls += 1;
       return { text: "Respuesta sintética de la Clínica" };
     },
   };
+  const assistant = input.assistant ?? defaultAssistant;
   const replySender: WhatsAppInboundReplySender = {
     async send(reply) {
       if (
@@ -513,9 +552,16 @@ function createInboundSmokeHarness(input: { clinicId: string }) {
       return latestConsent;
     },
     replySender,
+    safeRoutes,
     safeRoute: {
-      async process() {
-        return { text: "Respuesta segura sintética" };
+      async process(routeInput: { messageId: string; route: string }) {
+        safeRoutes.push(routeInput);
+        return {
+          text:
+            routeInput.route === "urgency"
+              ? "Si es una emergencia médica, llame al 911 ahora."
+              : "Respuesta segura sintética",
+        };
       },
     },
     sentReplies,
@@ -890,12 +936,8 @@ function simulatedReadinessInput(input: {
 }
 
 async function runConsentSmoke(
-  input: { clinicId: string; syntheticContactId: string },
-  record: (
-    code: keyof WhatsAppSyntheticSmokeRunnerResult["steps"],
-    passed: boolean,
-    message?: string,
-  ) => void,
+  input: ConsentSmokeInput,
+  record: ConsentSmokeRecorder,
   inbound: PraxiaInboundSmokeResult,
 ) {
   const policy = buildWhatsAppConsentPolicy("1.0");
@@ -1000,16 +1042,484 @@ async function runConsentSmoke(
       !isWhatsAppConsentCurrent(versionHarness.latest, newPolicy),
   );
 
+  await runAdultPatientConsentSmoke(input, policy, record);
+  await runVerifiedTutorConsentSmoke(input, policy, record);
+  await runPendingTutorConsentSmoke(input, policy, record);
+  await runPatientSelectionSmoke(input, policy, record);
+}
+
+async function runPatientConsentInboundSmoke(
+  input: ConsentSmokeInput & { phoneNumberId: string },
+) {
+  const policy = buildWhatsAppConsentPolicy("1.0");
+  const fixture = await createPatientConsentSmokeFixture(input, policy, {
+    channelConsentInteractionId: "synthetic-inbound-channel-consent",
+    contactName: "Contacto Sintético",
+    links: [],
+    patients: [],
+  });
+  if (fixture.channelConsent === null) return false;
+
+  const harness = createInboundSmokeHarness({
+    assistant: {
+      async processText(assistantInput) {
+        const response = await processWhatsAppTextForContact(
+          assistantInput,
+          fixture.store,
+          assistantInput.now,
+        );
+        return { text: response.text };
+      },
+    },
+    clinicId: input.clinicId,
+    contactId: input.syntheticContactId,
+    identityId: fixture.context.identityId,
+    initialConsent: fixture.channelConsent,
+  });
+  const commands = [
+    {
+      eventId: "synthetic-inbound-adult-registration-event",
+      id: "synthetic-inbound-adult-registration",
+      text: "registrar adulto|Paciente Sintético|01234567-8|1990-01-01",
+    },
+    {
+      eventId: "synthetic-inbound-patient-selection-event",
+      id: "synthetic-inbound-patient-selection",
+      text: "paciente 1",
+    },
+    {
+      eventId: "synthetic-inbound-patient-consent-event",
+      id: "synthetic-inbound-patient-consent",
+      text: `consentir paciente|${WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION}`,
+    },
+  ];
+  const processed: boolean[] = [];
+  for (const command of commands) {
+    const ingress = await harness.enqueueKapsoEvent(
+      syntheticInboundEvent(input, {
+        ...command,
+        idempotencyKey: command.eventId,
+      }),
+    );
+    if (!ingress.accepted) {
+      processed.push(false);
+      continue;
+    }
+    const result = await runKapsoInboundWorker(
+      { limit: 1, now: SMOKE_NOW },
+      harness.store,
+      harness.assistant,
+      createWhatsAppConsentGate(harness.consentStore),
+      harness.replySender,
+      harness.safeRoute,
+      harness.takeover,
+    );
+    processed.push(
+      result.processed === 1 &&
+        harness.statusByEventId.get(command.eventId) === "processed",
+    );
+  }
+
+  const patient = fixture.store.patients[0];
+  const patientConsent = fixture.store.patientConsents.find(
+    (evidence) => evidence.scope === "patient",
+  );
+  return (
+    processed.every(Boolean) &&
+    patient !== undefined &&
+    patientConsent !== undefined &&
+    patientConsent.interactionId === "synthetic-inbound-patient-consent" &&
+    patientConsent.identityId === fixture.context.identityId &&
+    patientConsent.acceptedRole === "adult-patient" &&
+    isWhatsAppPatientConsentCurrent(patientConsent, policy, {
+      acceptedRole: "adult-patient",
+      patientId: patient.id,
+    })
+  );
+}
+
+type ConsentSmokeInput = {
+  clinicId: string;
+  syntheticContactId: string;
+};
+
+type ConsentSmokeRecorder = (
+  code: keyof WhatsAppSyntheticSmokeRunnerResult["steps"],
+  passed: boolean,
+  message?: string,
+) => void;
+
+type ConsentSmokeBookingSeed = Parameters<
+  typeof createInMemorySimulatedWhatsAppBookingStore
+>[0];
+
+type PatientConsentSmokeFixtureSeed = Pick<
+  ConsentSmokeBookingSeed,
+  "links" | "patients"
+> & {
+  channelConsentInteractionId?: string;
+  contactName: string;
+};
+
+async function runAdultPatientConsentSmoke(
+  input: ConsentSmokeInput,
+  policy: ReturnType<typeof buildWhatsAppConsentPolicy>,
+  record: ConsentSmokeRecorder,
+) {
+  const adultFixture = await createPatientConsentSmokeFixture(input, policy, {
+    channelConsentInteractionId: "synthetic-adult-channel-consent",
+    contactName: "Contacto Sintético",
+    links: [],
+    patients: [],
+  });
+  const adultStore = adultFixture.store;
+  const adultContext = adultFixture.context;
+  const adultIdentityId = adultContext.identityId;
+  const adultChannelConsent = adultFixture.channelConsent;
+  const adultRegistration = await processWhatsAppTextForContact(
+    {
+      ...adultContext,
+      messageId: "synthetic-adult-registration",
+      text: "registrar adulto|Paciente Sintético|01234567-8|1990-01-01",
+    },
+    adultStore,
+    SMOKE_NOW,
+  );
+  const adultSelection = await processWhatsAppTextForContact(
+    {
+      ...adultContext,
+      messageId: "synthetic-adult-selection",
+      text: "paciente 1",
+    },
+    adultStore,
+    SMOKE_NOW,
+  );
+  const adultPatientConsent = await processWhatsAppTextForContact(
+    {
+      ...adultContext,
+      messageId: "synthetic-adult-patient-consent",
+      text: `consentir paciente|${WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION}`,
+    },
+    adultStore,
+    SMOKE_NOW,
+  );
+  const adultPatientEvidence = adultStore.patientConsents.find(
+    (evidence) => evidence.scope === "patient",
+  );
+  const adultRegisteredPatient = adultStore.patients[0];
   record(
     "adult-flow",
-    false,
-    "El flujo de adulto-paciente requiere el modelo de protección de menores de APO-93",
+    adultRegistration.kind === "patient-registered" &&
+      adultSelection.kind === "patient-consent-pending" &&
+      adultPatientConsent.kind === "patient-consent-accepted" &&
+      adultRegisteredPatient !== undefined &&
+      adultPatientEvidence !== undefined &&
+      adultChannelConsent !== null &&
+      isWhatsAppConsentCurrent(adultChannelConsent, policy) &&
+      isWhatsAppPatientConsentCurrent(adultPatientEvidence, policy, {
+        acceptedRole: "adult-patient",
+        patientId: adultRegisteredPatient.id,
+      }) &&
+      adultPatientEvidence.identityId === adultIdentityId &&
+      adultPatientEvidence.interactionId === "synthetic-adult-patient-consent",
   );
+}
+
+async function runVerifiedTutorConsentSmoke(
+  input: ConsentSmokeInput,
+  policy: ReturnType<typeof buildWhatsAppConsentPolicy>,
+  record: ConsentSmokeRecorder,
+) {
+  const tutorFixture = await createPatientConsentSmokeFixture(input, policy, {
+    channelConsentInteractionId: "synthetic-tutor-channel-consent",
+    contactName: "Tutor Sintético",
+    links: [
+      {
+        contactId: input.syntheticContactId,
+        guardianDeclaration: WHATSAPP_GUARDIAN_DECLARATION,
+        guardianDui: "01234567-8",
+        guardianshipVerificationStatus: "verified",
+        patientId: "synthetic-minor-patient",
+        relationship: "tutor",
+      },
+    ],
+    patients: [
+      {
+        birthDate: "2018-04-02",
+        id: "synthetic-minor-patient",
+        name: "Paciente Menor Sintético",
+      },
+    ],
+  });
+  const tutorStore = tutorFixture.store;
+  const tutorContext = tutorFixture.context;
+  const tutorIdentityId = tutorContext.identityId;
+  const tutorChannelConsent = tutorFixture.channelConsent;
+  const tutorSelection = await processWhatsAppTextForContact(
+    {
+      ...tutorContext,
+      messageId: "synthetic-tutor-selection",
+      text: "paciente 1",
+    },
+    tutorStore,
+    SMOKE_NOW,
+  );
+  const tutorPatientConsent = await processWhatsAppTextForContact(
+    {
+      ...tutorContext,
+      messageId: "synthetic-tutor-patient-consent",
+      text: `consentir paciente|${WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION}`,
+    },
+    tutorStore,
+    SMOKE_NOW,
+  );
+  const tutorPatientEvidence = tutorStore.patientConsents.find(
+    (evidence) => evidence.scope === "patient",
+  );
+  const tutorEligibility =
+    await tutorStore.findWhatsAppPatientConsentEligibility({
+      clinicId: input.clinicId,
+      contactId: input.syntheticContactId,
+      now: SMOKE_NOW,
+      patientId: "synthetic-minor-patient",
+    });
+  record(
+    "guardian-verified",
+    tutorSelection.kind === "patient-consent-pending" &&
+      tutorPatientConsent.kind === "patient-consent-accepted" &&
+      tutorEligibility === "tutor" &&
+      tutorChannelConsent !== null &&
+      tutorChannelConsent.scope === "channel" &&
+      tutorPatientEvidence !== undefined &&
+      tutorPatientEvidence.acceptedRole === "tutor" &&
+      tutorPatientEvidence.declaration ===
+        WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION &&
+      tutorPatientEvidence.identityId === tutorIdentityId &&
+      tutorPatientEvidence.interactionId ===
+        "synthetic-tutor-patient-consent" &&
+      isWhatsAppPatientConsentCurrent(tutorPatientEvidence, policy, {
+        acceptedRole: "tutor",
+        patientId: "synthetic-minor-patient",
+      }),
+  );
+}
+
+async function runPendingTutorConsentSmoke(
+  input: ConsentSmokeInput,
+  policy: ReturnType<typeof buildWhatsAppConsentPolicy>,
+  record: ConsentSmokeRecorder,
+) {
+  const pendingFixture = await createPatientConsentSmokeFixture(input, policy, {
+    channelConsentInteractionId: "synthetic-pending-channel-consent",
+    contactName: "Tutor Sintético",
+    links: [
+      {
+        contactId: input.syntheticContactId,
+        guardianDeclaration: WHATSAPP_GUARDIAN_DECLARATION,
+        guardianDui: "01234567-8",
+        guardianshipVerificationStatus: "pending",
+        patientId: "synthetic-pending-patient",
+        relationship: "tutor",
+      },
+    ],
+    patients: [
+      {
+        birthDate: "2018-04-02",
+        id: "synthetic-pending-patient",
+        name: "Paciente Pendiente Sintético",
+      },
+    ],
+  });
+  const pendingTutorStore = pendingFixture.store;
+  const pendingContext = pendingFixture.context;
+  const pendingChannelConsent = pendingFixture.channelConsent;
+  const pendingSelection = await processWhatsAppTextForContact(
+    {
+      ...pendingContext,
+      messageId: "synthetic-pending-selection",
+      text: "paciente synthetic-pending-patient",
+    },
+    pendingTutorStore,
+    SMOKE_NOW,
+  );
+  const pendingOperation = await processWhatsAppTextForContact(
+    {
+      ...pendingContext,
+      messageId: "synthetic-pending-operation",
+      text: "opciones synthetic-offer 2026-09-14",
+    },
+    pendingTutorStore,
+    SMOKE_NOW,
+  );
+  const pendingConsentAttempt = await processWhatsAppTextForContact(
+    {
+      ...pendingContext,
+      messageId: "synthetic-pending-patient-consent",
+      text: `consentir paciente|${WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION}`,
+    },
+    pendingTutorStore,
+    SMOKE_NOW,
+  );
+  const pendingEligibility =
+    await pendingTutorStore.findWhatsAppPatientConsentEligibility({
+      clinicId: input.clinicId,
+      contactId: input.syntheticContactId,
+      now: SMOKE_NOW,
+      patientId: "synthetic-pending-patient",
+    });
   record(
     "guardian-pending",
-    false,
-    "El estado pendiente de Tutor requiere el modelo de protección de menores de APO-93",
+    pendingChannelConsent !== null &&
+      pendingChannelConsent.scope === "channel" &&
+      pendingEligibility === "tutor-pending" &&
+      pendingSelection.kind === "patient-selection-required" &&
+      pendingSelection.patients.length === 0 &&
+      pendingOperation.kind === "patient-selection-required" &&
+      pendingConsentAttempt.kind === "patient-selection-required" &&
+      pendingTutorStore.patientConsents.every(
+        (evidence) => evidence.scope !== "patient",
+      ),
   );
+}
+
+async function runPatientSelectionSmoke(
+  input: ConsentSmokeInput,
+  policy: ReturnType<typeof buildWhatsAppConsentPolicy>,
+  record: ConsentSmokeRecorder,
+) {
+  const selectionFixture = await createPatientConsentSmokeFixture(
+    input,
+    policy,
+    {
+      contactName: "Contacto Sintético",
+      links: [
+        { contactId: input.syntheticContactId, patientId: "synthetic-adult-1" },
+        { contactId: input.syntheticContactId, patientId: "synthetic-adult-2" },
+      ],
+      patients: [
+        {
+          birthDate: "1990-01-01",
+          id: "synthetic-adult-1",
+          name: "Paciente Adulto Uno",
+        },
+        {
+          birthDate: "1988-05-01",
+          id: "synthetic-adult-2",
+          name: "Paciente Adulto Dos",
+        },
+      ],
+    },
+  );
+  const selectionStore = selectionFixture.store;
+  const selectionContext = selectionFixture.context;
+  const ambiguousSelection = await processWhatsAppTextForContact(
+    {
+      ...selectionContext,
+      messageId: "synthetic-ambiguous-operation",
+      text: "opciones synthetic-offer 2026-09-14",
+    },
+    selectionStore,
+    SMOKE_NOW,
+  );
+  const ambiguousConversation = await selectionStore.getConversation({
+    clinicId: input.clinicId,
+    contactId: input.syntheticContactId,
+  });
+  const emptySelectionFixture = await createPatientConsentSmokeFixture(
+    input,
+    policy,
+    {
+      contactName: "Contacto Sintético",
+      links: [],
+      patients: [],
+    },
+  );
+  const emptySelectionStore = emptySelectionFixture.store;
+  const absentSelection = await processWhatsAppTextForContact(
+    {
+      ...selectionContext,
+      messageId: "synthetic-absent-operation",
+      text: "opciones synthetic-offer 2026-09-14",
+    },
+    emptySelectionStore,
+    SMOKE_NOW,
+  );
+  const emptyConversation = await emptySelectionStore.getConversation({
+    clinicId: input.clinicId,
+    contactId: input.syntheticContactId,
+  });
+  record(
+    "patient-selection",
+    ambiguousSelection.kind === "patient-selection-required" &&
+      ambiguousSelection.patients.length === 2 &&
+      ambiguousConversation.selectedPatientId === null &&
+      absentSelection.kind === "patient-selection-required" &&
+      absentSelection.patients.length === 0 &&
+      emptyConversation.selectedPatientId === null,
+  );
+}
+
+async function createPatientConsentSmokeFixture(
+  input: ConsentSmokeInput,
+  policy: ReturnType<typeof buildWhatsAppConsentPolicy>,
+  seed: PatientConsentSmokeFixtureSeed,
+) {
+  const store = createInMemorySimulatedWhatsAppBookingStore({
+    clinic: {
+      id: input.clinicId,
+      whatsappNumberE164: "+50370000001",
+    },
+    contacts: [
+      {
+        id: input.syntheticContactId,
+        name: seed.contactName,
+        phoneE164: "+50370000002",
+      },
+    ],
+    links: seed.links,
+    offers: [],
+    options: [],
+    patients: seed.patients,
+  });
+  const context = {
+    clinicId: input.clinicId,
+    contactId: input.syntheticContactId,
+    identityId: `synthetic-identity:${input.clinicId}`,
+  };
+  const channelConsent =
+    seed.channelConsentInteractionId === undefined
+      ? null
+      : await recordSyntheticChannelConsent(
+          store,
+          policy,
+          input.clinicId,
+          input.syntheticContactId,
+          seed.channelConsentInteractionId,
+        );
+  return { channelConsent, context, store };
+}
+
+function recordSyntheticChannelConsent(
+  store: ReturnType<typeof createInMemorySimulatedWhatsAppBookingStore>,
+  policy: ReturnType<typeof buildWhatsAppConsentPolicy>,
+  clinicId: string,
+  contactId: string,
+  interactionId: string,
+) {
+  return store.recordWhatsAppConsent({
+    acceptedAt: SMOKE_NOW,
+    acceptedRole: "contact",
+    clinicId,
+    contactId,
+    declaration: "CONTINUAR",
+    identityId: `synthetic-identity:${clinicId}`,
+    interactionId,
+    patientId: null,
+    phoneE164: "+50370000002",
+    policy,
+    scope: "channel",
+    status: "accepted",
+  });
 }
 
 function createConsentHarness(
@@ -1032,6 +1542,7 @@ function createConsentHarness(
         acceptedRole: input.acceptedRole,
         clinicId: input.clinicId,
         contactId: input.contactId,
+        declaration: input.declaration,
         id: `synthetic-consent:${recordCount}`,
         identityId: input.identityId,
         interactionId: input.interactionId,

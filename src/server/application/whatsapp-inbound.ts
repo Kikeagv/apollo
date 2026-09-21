@@ -159,6 +159,7 @@ export type WhatsAppInboundAssistant = {
   processText(input: {
     clinicId: string;
     contactId: string;
+    identityId: string;
     messageId: string;
     now: Date;
     text: string;
@@ -664,6 +665,7 @@ async function processInboundEvent(input: {
               input.assistant.processText({
                 clinicId: resolved.clinicId,
                 contactId: resolved.contactId,
+                identityId: resolved.identityId,
                 messageId: event.id,
                 now,
                 text,

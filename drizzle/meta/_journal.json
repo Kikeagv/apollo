@@ -708,6 +708,13 @@
       "when": 1789756800002,
       "tag": "0105_apo99_whatsapp_template_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1789881600000,
+      "tag": "0106_apo102_patient_whatsapp_consent",
+      "breakpoints": true
     }
   ]
 }

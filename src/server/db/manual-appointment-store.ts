@@ -309,13 +309,25 @@ export const drizzleManualAppointmentStore: ManualAppointmentCreator &
   },
 
   async hasCurrentWhatsAppConsent(input) {
-    return inClinicTransaction(input, (transaction) =>
-      hasCurrentWhatsAppConsent(transaction, {
-        clinicId: input.clinicId,
-        contactId: input.contactId,
-        now: input.now,
-      }),
-    );
+    return inClinicTransaction(input, async (transaction) => {
+      const appointment = await transaction.query.appointments.findFirst({
+        columns: { patientId: true },
+        where: and(
+          eq(appointments.clinicId, input.clinicId),
+          eq(appointments.id, input.appointmentId),
+        ),
+      });
+      return (
+        appointment?.patientId !== null &&
+        appointment?.patientId !== undefined &&
+        hasCurrentWhatsAppConsent(transaction, {
+          clinicId: input.clinicId,
+          contactId: input.contactId,
+          now: input.now,
+          patientId: appointment.patientId,
+        })
+      );
+    });
   },
 
   async recordReminderDelivery(input) {
@@ -1047,6 +1059,8 @@ function whatsappManagedPatientLinkCondition() {
     and(
       eq(contactPatientLinks.relationship, "tutor"),
       eq(contactPatientLinks.guardianshipVerificationStatus, "verified"),
+      sql`upper(regexp_replace(btrim(${contactPatientLinks.guardianDeclaration}), '[[:space:]]+', ' ', 'g')) = 'DECLARO REPRESENTACIÓN AUTORIZADA'`,
+      sql`${contactPatientLinks.guardianDui} ~ '^[0-9]{8}-[0-9]$'`,
     ),
   );
 }

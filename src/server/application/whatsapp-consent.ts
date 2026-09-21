@@ -1,9 +1,14 @@
 import {
+  isWhatsAppAdultPatientConsentDeclaration,
   isWhatsAppConsentAffirmation,
   isWhatsAppConsentCurrent,
   isWhatsAppConsentOptOut,
+  isWhatsAppPatientConsentCurrent,
+  isWhatsAppTutorPatientConsentDeclaration,
   whatsappConsentPrompt,
+  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
   WHATSAPP_CONSENT_PROVIDER,
+  WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
   type WhatsAppConsentAcceptedRole,
   type WhatsAppConsentEvidence,
   type WhatsAppConsentPolicy,
@@ -25,6 +30,7 @@ export type WhatsAppConsentStore = {
     acceptedRole: WhatsAppConsentAcceptedRole;
     clinicId: string;
     contactId: string;
+    declaration: string;
     identityId: string;
     interactionId: string;
     patientId: string | null;
@@ -34,6 +40,160 @@ export type WhatsAppConsentStore = {
     status?: "accepted" | "revoked";
   }): Promise<WhatsAppConsentEvidence>;
 };
+
+export type WhatsAppPatientConsentEligibility =
+  "adult-patient" | "tutor" | "tutor-pending" | null;
+
+export type WhatsAppPatientConsentStore = WhatsAppConsentStore & {
+  findWhatsAppPatientConsentEligibility(input: {
+    clinicId: string;
+    contactId: string;
+    now: Date;
+    patientId: string;
+  }): Promise<WhatsAppPatientConsentEligibility>;
+};
+
+export type WhatsAppPatientConsentDecision =
+  | {
+      acceptedRole: "adult-patient" | "tutor";
+      kind: "accepted";
+      reference: string;
+    }
+  | {
+      code:
+        | "guardian-verification-required"
+        | "identity-unverified"
+        | "invalid-evidence"
+        | "policy-unavailable"
+        | "unauthorized-link";
+      kind: "blocked";
+      reason: string;
+    }
+  | { kind: "pending"; prompt: string };
+
+/** Registra consentimiento actual de un Paciente sin saltar la verificación de tutela. */
+export function createWhatsAppPatientConsentGate(
+  store: WhatsAppPatientConsentStore,
+) {
+  return {
+    async check(input: {
+      clinicId: string;
+      contactId: string;
+      declaration: string;
+      identityId: string | undefined;
+      interactionId: string;
+      now: Date;
+      patientId: string;
+      phoneE164: string | null;
+    }): Promise<WhatsAppPatientConsentDecision> {
+      const eligibility = await store.findWhatsAppPatientConsentEligibility({
+        clinicId: input.clinicId,
+        contactId: input.contactId,
+        now: input.now,
+        patientId: input.patientId,
+      });
+      if (eligibility === "tutor-pending") {
+        return {
+          code: "guardian-verification-required",
+          kind: "blocked",
+          reason: "La Clínica debe verificar la representación del Tutor",
+        };
+      }
+      if (eligibility === null) {
+        return {
+          code: "unauthorized-link",
+          kind: "blocked",
+          reason: "El Contacto no tiene un vínculo autorizado con el Paciente",
+        };
+      }
+      const expectedDeclaration =
+        eligibility === "adult-patient"
+          ? WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION
+          : WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION;
+      const policy = await store.readCurrentWhatsAppConsentPolicy({
+        clinicId: input.clinicId,
+      });
+      if (policy === undefined) {
+        return {
+          code: "policy-unavailable",
+          kind: "blocked",
+          reason: "La Clínica no tiene una política de consentimiento vigente",
+        };
+      }
+      const latest = await store.findLatestWhatsAppConsent({
+        clinicId: input.clinicId,
+        contactId: input.contactId,
+        patientId: input.patientId,
+        scope: "patient",
+      });
+      if (
+        latest !== null &&
+        latest.acceptedAt <= input.now &&
+        isWhatsAppPatientConsentCurrent(latest, policy, {
+          acceptedRole: eligibility,
+          patientId: input.patientId,
+        })
+      ) {
+        return {
+          acceptedRole: eligibility,
+          kind: "accepted",
+          reference: latest.id,
+        };
+      }
+      const matchesDeclaration =
+        eligibility === "adult-patient"
+          ? isWhatsAppAdultPatientConsentDeclaration(input.declaration)
+          : isWhatsAppTutorPatientConsentDeclaration(input.declaration);
+      if (!matchesDeclaration) {
+        return {
+          kind: "pending",
+          prompt: `Para el Paciente seleccionado, responda exactamente: consentir paciente|${expectedDeclaration}`,
+        };
+      }
+      if (input.identityId === undefined || input.identityId.trim() === "") {
+        return {
+          code: "identity-unverified",
+          kind: "blocked",
+          reason: "No se pudo verificar la Identidad de WhatsApp del Contacto",
+        };
+      }
+
+      const recorded = await store.recordWhatsAppConsent({
+        acceptedAt: input.now,
+        acceptedRole: eligibility,
+        clinicId: input.clinicId,
+        contactId: input.contactId,
+        declaration: input.declaration.trim(),
+        identityId: input.identityId,
+        interactionId: input.interactionId,
+        patientId: input.patientId,
+        phoneE164: input.phoneE164,
+        policy,
+        scope: "patient",
+        status: "accepted",
+      });
+      if (
+        recorded.acceptedAt > input.now ||
+        !isWhatsAppPatientConsentCurrent(recorded, policy, {
+          acceptedRole: eligibility,
+          patientId: input.patientId,
+        })
+      ) {
+        return {
+          code: "invalid-evidence",
+          kind: "blocked",
+          reason:
+            "No se pudo validar la evidencia de consentimiento del Paciente",
+        };
+      }
+      return {
+        acceptedRole: eligibility,
+        kind: "accepted",
+        reference: recorded.id,
+      };
+    },
+  };
+}
 
 export type WhatsAppConsentCheckInput = {
   clinicId: string;
@@ -66,7 +226,16 @@ export type WhatsAppConsentReader = Pick<
 
 /** El outbox usa esta lectura para bloquear recordatorios sin opt-in vigente. */
 export async function canSendWhatsAppProactiveDelivery(
-  input: { clinicId: string; contactId: string; now: Date },
+  input: {
+    acceptedRole: Extract<
+      WhatsAppConsentAcceptedRole,
+      "adult-patient" | "tutor"
+    >;
+    clinicId: string;
+    contactId: string;
+    now: Date;
+    patientId: string;
+  },
   store: WhatsAppConsentReader,
 ) {
   const policy = await store.readCurrentWhatsAppConsentPolicy({
@@ -79,10 +248,24 @@ export async function canSendWhatsAppProactiveDelivery(
     patientId: null,
     scope: "channel",
   });
-  return (
+  const channelAllowed =
     evidence !== null &&
     evidence.acceptedAt <= input.now &&
-    isWhatsAppConsentCurrent(evidence, policy)
+    isWhatsAppConsentCurrent(evidence, policy);
+  if (!channelAllowed) return false;
+  const patientConsent = await store.findLatestWhatsAppConsent({
+    clinicId: input.clinicId,
+    contactId: input.contactId,
+    patientId: input.patientId,
+    scope: "patient",
+  });
+  return (
+    patientConsent !== null &&
+    patientConsent.acceptedAt <= input.now &&
+    isWhatsAppPatientConsentCurrent(patientConsent, policy, {
+      acceptedRole: input.acceptedRole,
+      patientId: input.patientId,
+    })
   );
 }
 
@@ -122,6 +305,7 @@ export function createWhatsAppConsentGate(
           acceptedRole: "contact",
           clinicId: input.clinicId,
           contactId: input.contactId,
+          declaration: input.text ?? "No me escriban más",
           identityId: input.identityId,
           interactionId: input.messageId,
           patientId: null,
@@ -161,6 +345,7 @@ export function createWhatsAppConsentGate(
         acceptedRole: "contact",
         clinicId: input.clinicId,
         contactId: input.contactId,
+        declaration: input.text?.trim() ?? "CONTINUAR",
         identityId: input.identityId,
         interactionId: input.messageId,
         patientId: null,

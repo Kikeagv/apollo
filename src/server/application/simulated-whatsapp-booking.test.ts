@@ -8,10 +8,161 @@ import {
   processSimulatedWhatsAppVoiceNote,
   processSimulatedWhatsAppMessage,
 } from "./simulated-whatsapp-booking";
+import {
+  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+  WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
+} from "~/domain/whatsapp-consent";
 import { createSimulatedAudioTranscriber } from "~/server/integrations/audio-transcriber";
 import type { WhatsAppProvider } from "./whatsapp-provider";
 
 describe("reservar una Cita adulta por WhatsApp simulado", () => {
+  it("registra consentimiento paciente vigente y trazable para un adulto seleccionado", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [{ contactId: "contact-1", patientId: "patient-1" }],
+      offers: [],
+      options: [],
+      patients: [{ birthDate: "1990-01-01", id: "patient-1", name: "Ana" }],
+    });
+    const now = new Date("2026-09-08T12:00:00.000Z");
+    const context = {
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      identityId: "identity-1",
+    };
+
+    await processWhatsAppTextForContact(
+      { ...context, messageId: "select-1", text: "paciente patient-1" },
+      store,
+      now,
+    );
+    const accepted = await processWhatsAppTextForContact(
+      {
+        ...context,
+        messageId: "consent-1",
+        text: `consentir paciente|${WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION}`,
+      },
+      store,
+      now,
+    );
+
+    expect(accepted).toMatchObject({ kind: "patient-consent-accepted" });
+    expect(store.patientConsents).toMatchObject([
+      {
+        acceptedRole: "adult-patient",
+        declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+        identityId: "identity-1",
+        interactionId: "consent-1",
+        patientId: "patient-1",
+        scope: "patient",
+        status: "accepted",
+        termsVersion: "1.0",
+      },
+    ]);
+  });
+
+  it("registra consentimiento del Tutor solo después de verificar su representación", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [
+        {
+          contactId: "contact-1",
+          guardianDeclaration: "DECLARO REPRESENTACIÓN AUTORIZADA",
+          guardianDui: "01234567-8",
+          guardianshipVerificationStatus: "verified",
+          patientId: "patient-1",
+          relationship: "tutor",
+        },
+      ],
+      offers: [],
+      options: [],
+      patients: [{ birthDate: "2018-04-02", id: "patient-1", name: "Lucía" }],
+    });
+    const now = new Date("2026-09-08T12:00:00.000Z");
+    const context = {
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      identityId: "identity-1",
+    };
+
+    const prompt = await processWhatsAppTextForContact(
+      { ...context, messageId: "select-1", text: "paciente patient-1" },
+      store,
+      now,
+    );
+    expect(prompt).toMatchObject({ kind: "patient-consent-pending" });
+    const accepted = await processWhatsAppTextForContact(
+      {
+        ...context,
+        messageId: "consent-1",
+        text: `consentir paciente|${WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION}`,
+      },
+      store,
+      now,
+    );
+
+    expect(accepted).toMatchObject({ kind: "patient-consent-accepted" });
+    expect(store.patientConsents).toMatchObject([
+      {
+        acceptedRole: "tutor",
+        declaration: WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
+        identityId: "identity-1",
+        interactionId: "consent-1",
+        patientId: "patient-1",
+        scope: "patient",
+        status: "accepted",
+      },
+    ]);
+  });
+
+  it("no permite al Tutor pendiente seleccionar ni autorizar operaciones del Paciente", async () => {
+    const store = createInMemorySimulatedWhatsAppBookingStore({
+      clinic: { id: "clinic-1", whatsappNumberE164: "+50370000001" },
+      contacts: [{ id: "contact-1", name: "Ana", phoneE164: "+50370000002" }],
+      links: [
+        {
+          contactId: "contact-1",
+          guardianDeclaration: "DECLARO REPRESENTACIÓN AUTORIZADA",
+          guardianDui: "01234567-8",
+          guardianshipVerificationStatus: "pending",
+          patientId: "patient-1",
+          relationship: "tutor",
+        },
+      ],
+      offers: [],
+      options: [],
+      patients: [{ birthDate: "2018-04-02", id: "patient-1", name: "Lucía" }],
+    });
+    const now = new Date("2026-09-08T12:00:00.000Z");
+    const context = {
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      identityId: "identity-1",
+    };
+
+    const selection = await processWhatsAppTextForContact(
+      { ...context, messageId: "select-1", text: "paciente patient-1" },
+      store,
+      now,
+    );
+    const consent = await processWhatsAppTextForContact(
+      {
+        ...context,
+        messageId: "consent-1",
+        text: `consentir paciente|${WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION}`,
+      },
+      store,
+      now,
+    );
+
+    expect(selection).toMatchObject({ kind: "patient-selection-required" });
+    expect(selection.text).not.toContain("Lucía");
+    expect(consent).toMatchObject({ kind: "patient-selection-required" });
+    expect(store.patientConsents).toEqual([]);
+  });
+
   it("abre un takeover una sola vez y conserva el diálogo detenido", async () => {
     const store = createInMemorySimulatedWhatsAppBookingStore({
       clinic: {
@@ -842,6 +993,7 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
       links: [
         {
           contactId: "contact-1",
+          guardianDeclaration: "DECLARO REPRESENTACIÓN AUTORIZADA",
           guardianDui: "01234567-8",
           guardianshipVerificationStatus: "verified",
           patientId: "minor-1",
@@ -862,7 +1014,12 @@ describe("reservar una Cita adulta por WhatsApp simulado", () => {
         store,
         now,
       ),
-    ).resolves.toMatchObject({ kind: "patient-selected" });
+    ).resolves.toMatchObject({ kind: "patient-consent-pending" });
+    await expect(
+      store.getConversation({ clinicId: "clinic-1", contactId: "contact-1" }),
+    ).resolves.toMatchObject({
+      selectedPatientId: "minor-1",
+    });
   });
 
   it("procesa la salida urgente pendiente sin habilitar la Agenda", async () => {

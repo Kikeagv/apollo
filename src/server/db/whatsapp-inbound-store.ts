@@ -187,6 +187,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           acceptedRole: input.acceptedRole,
           clinicId: input.clinicId,
           contactId: input.contactId,
+          declaration: input.declaration,
           identityId: input.identityId,
           interactionId: input.interactionId,
           patientId: input.patientId,
@@ -1325,6 +1326,7 @@ function toWhatsAppConsentEvidence(
     acceptedRole: row.acceptedRole,
     clinicId: row.clinicId,
     contactId: row.contactId,
+    declaration: row.declaration,
     id: row.id,
     identityId: row.identityId,
     interactionId: row.interactionId,
@@ -1346,6 +1348,7 @@ function matchesWhatsAppConsentInput(
   return (
     evidence.clinicId === input.clinicId &&
     evidence.contactId === input.contactId &&
+    evidence.declaration === input.declaration &&
     evidence.identityId === input.identityId &&
     evidence.patientId === input.patientId &&
     evidence.scope === input.scope &&

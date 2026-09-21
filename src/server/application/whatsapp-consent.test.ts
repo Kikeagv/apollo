@@ -2,12 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildWhatsAppConsentPolicy,
+  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
   type WhatsAppConsentEvidence,
 } from "~/domain/whatsapp-consent";
 import {
   canSendWhatsAppProactiveDelivery,
   createWhatsAppConsentGate,
+  createWhatsAppPatientConsentGate,
   type WhatsAppConsentStore,
+  type WhatsAppPatientConsentStore,
 } from "./whatsapp-consent";
 
 const NOW = new Date("2026-09-08T12:00:00.000Z");
@@ -35,6 +38,7 @@ function evidence(
     acceptedRole: "contact",
     clinicId: "clinic-1",
     contactId: "contact-1",
+    declaration: "CONTINUAR",
     id: "consent-1",
     identityId: "identity-1",
     interactionId: "message-0",
@@ -104,6 +108,7 @@ describe("gate de consentimiento inicial de WhatsApp", () => {
       acceptedRole: "contact",
       clinicId: "clinic-1",
       contactId: "contact-1",
+      declaration: "CONTINUAR",
       identityId: "identity-1",
       interactionId: "message-2",
       patientId: null,
@@ -183,21 +188,53 @@ describe("gate de consentimiento inicial de WhatsApp", () => {
   });
 
   it("solo permite una Entrega proactiva con evidencia vigente y ya aceptada", async () => {
-    const current = evidence();
-    const fake = fakeStore(current);
+    const channel = evidence();
+    const patient = evidence({
+      acceptedRole: "adult-patient",
+      declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+      id: "patient-consent-1",
+      patientId: "patient-1",
+      scope: "patient",
+    });
+    const fake = fakeStore(channel);
+    fake.findLatest.mockImplementation(async ({ scope }) =>
+      scope === "channel" ? channel : patient,
+    );
     await expect(
       canSendWhatsAppProactiveDelivery(
-        { clinicId: "clinic-1", contactId: "contact-1", now: NOW },
+        {
+          acceptedRole: "adult-patient",
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+          now: NOW,
+          patientId: "patient-1",
+        },
         fake.store,
       ),
     ).resolves.toBe(true);
 
-    const stale = fakeStore(
-      evidence({ termsVersion: "0.9", textReference: "old-reference" }),
+    const stale = fakeStore(channel);
+    stale.findLatest.mockImplementation(async ({ scope }) =>
+      scope === "channel"
+        ? channel
+        : evidence({
+            acceptedRole: "adult-patient",
+            declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+            patientId: "patient-1",
+            scope: "patient",
+            termsVersion: "0.9",
+            textReference: "old-reference",
+          }),
     );
     await expect(
       canSendWhatsAppProactiveDelivery(
-        { clinicId: "clinic-1", contactId: "contact-1", now: NOW },
+        {
+          acceptedRole: "adult-patient",
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+          now: NOW,
+          patientId: "patient-1",
+        },
         stale.store,
       ),
     ).resolves.toBe(false);
@@ -207,10 +244,168 @@ describe("gate de consentimiento inicial de WhatsApp", () => {
           clinicId: "clinic-1",
           contactId: "contact-1",
           now: new Date(NOW.valueOf() - 1),
+          acceptedRole: "adult-patient",
+          patientId: "patient-1",
         },
         fake.store,
       ),
     ).resolves.toBe(false);
+  });
+
+  it("requiere consentimiento vigente del Paciente además del consentimiento de canal", async () => {
+    const channel = evidence();
+    const patient = evidence({
+      acceptedRole: "adult-patient",
+      declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+      id: "patient-consent-1",
+      patientId: "patient-1",
+      scope: "patient",
+    });
+    const fake = fakeStore(channel);
+    fake.findLatest.mockImplementation(async ({ scope }) =>
+      scope === "channel" ? channel : patient,
+    );
+
+    await expect(
+      canSendWhatsAppProactiveDelivery(
+        {
+          acceptedRole: "adult-patient",
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+          now: NOW,
+          patientId: "patient-1",
+        },
+        fake.store,
+      ),
+    ).resolves.toBe(true);
+
+    fake.findLatest.mockImplementation(async ({ scope }) =>
+      scope === "channel" ? channel : null,
+    );
+    await expect(
+      canSendWhatsAppProactiveDelivery(
+        {
+          acceptedRole: "adult-patient",
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+          now: NOW,
+          patientId: "patient-1",
+        },
+        fake.store,
+      ),
+    ).resolves.toBe(false);
+  });
+
+  it("expone un código estable cuando la representación del Tutor está pendiente", async () => {
+    const fake = fakeStore();
+    const store: WhatsAppPatientConsentStore = {
+      ...fake.store,
+      async findWhatsAppPatientConsentEligibility() {
+        return "tutor-pending";
+      },
+    };
+
+    await expect(
+      createWhatsAppPatientConsentGate(store).check({
+        clinicId: "clinic-1",
+        contactId: "contact-1",
+        declaration: "",
+        identityId: "identity-1",
+        interactionId: "message-guardian-pending",
+        now: NOW,
+        patientId: "patient-1",
+        phoneE164: "+50370000002",
+      }),
+    ).resolves.toMatchObject({
+      code: "guardian-verification-required",
+      kind: "blocked",
+    });
+  });
+
+  it("solicita una nueva aceptación por versión y conserva la evidencia anterior", async () => {
+    const oldPolicy = buildWhatsAppConsentPolicy("1.0");
+    const currentPolicy = buildWhatsAppConsentPolicy("2.0");
+    const oldEvidence = evidence({
+      acceptedRole: "adult-patient",
+      declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+      id: "patient-consent-v1",
+      patientId: "patient-1",
+      scope: "patient",
+      termsVersion: oldPolicy.termsVersion,
+      textReference: oldPolicy.immutableTextReference,
+    });
+    const history = [oldEvidence];
+    const store: WhatsAppPatientConsentStore = {
+      async findWhatsAppPatientConsentEligibility() {
+        return "adult-patient";
+      },
+      async findLatestWhatsAppConsent({ scope, patientId }) {
+        return (
+          [...history]
+            .reverse()
+            .find(
+              (row) => row.scope === scope && row.patientId === patientId,
+            ) ?? null
+        );
+      },
+      async readCurrentWhatsAppConsentPolicy() {
+        return currentPolicy;
+      },
+      async recordWhatsAppConsent(input) {
+        const recorded = evidence({
+          acceptedAt: input.acceptedAt,
+          acceptedRole: input.acceptedRole,
+          clinicId: input.clinicId,
+          contactId: input.contactId,
+          declaration: input.declaration,
+          id: "patient-consent-v2",
+          identityId: input.identityId,
+          interactionId: input.interactionId,
+          patientId: input.patientId,
+          phoneE164: input.phoneE164,
+          privacyVersion: input.policy.privacyVersion,
+          scope: input.scope,
+          status: input.status ?? "accepted",
+          termsVersion: input.policy.termsVersion,
+          textReference: input.policy.immutableTextReference,
+        });
+        history.push(recorded);
+        return recorded;
+      },
+    };
+    const gate = createWhatsAppPatientConsentGate(store);
+    const input = {
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      declaration: "",
+      identityId: "identity-1",
+      interactionId: "patient-consent-v2",
+      now: NOW,
+      patientId: "patient-1",
+      phoneE164: "+50370000002",
+    };
+
+    await expect(gate.check(input)).resolves.toMatchObject({ kind: "pending" });
+    await expect(
+      gate.check({
+        ...input,
+        declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+      }),
+    ).resolves.toMatchObject({
+      acceptedRole: "adult-patient",
+      kind: "accepted",
+      reference: "patient-consent-v2",
+    });
+
+    expect(history).toEqual([
+      oldEvidence,
+      expect.objectContaining({
+        declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+        patientId: "patient-1",
+        scope: "patient",
+        termsVersion: "2.0",
+      }),
+    ]);
   });
 
   it("conserva una sola evidencia cuando el mismo botón se reintenta", async () => {
@@ -286,7 +481,13 @@ describe("gate de consentimiento inicial de WhatsApp", () => {
 
     await expect(
       canSendWhatsAppProactiveDelivery(
-        { clinicId: "clinic-1", contactId: "contact-1", now: NOW },
+        {
+          acceptedRole: "adult-patient",
+          clinicId: "clinic-1",
+          contactId: "contact-1",
+          now: NOW,
+          patientId: "patient-1",
+        },
         fake.store,
       ),
     ).resolves.toBe(false);

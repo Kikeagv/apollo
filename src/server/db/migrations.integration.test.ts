@@ -159,6 +159,7 @@ describe("migraciones de PostgreSQL", () => {
                 'provider_message_id',
                 'provider_status',
                 'consent_reference',
+                'patient_consent_reference',
                 'consent_decision',
                 'consent_privacy_version',
                 'consent_terms_version',
@@ -170,6 +171,7 @@ describe("migraciones de PostgreSQL", () => {
           expect(deliveryColumns).toEqual([
             { column_name: "consent_accepted_at" },
             { column_name: "consent_decision" },
+            { column_name: "patient_consent_reference" },
             { column_name: "consent_privacy_version" },
             { column_name: "consent_reference" },
             { column_name: "consent_terms_version" },
@@ -1677,6 +1679,7 @@ describe("migraciones de PostgreSQL", () => {
                 'contact_id',
                 'identity_id',
                 'patient_id',
+                'declaration',
                 'accepted_role',
                 'privacy_version',
                 'terms_version',
@@ -1693,6 +1696,7 @@ describe("migraciones de PostgreSQL", () => {
             { column_name: "accepted_role" },
             { column_name: "clinic_id" },
             { column_name: "contact_id" },
+            { column_name: "declaration" },
             { column_name: "identity_id" },
             { column_name: "interaction_id" },
             { column_name: "patient_id" },
@@ -1728,6 +1732,20 @@ describe("migraciones de PostgreSQL", () => {
           `;
           expect(consentStatusConstraints).toEqual([
             { constraintName: "whatsapp_contact_consent_status" },
+          ]);
+
+          const consentDeclarationConstraints = await migrated<
+            Array<{ constraintName: string }>
+          >`
+            select conname as "constraintName"
+            from pg_constraint
+            where conrelid = 'pg-drizzle_whatsapp_contact_consent'::regclass
+              and conname = 'whatsapp_contact_consent_declaration'
+          `;
+          expect(consentDeclarationConstraints).toEqual([
+            {
+              constraintName: "whatsapp_contact_consent_declaration",
+            },
           ]);
 
           const consentForeignKeys = await migrated<
