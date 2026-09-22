@@ -7,6 +7,14 @@ export const whatsappReadinessReconciliationPendingPollMs = 5 * 60_000;
 export type WhatsAppReadinessReconciliationStatus =
   "blocked" | "pending" | "processing" | "succeeded";
 
+export type WhatsAppReadinessReconciliation = {
+  attempts: number;
+  lastAttemptAt: Date | null;
+  lastError: string | null;
+  nextAttemptAt: Date | null;
+  status: WhatsAppReadinessReconciliationStatus;
+};
+
 export type WhatsAppReadinessReconciliationSchedule = {
   nextAttemptAt: Date | null;
   status: WhatsAppReadinessReconciliationStatus;

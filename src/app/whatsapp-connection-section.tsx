@@ -26,6 +26,7 @@ import {
   PanaceaQueryError,
   PanaceaQueryLoading,
 } from "./panacea-query-state";
+import { WhatsAppReadinessReconciliationPanel } from "./whatsapp-readiness-reconciliation-panel";
 
 const providerLabels: Record<WhatsAppConnection["provider"], string> = {
   kapso: "Kapso",
@@ -73,6 +74,18 @@ function gateStatusLabel(status: "pending" | "ready" | "blocked" | "failed") {
     pending: "Pendiente",
     ready: "Correcto",
   }[status];
+}
+
+function readinessGateLabel(
+  code: "number" | "webhooks" | "templates" | "billing" | "e2e",
+) {
+  return {
+    billing: "Billing y crédito",
+    e2e: "Prueba extremo a extremo",
+    number: "Número y WABA",
+    templates: "Plantillas críticas",
+    webhooks: "Webhooks",
+  }[code];
 }
 
 /** Estado operativo de la conexión; nunca muestra credenciales de proveedor. */
@@ -168,6 +181,10 @@ export function WhatsAppReadinessSection() {
             </p>
           ) : (
             <>
+              <WhatsAppReadinessReconciliationPanel
+                alerts={snapshot.alerts ?? []}
+                reconciliation={snapshot.reconciliation}
+              />
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm font-medium">Estado técnico</span>
                 <Badge
@@ -225,18 +242,6 @@ export function WhatsAppReadinessSection() {
       </Card>
     </section>
   );
-}
-
-function readinessGateLabel(
-  code: "number" | "webhooks" | "templates" | "billing" | "e2e",
-) {
-  return {
-    billing: "Billing y crédito",
-    e2e: "Prueba extremo a extremo",
-    number: "Número y WABA",
-    templates: "Plantillas críticas",
-    webhooks: "Webhooks",
-  }[code];
 }
 
 /** Flujo de configuración iniciado por el Médico propietario desde la Clínica. */

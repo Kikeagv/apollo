@@ -1454,6 +1454,7 @@ describe("migraciones de PostgreSQL", () => {
             { relforcerowsecurity: true, relrowsecurity: true },
             { relforcerowsecurity: true, relrowsecurity: true },
             { relforcerowsecurity: true, relrowsecurity: true },
+            { relforcerowsecurity: true, relrowsecurity: true },
           ]);
 
           const policies = await migrated<
@@ -1466,7 +1467,8 @@ describe("migraciones de PostgreSQL", () => {
                 'pg-drizzle_whatsapp_readiness',
                 'pg-drizzle_whatsapp_critical_template',
                 'pg-drizzle_whatsapp_billing',
-                'pg-drizzle_whatsapp_connection_alert'
+                'pg-drizzle_whatsapp_connection_alert',
+                'pg-drizzle_whatsapp_connection'
               )
           `;
           expect(policies).toEqual(
@@ -1544,11 +1546,63 @@ describe("migraciones de PostgreSQL", () => {
                 table_name: "pg-drizzle_whatsapp_connection_alert",
               },
               {
+                name: "whatsapp_connection_alert_clinic_owner_read",
+                table_name: "pg-drizzle_whatsapp_connection_alert",
+              },
+              {
                 name: "whatsapp_connection_reconciliation_worker_update",
                 table_name: "pg-drizzle_whatsapp_connection",
               },
             ]),
           );
+
+          const alertClinicId = randomUUID();
+          const otherAlertClinicId = randomUUID();
+          const alertEventId = randomUUID();
+          await migrated`
+            insert into "pg-drizzle_clinic" (id, name, subscription_status)
+            values
+              (${alertClinicId}, 'Clínica alerta APO-101', 'active'),
+              (${otherAlertClinicId}, 'Otra Clínica APO-101', 'active')
+          `;
+          await migrated`
+            insert into "pg-drizzle_whatsapp_webhook_event" (
+              id, idempotency_key, event_name, payload, status
+            ) values (
+              ${alertEventId}, ${`apo101-alert-${alertEventId}`},
+              'whatsapp.phone_number.created', '{}'::jsonb, 'processed'
+            )
+          `;
+          await migrated`
+            insert into "pg-drizzle_whatsapp_connection_alert" (
+              clinic_id, provisioning_event_id, gate_code, reason, next_action
+            ) values
+              (${alertClinicId}, ${alertEventId}, 'webhooks', 'Falla del webhook', 'Contacte soporte'),
+              (${otherAlertClinicId}, ${alertEventId}, 'webhooks', 'Otra falla', 'Contacte soporte')
+          `;
+          const ownerVisibleAlerts = await migrated.begin(
+            async (transaction) => {
+              await transaction`set local role panacea_clinical_access`;
+              await transaction`select set_config('app.clinic_id', ${alertClinicId}, true)`;
+              await transaction`select set_config('app.clinic_role', 'owner', true)`;
+              return transaction<Array<{ clinic_id: string }>>`
+              select clinic_id from "pg-drizzle_whatsapp_connection_alert"
+              order by clinic_id
+            `;
+            },
+          );
+          expect(ownerVisibleAlerts).toEqual([{ clinic_id: alertClinicId }]);
+          const doctorVisibleAlerts = await migrated.begin(
+            async (transaction) => {
+              await transaction`set local role panacea_clinical_access`;
+              await transaction`select set_config('app.clinic_id', ${alertClinicId}, true)`;
+              await transaction`select set_config('app.clinic_role', 'doctor', true)`;
+              return transaction<Array<{ clinic_id: string }>>`
+              select clinic_id from "pg-drizzle_whatsapp_connection_alert"
+            `;
+            },
+          );
+          expect(doctorVisibleAlerts).toEqual([]);
 
           const alertColumns = await migrated<Array<{ column_name: string }>>`
             select column_name
@@ -1650,7 +1704,7 @@ describe("migraciones de PostgreSQL", () => {
           const readinessTriggers = await migrated<
             Array<{ trigger_name: string }>
           >`
-            select trigger_name
+            select distinct trigger_name
             from information_schema.triggers
             where trigger_schema = 'public'
               and event_object_table = 'pg-drizzle_whatsapp_readiness'

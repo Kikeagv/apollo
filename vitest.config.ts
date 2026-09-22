@@ -4,6 +4,7 @@ import { loadEnv } from "vite";
 import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig(({ mode }) => ({
+  oxc: { jsx: { runtime: "automatic" } },
   resolve: {
     alias: {
       "~": fileURLToPath(new URL("./src", import.meta.url)),

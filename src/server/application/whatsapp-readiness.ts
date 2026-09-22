@@ -19,6 +19,7 @@ import {
   nextWhatsAppReadinessHealthCheckAt,
   nextWhatsAppReadinessPendingAt,
   nextWhatsAppReadinessReconciliationAttemptAt,
+  type WhatsAppReadinessReconciliation,
   type WhatsAppReadinessReconciliationStatus,
   whatsappReadinessReconciliationMaxAttempts,
 } from "~/domain/whatsapp-readiness-reconciliation";
@@ -84,13 +85,7 @@ export type WhatsAppReadinessRecord = {
   technicalStatus: WhatsAppTechnicalReadinessStatus;
 };
 
-export type WhatsAppReadinessReconciliation = {
-  attempts: number;
-  lastAttemptAt: Date | null;
-  lastError: string | null;
-  nextAttemptAt: Date | null;
-  status: WhatsAppReadinessReconciliationStatus;
-};
+export type { WhatsAppReadinessReconciliation } from "~/domain/whatsapp-readiness-reconciliation";
 
 export type WhatsAppReadinessSnapshot = WhatsAppReadinessRecord & {
   billingHealth: WhatsAppBillingHealth;

@@ -64,7 +64,7 @@ export const drizzleWhatsAppReadinessStore: WhatsAppReadinessStore &
       return readRecord(
         transaction,
         input.clinicId,
-        input.access === "superadmin",
+        input.access === "clinic-owner" || input.access === "superadmin",
       );
     };
 
