@@ -867,18 +867,14 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
   it("acepta la recuperación idempotente de un webhook pausado", async () => {
     const fake = fakeReconciliationStore();
     const provider = fakeReconciliationProvider({
-      ensurePhoneNumberWebhook: vi
-        .fn()
-        .mockResolvedValue({
-          remoteId: "phone-webhook-recovered",
-          wasPaused: true,
-        }),
-      ensureProjectWebhook: vi
-        .fn()
-        .mockResolvedValue({
-          remoteId: "project-webhook-recovered",
-          wasPaused: true,
-        }),
+      ensurePhoneNumberWebhook: vi.fn().mockResolvedValue({
+        remoteId: "phone-webhook-recovered",
+        wasPaused: true,
+      }),
+      ensureProjectWebhook: vi.fn().mockResolvedValue({
+        remoteId: "project-webhook-recovered",
+        wasPaused: true,
+      }),
     });
 
     const result = await runWhatsAppReadinessReconciliation(

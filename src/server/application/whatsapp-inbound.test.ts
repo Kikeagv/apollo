@@ -245,6 +245,7 @@ describe("worker de mensajes entrantes de WhatsApp", () => {
     expect(processText).toHaveBeenCalledWith({
       clinicId: "clinic-1",
       contactId: "contact-1",
+      identityId: "identity-1",
       messageId: "message-1",
       text: "info",
       now: NOW,

@@ -1127,8 +1127,7 @@ async function runPatientConsentInboundSmoke(
   return (
     processed.every(Boolean) &&
     patient !== undefined &&
-    patientConsent !== undefined &&
-    patientConsent.interactionId === "synthetic-inbound-patient-consent" &&
+    patientConsent?.interactionId === "synthetic-inbound-patient-consent" &&
     patientConsent.identityId === fixture.context.identityId &&
     patientConsent.acceptedRole === "adult-patient" &&
     isWhatsAppPatientConsentCurrent(patientConsent, policy, {
@@ -1290,8 +1289,7 @@ async function runVerifiedTutorConsentSmoke(
       tutorEligibility === "tutor" &&
       tutorChannelConsent !== null &&
       tutorChannelConsent.scope === "channel" &&
-      tutorPatientEvidence !== undefined &&
-      tutorPatientEvidence.acceptedRole === "tutor" &&
+      tutorPatientEvidence?.acceptedRole === "tutor" &&
       tutorPatientEvidence.declaration ===
         WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION &&
       tutorPatientEvidence.identityId === tutorIdentityId &&

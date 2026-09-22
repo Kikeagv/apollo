@@ -9,6 +9,7 @@ const canonicalTermsAcceptanceErrorMessage =
   "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.";
 const clinicTermsRepairMigrationCreatedAt = "1789575811006";
 const apo91SchemaRepairMigrationCreatedAt = "1789575811007";
+const apo101ForwardRepairMigrationCreatedAt = "1790044247017";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
@@ -171,11 +172,11 @@ describe("migraciones de PostgreSQL", () => {
           expect(deliveryColumns).toEqual([
             { column_name: "consent_accepted_at" },
             { column_name: "consent_decision" },
-            { column_name: "patient_consent_reference" },
             { column_name: "consent_privacy_version" },
             { column_name: "consent_reference" },
             { column_name: "consent_terms_version" },
             { column_name: "consent_text_reference" },
+            { column_name: "patient_consent_reference" },
             { column_name: "provider_message_id" },
             { column_name: "provider_status" },
           ]);
@@ -667,6 +668,10 @@ describe("migraciones de PostgreSQL", () => {
             delete from drizzle.__drizzle_migrations
             where created_at = ${apo91SchemaRepairMigrationCreatedAt}
           `;
+          await migrated`
+            delete from drizzle.__drizzle_migrations
+            where created_at = ${apo101ForwardRepairMigrationCreatedAt}
+          `;
           await runMigrations(migratedUrl.toString());
           const repairedTermsContracts = await migrated<
             Array<{
@@ -800,10 +805,10 @@ describe("migraciones de PostgreSQL", () => {
           ) values (
             ${rlsClinicId}, 'simulated', 'ready', 'simulated',
             ${`rls-simulated:${rlsClinicId}`}, 'phone-92',
-            ${JSON.stringify({
+            ${rlsAdmin.json({
               projectId: "project-92",
               provisioningEventId: apo92Generations.clinic,
-            })}::jsonb
+            })}
           )
         `;
         await rlsAdmin`
@@ -819,6 +824,36 @@ describe("migraciones de PostgreSQL", () => {
               'whatsapp.phone_number.created', '{}'::jsonb, 'processed'
             )
         `;
+        const currentReadinessGeneration = await rlsAdmin<
+          Array<{
+            businessAccountId: string | null;
+            matches: boolean;
+            phoneNumberId: string | null;
+            projectId: string | null;
+            provisioningEventId: string | null;
+          }>
+        >`
+          select
+            public.whatsapp_readiness_matches_current_generation(
+              ${rlsClinicId}, 'phone-92', null, 'project-92',
+              ${apo92Generations.clinic}
+            ) as matches,
+            connection.phone_number_id as "phoneNumberId",
+            connection.business_account_id as "businessAccountId",
+            connection.metadata ->> 'projectId' as "projectId",
+            connection.metadata ->> 'provisioningEventId' as "provisioningEventId"
+          from "pg-drizzle_whatsapp_connection" as connection
+          where connection.clinic_id = ${rlsClinicId}
+        `;
+        expect(currentReadinessGeneration).toEqual([
+          {
+            businessAccountId: null,
+            matches: true,
+            phoneNumberId: "phone-92",
+            projectId: "project-92",
+            provisioningEventId: apo92Generations.clinic,
+          },
+        ]);
         await rlsAdmin`
           insert into "pg-drizzle_whatsapp_readiness" (
             clinic_id, phone_number_id, project_id, provisioning_event_id,
@@ -830,10 +865,10 @@ describe("migraciones de PostgreSQL", () => {
         `;
         await rlsAdmin`
           update "pg-drizzle_whatsapp_connection"
-          set metadata = ${JSON.stringify({
+          set metadata = ${rlsAdmin.json({
             projectId: "project-92",
             provisioningEventId: apo92Generations.other,
-          })}::jsonb
+          })}
           where clinic_id = ${rlsClinicId}
         `;
         await expect(
@@ -845,10 +880,10 @@ describe("migraciones de PostgreSQL", () => {
         ).rejects.toThrow(/generación vigente/i);
         await rlsAdmin`
           update "pg-drizzle_whatsapp_connection"
-          set metadata = ${JSON.stringify({
+          set metadata = ${rlsAdmin.json({
             projectId: "project-92",
             provisioningEventId: apo92Generations.clinic,
-          })}::jsonb
+          })}
           where clinic_id = ${rlsClinicId}
         `;
         await rlsAdmin`
@@ -1402,10 +1437,17 @@ describe("migraciones de PostgreSQL", () => {
         }
       } finally {
         await admin.unsafe(`drop role if exists "${roleName}"`);
+        await admin`
+          select pg_terminate_backend(pid)
+          from pg_stat_activity
+          where datname = ${databaseName}
+            and pid <> pg_backend_pid()
+        `;
         await admin.unsafe(`drop database if exists "${databaseName}"`);
         await admin.end();
       }
     },
+    30_000,
   );
 
   databaseTest(
@@ -2549,6 +2591,10 @@ describe("migraciones de PostgreSQL", () => {
           await migrated`
             delete from drizzle.__drizzle_migrations
             where created_at = ${apo91SchemaRepairMigrationCreatedAt}
+          `;
+          await migrated`
+            delete from drizzle.__drizzle_migrations
+            where created_at = ${apo101ForwardRepairMigrationCreatedAt}
           `;
 
           await runMigrations(migratedUrl.toString());
