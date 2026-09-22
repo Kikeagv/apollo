@@ -60,7 +60,9 @@ describe("adaptador Resend de invitaciones de clínica", () => {
     expect(body.to).toEqual(["ana@example.test"]);
     expect(body.subject).toContain("Clínica Aurora");
     expect(body.text).toContain("Dra. Ana Reyes");
-    expect(body.text).toContain("/activar-invitacion?token=token-abc");
+    expect(body.text).toContain(
+      "activar-invitacion?token=token-abc",
+    );
     expect(body.text).toContain("2026-08-22T00:00:00.000Z");
   });
 

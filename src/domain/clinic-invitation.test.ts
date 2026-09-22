@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clinicInvitationUrl,
   getClinicInvitationNextAction,
   getClinicInvitationStatus,
 } from "./clinic-invitation";
@@ -8,6 +9,17 @@ import {
 const now = new Date("2026-09-17T12:00:00.000Z");
 
 describe("clinic invitation lifecycle", () => {
+  it("uses the configured public origin for activation links", () => {
+    expect(
+      clinicInvitationUrl(
+        "https://app.praxia.test/internal-origin/",
+        "token with spaces",
+      ),
+    ).toBe(
+      "https://app.praxia.test/activar-invitacion?token=token%20with%20spaces",
+    );
+  });
+
   it("keeps an unconsumed, unexpired invitation pending", () => {
     expect(
       getClinicInvitationStatus({

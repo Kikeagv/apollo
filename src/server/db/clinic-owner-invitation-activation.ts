@@ -5,7 +5,7 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 
 import type {
   ClinicInvitationAcceptance,
-  ClinicInvitationActivationMode,
+  ClinicInvitationActivationContext,
 } from "~/domain/clinic-invitation";
 import { ClinicOwnerInvitationError } from "~/server/application/clinic-owner-invitation-errors";
 import { db } from "~/server/db";
@@ -34,7 +34,7 @@ export type ClinicOwnerInvitationActivation = {
 };
 
 export type ClinicOwnerInvitationPreflight = {
-  preflight(token: string): Promise<ClinicInvitationActivationMode>;
+  preflight(token: string): Promise<ClinicInvitationActivationContext>;
 };
 
 class ExistingIdentityClinicConflictError extends Error {
@@ -67,15 +67,16 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
             consumedAt: true,
             email: true,
             expiresAt: true,
+            role: true,
           },
           where: eq(clinicInvitations.tokenHash, tokenHash),
         });
         if (invitation === undefined) throw new ClinicOwnerInvitationError();
         if (invitation.consumedAt !== null) {
-          throw new ClinicOwnerInvitationError();
+          return { mode: "accepted", role: invitation.role };
         }
         if (invitation.expiresAt <= new Date()) {
-          return "expired";
+          return { mode: "expired", role: invitation.role };
         }
 
         await lockInvitationIdentity(transaction, invitation.email);
@@ -83,7 +84,10 @@ export const drizzleClinicOwnerInvitationActivation: ClinicOwnerInvitationActiva
           columns: { id: true },
           where: sql`lower(${user.email}) = lower(${invitation.email})`,
         });
-        return existingIdentity === undefined ? "new" : "existing";
+        return {
+          mode: existingIdentity === undefined ? "new" : "existing",
+          role: invitation.role,
+        };
       });
     } catch (error) {
       if (error instanceof ClinicOwnerInvitationError) throw error;

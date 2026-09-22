@@ -736,6 +736,13 @@
       "when": 1790044247017,
       "tag": "0109_apo101_forward_schema_repairs",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1790044247018,
+      "tag": "0110_apo103_welcome_and_setup_return",
+      "breakpoints": true
     }
   ]
 }

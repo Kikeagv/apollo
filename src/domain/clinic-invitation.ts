@@ -18,7 +18,22 @@ export type ClinicInvitationNextAction =
 export type ClinicInvitationLastDelivery = "failed" | "succeeded" | null;
 
 export type ClinicInvitationIdentityStatus = "created" | "existing";
-export type ClinicInvitationActivationMode = "new" | "existing" | "expired";
+export type ClinicInvitationRole = "doctor" | "owner";
+export type ClinicInvitationActivationMode =
+  "new" | "existing" | "expired" | "accepted";
+export type ClinicInvitationActivationContext = {
+  mode: ClinicInvitationActivationMode;
+  role: ClinicInvitationRole;
+};
+
+/** Origen público estable para los enlaces enviados por los adaptadores. */
+export function clinicInvitationUrl(publicSiteUrl: string, token: string) {
+  const origin = new URL(publicSiteUrl).origin;
+  return new URL(
+    `/activar-invitacion?token=${encodeURIComponent(token)}`,
+    `${origin}/`,
+  ).toString();
+}
 
 export type ClinicInvitationSuccessfulAcceptance = {
   active: true;
@@ -26,7 +41,7 @@ export type ClinicInvitationSuccessfulAcceptance = {
   identityId: string;
   identityStatus: ClinicInvitationIdentityStatus;
   invitationStatus: "accepted";
-  role: "doctor" | "owner";
+  role: ClinicInvitationRole;
 };
 
 export type ClinicInvitationExistingIdentityConflict = {
@@ -35,7 +50,7 @@ export type ClinicInvitationExistingIdentityConflict = {
   identityStatus: "existing";
   invitationStatus: "requires-support";
   nextAction: "contact-support";
-  role: "doctor" | "owner";
+  role: ClinicInvitationRole;
 };
 
 /** Resultado público de aceptar una invitación, sin exponer secretos. */

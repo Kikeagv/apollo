@@ -61,11 +61,21 @@ describe("aceptar una invitación de Médico", () => {
 
   it("expone el modo de activación desde un preflight autorizado", async () => {
     const preflight: ClinicOwnerInvitationPreflight = {
-      preflight: async () => "new",
+      preflight: async () => ({ mode: "new", role: "owner" }),
     };
 
     await expect(
       getClinicInvitationActivationMode({ token: "token-1" }, preflight),
-    ).resolves.toBe("new");
+    ).resolves.toEqual({ mode: "new", role: "owner" });
+  });
+
+  it("expone que la invitación ya fue activada para poder retomar el siguiente paso", async () => {
+    const preflight: ClinicOwnerInvitationPreflight = {
+      preflight: async () => ({ mode: "accepted", role: "owner" }),
+    };
+
+    await expect(
+      getClinicInvitationActivationMode({ token: "token-1" }, preflight),
+    ).resolves.toEqual({ mode: "accepted", role: "owner" });
   });
 });

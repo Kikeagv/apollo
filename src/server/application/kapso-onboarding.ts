@@ -27,6 +27,7 @@ import {
   type KapsoSetupLinkProviderStatus,
 } from "~/server/whatsapp/kapso-onboarding";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
+import type { WhatsAppSetupLinkReturnStatus } from "~/domain/whatsapp-setup-link-return";
 
 export type KapsoWhatsAppPreflightSnapshot = {
   blockers: WhatsAppPreflightBlocker[];
@@ -51,6 +52,11 @@ export type KapsoWhatsAppOnboardingSnapshot = {
   setupLinkProviderError: string | null;
   setupLinkProviderId: string | null;
   setupLinkProviderStatus: KapsoSetupLinkProviderStatus | null;
+  setupLinkReturn?: {
+    errorCode: string | null;
+    returnedAt: Date;
+    status: WhatsAppSetupLinkReturnStatus;
+  } | null;
 };
 
 export type KapsoWhatsAppSetupLinkAuditEvent = {
@@ -102,6 +108,9 @@ export type KapsoWhatsAppSetupLinkUpdate = {
   createdAt: Date;
   expiresAt: Date;
   kapsoSetupLinkId: string;
+  lastReturnErrorCode?: string | null;
+  lastReturnStatus?: WhatsAppSetupLinkReturnStatus | null;
+  lastReturnedAt?: Date | null;
   providerError: string | null;
   providerStatus: KapsoSetupLinkProviderStatus | null;
   revokedAt: Date | null;

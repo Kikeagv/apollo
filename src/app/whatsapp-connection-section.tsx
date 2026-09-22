@@ -8,6 +8,10 @@ import {
   type WhatsAppConnection,
 } from "~/domain/whatsapp-connection";
 import {
+  whatsappSetupLinkReturnNextAction,
+  whatsappSetupLinkReturnStatusLabels,
+} from "~/domain/whatsapp-setup-link-return";
+import {
   whatsappSetupLinkStatus,
   whatsappSetupLinkStatusLabel,
 } from "~/domain/whatsapp-setup-link";
@@ -349,6 +353,24 @@ export function WhatsAppSetupLinkSection() {
               <p className="text-destructive text-sm" role="status">
                 {snapshot.setupLinkProviderError}
               </p>
+            ) : null}
+            {snapshot.setupLinkReturn ? (
+              <div className="border-border bg-muted/20 rounded-lg border p-4 text-sm leading-6">
+                <p className="font-medium">Último retorno verificado</p>
+                <p className="text-muted-foreground mt-1">
+                  {
+                    whatsappSetupLinkReturnStatusLabels[
+                      snapshot.setupLinkReturn.status
+                    ]
+                  }{" "}
+                  · {formatDateTime(snapshot.setupLinkReturn.returnedAt)}
+                </p>
+                <p className="mt-2">
+                  {whatsappSetupLinkReturnNextAction(
+                    snapshot.setupLinkReturn.status,
+                  )}
+                </p>
+              </div>
             ) : null}
             {snapshot.setupLinkHistory.length > 0 ? (
               <SetupLinkHistory events={snapshot.setupLinkHistory} />

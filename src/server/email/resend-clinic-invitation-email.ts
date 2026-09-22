@@ -1,14 +1,13 @@
 import "server-only";
 
 import { env } from "~/env";
+import { clinicInvitationUrl } from "~/domain/clinic-invitation";
 import { sendResendEmail } from "~/server/email/resend-identity-email";
 import type {
   ClinicInvitationEmailSender,
   ClinicDoctorInvitationDelivery,
   ClinicOwnerInvitationDelivery,
 } from "~/server/email/clinic-invitation-email";
-
-const INVITATION_ROUTE = "/activar-invitacion";
 
 /**
  * Adaptador real de invitaciones de clínica sobre Resend. Falla rápido si la
@@ -24,10 +23,7 @@ export function createResendClinicInvitationEmailSender(input: {
   }
   const apiKey = input.apiKey;
   const activationUrl = (token: string) =>
-    new URL(
-      `${INVITATION_ROUTE}?token=${encodeURIComponent(token)}`,
-      env.BETTER_AUTH_URL,
-    ).toString();
+    clinicInvitationUrl(env.PUBLIC_SITE_URL, token);
 
   return {
     async sendOwnerInvitation(invitation: ClinicOwnerInvitationDelivery) {

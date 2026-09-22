@@ -5,7 +5,7 @@ import {
 } from "~/server/db/clinic-owner-invitation-activation";
 import type {
   ClinicInvitationAcceptance,
-  ClinicInvitationActivationMode,
+  ClinicInvitationActivationContext,
 } from "~/domain/clinic-invitation";
 
 import { ClinicOwnerInvitationError } from "./clinic-owner-invitation-errors";
@@ -41,7 +41,7 @@ export async function acceptClinicInvitation(
 export async function getClinicInvitationActivationMode(
   input: { token: string },
   preflight: ClinicOwnerInvitationPreflight = drizzleClinicOwnerInvitationActivation,
-): Promise<ClinicInvitationActivationMode> {
+): Promise<ClinicInvitationActivationContext> {
   return preflight.preflight(input.token);
 }
 

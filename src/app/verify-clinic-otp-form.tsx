@@ -12,7 +12,11 @@ import {
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
 
-export function VerifyClinicOtpForm() {
+export function VerifyClinicOtpForm({
+  nextPath = "/calendario",
+}: {
+  nextPath?: string;
+}) {
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -32,7 +36,7 @@ export function VerifyClinicOtpForm() {
         setError(result.error ?? "El OTP no es válido.");
         return;
       }
-      window.location.assign("/calendario");
+      window.location.assign(nextPath);
     } catch {
       setError("No se pudo verificar el OTP.");
     } finally {

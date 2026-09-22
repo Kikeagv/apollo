@@ -8,11 +8,16 @@ import type {
   KapsoWhatsAppOnboardingSnapshot,
   KapsoWhatsAppSetupLinkAuditEvent,
 } from "~/server/application/kapso-onboarding";
+import type {
+  KapsoWhatsAppSetupLinkReturnRecord,
+  KapsoWhatsAppSetupLinkReturnStore,
+} from "~/server/application/whatsapp-setup-link-return";
 import {
   type ClinicTransaction,
   inClinicTransaction,
   inSuperadminRlsTransaction,
   inSuperadminTransaction,
+  inWhatsAppSetupLinkReturnTransaction,
 } from "~/server/db/clinic-context";
 import {
   clinicInvitations,
@@ -25,7 +30,8 @@ import {
   whatsappSetupLinks,
 } from "~/server/db/schema";
 
-export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
+export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore &
+  KapsoWhatsAppSetupLinkReturnStore = {
   async read(input) {
     const operation = async (transaction: ClinicTransaction) => {
       const clinic = await transaction.query.clinics.findFirst({
@@ -166,6 +172,17 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
             : (setupLink.providerStatus as NonNullable<
                 KapsoWhatsAppOnboardingSnapshot["setupLinkProviderStatus"]
               >),
+        setupLinkReturn:
+          setupLink?.lastReturnStatus === null ||
+          setupLink?.lastReturnStatus === undefined ||
+          setupLink.lastReturnedAt === null ||
+          setupLink.lastReturnedAt === undefined
+            ? null
+            : {
+                errorCode: setupLink.lastReturnErrorCode ?? null,
+                returnedAt: setupLink.lastReturnedAt,
+                status: setupLink.lastReturnStatus,
+              },
       };
     };
 
@@ -270,6 +287,17 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
             "Kapso requiere un customer para guardar el enlace de configuración",
           );
         }
+        const setupLinkReturnValues = {
+          ...(input.setupLink.lastReturnErrorCode === undefined
+            ? {}
+            : { lastReturnErrorCode: input.setupLink.lastReturnErrorCode }),
+          ...(input.setupLink.lastReturnStatus === undefined
+            ? {}
+            : { lastReturnStatus: input.setupLink.lastReturnStatus }),
+          ...(input.setupLink.lastReturnedAt === undefined
+            ? {}
+            : { lastReturnedAt: input.setupLink.lastReturnedAt }),
+        };
         await transaction
           .insert(whatsappSetupLinks)
           .values({
@@ -279,6 +307,7 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
             url: input.setupLink.url,
             providerError: input.setupLink.providerError,
             providerStatus: input.setupLink.providerStatus,
+            ...setupLinkReturnValues,
             status: input.setupLink.status,
             createdAt: input.setupLink.createdAt,
             expiresAt: input.setupLink.expiresAt,
@@ -299,6 +328,7 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
               revokedAt: input.setupLink.revokedAt,
               usedAt: input.setupLink.usedAt,
               updatedAt: new Date(),
+              ...setupLinkReturnValues,
             },
           });
       }
@@ -318,6 +348,59 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore = {
       return;
     }
     await inSuperadminTransaction(input.actorIdentityId, operation);
+  },
+
+  async findSetupLinkByProviderId(providerSetupLinkId) {
+    return inWhatsAppSetupLinkReturnTransaction(
+      providerSetupLinkId,
+      async (
+        transaction,
+      ): Promise<KapsoWhatsAppSetupLinkReturnRecord | undefined> => {
+        const setupLink = await transaction.query.whatsappSetupLinks.findFirst({
+          columns: {
+            clinicId: true,
+            customerId: true,
+            expiresAt: true,
+            kapsoSetupLinkId: true,
+            status: true,
+          },
+          where: eq(whatsappSetupLinks.kapsoSetupLinkId, providerSetupLinkId),
+        });
+        return setupLink;
+      },
+    );
+  },
+
+  async recordSetupLinkReturn(input) {
+    return inWhatsAppSetupLinkReturnTransaction(
+      input.setupLinkId,
+      async (transaction) => {
+        const setupLink = await transaction.query.whatsappSetupLinks.findFirst({
+          columns: {
+            lastReturnErrorCode: true,
+            lastReturnStatus: true,
+          },
+          where: eq(whatsappSetupLinks.kapsoSetupLinkId, input.setupLinkId),
+        });
+        if (setupLink === undefined) return false;
+        if (
+          setupLink.lastReturnStatus === input.status &&
+          (setupLink.lastReturnErrorCode ?? null) === input.errorCode
+        ) {
+          return false;
+        }
+        await transaction
+          .update(whatsappSetupLinks)
+          .set({
+            lastReturnErrorCode: input.errorCode,
+            lastReturnStatus: input.status,
+            lastReturnedAt: input.returnedAt,
+            updatedAt: input.returnedAt,
+          })
+          .where(eq(whatsappSetupLinks.kapsoSetupLinkId, input.setupLinkId));
+        return true;
+      },
+    );
   },
 };
 

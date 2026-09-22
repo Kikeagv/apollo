@@ -72,6 +72,7 @@ import type {
 } from "~/domain/whatsapp-readiness";
 import type { WhatsAppConnectionAlertStatus } from "~/domain/whatsapp-connection-alert";
 import type { WhatsAppSetupLinkStatus } from "~/domain/whatsapp-setup-link";
+import type { WhatsAppSetupLinkReturnStatus } from "~/domain/whatsapp-setup-link-return";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 import type { WhatsAppDeliveryStatus } from "~/domain/whatsapp-delivery";
 import type { WhatsAppInboundAlertStatus } from "~/domain/whatsapp-inbound-alert";
@@ -1333,6 +1334,10 @@ export const whatsappSetupLinks = createTable(
     url: text("url").notNull(),
     providerStatus: text("provider_status"),
     providerError: text("provider_error"),
+    lastReturnStatus:
+      text("last_return_status").$type<WhatsAppSetupLinkReturnStatus>(),
+    lastReturnErrorCode: text("last_return_error_code"),
+    lastReturnedAt: timestamp("last_returned_at", { withTimezone: true }),
     status: text("status").$type<WhatsAppSetupLinkStatus>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

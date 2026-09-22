@@ -18,7 +18,11 @@ type SignInResult = {
   status?: "authenticated" | "otp-required";
 };
 
-export function ClinicSignInForm() {
+export function ClinicSignInForm({
+  nextPath = "/calendario",
+}: {
+  nextPath?: string;
+}) {
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -42,7 +46,9 @@ export function ClinicSignInForm() {
         return;
       }
       window.location.assign(
-        result.status === "otp-required" ? "/?verificar=otp" : "/calendario",
+        result.status === "otp-required"
+          ? `/?verificar=otp&next=${encodeURIComponent(nextPath)}`
+          : nextPath,
       );
     } catch {
       setError("No se pudo iniciar sesión.");

@@ -1,4 +1,5 @@
 import { env } from "~/env";
+import { WHATSAPP_CONFIGURATION_PATH } from "~/domain/whatsapp-setup-link-return";
 import { redirect } from "next/navigation";
 
 import { PasswordRecoveryForm } from "./password-recovery-form";
@@ -10,13 +11,18 @@ import { getPanaceaSessionContext } from "~/server/application/panacea-shell";
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ recuperar?: string; verificar?: string }>;
+  searchParams: Promise<{
+    next?: string;
+    recuperar?: string;
+    verificar?: string;
+  }>;
 }) {
+  const { next, recuperar, verificar } = await searchParams;
+  const nextPath = next === WHATSAPP_CONFIGURATION_PATH ? next : "/calendario";
   const context = await getPanaceaSessionContext();
-  if (context !== undefined) redirect("/calendario");
+  if (context !== undefined) redirect(nextPath);
 
   const session = await getSession();
-  const { recuperar, verificar } = await searchParams;
 
   return (
     <main className="bg-background text-foreground flex min-h-screen items-center justify-center px-4 py-10 sm:px-6">
@@ -32,14 +38,14 @@ export default async function Home({
             <p>
               Confirme el inicio desde este navegador antes de abrir Praxia.
             </p>
-            <VerifyClinicOtpForm />
+            <VerifyClinicOtpForm nextPath={nextPath} />
           </>
         ) : recuperar === "1" ? (
           <PasswordRecoveryForm
             turnstileSiteKey={env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
           />
         ) : (
-          <ClinicSignInForm />
+          <ClinicSignInForm nextPath={nextPath} />
         )}
       </section>
     </main>

@@ -249,6 +249,27 @@ export async function inWhatsAppWebhookIngressTransaction<T>(
   });
 }
 
+/**
+ * Contexto público acotado al retorno de un enlace. El identificador se fija
+ * como variable de sesión y las políticas RLS solo permiten tocar esa fila;
+ * el callback no recibe contexto de Identidad o Clínica.
+ */
+export async function inWhatsAppSetupLinkReturnTransaction<T>(
+  setupLinkId: string,
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`set local role panacea_clinical_access`);
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_setup_link_return', 'true', true)`,
+    );
+    await transaction.execute(
+      sql`select set_config('app.whatsapp_setup_link_id', ${setupLinkId}, true)`,
+    );
+    return operation(transaction);
+  });
+}
+
 /** Contexto acotado del worker asíncrono de provisión Kapso. */
 export async function inWhatsAppProvisioningWorkerTransaction<T>(
   operation: (transaction: ClinicTransaction) => Promise<T>,

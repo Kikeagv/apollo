@@ -3,6 +3,7 @@ import {
   whatsappSetupLinkStatus,
 } from "~/domain/whatsapp-setup-link";
 import { phoneNumbersMatch } from "~/domain/whatsapp-preflight";
+import { whatsappSetupLinkReturnUrl } from "~/domain/whatsapp-setup-link-return";
 import {
   KapsoProviderError,
   KapsoProviderUnavailableError,
@@ -160,9 +161,9 @@ export async function manageKapsoWhatsAppSetupLink(
     const created = await dependencies.provider.createSetupLink({
       customerId,
       allowedOrigin: new URL(dependencies.appUrl).origin,
-      failureRedirectUrl: `${dependencies.appUrl}/configuracion/whatsapp`,
+      failureRedirectUrl: whatsappSetupLinkReturnUrl(dependencies.appUrl),
       ...(reconnectPhoneNumber === undefined ? {} : { reconnectPhoneNumber }),
-      successRedirectUrl: `${dependencies.appUrl}/configuracion/whatsapp`,
+      successRedirectUrl: whatsappSetupLinkReturnUrl(dependencies.appUrl),
     });
     try {
       await dependencies.store.save({

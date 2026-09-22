@@ -94,7 +94,7 @@ describe("alta comercial y sintética recuperable", () => {
         expect(expired.invitation.delivery.canRetry).toBe(true);
         await expect(
           getClinicInvitationActivationMode({ token: oldToken }),
-        ).resolves.toBe("expired");
+        ).resolves.toMatchObject({ mode: "expired", role: "owner" });
 
         const renewed = await retryClinicInvitation(
           { actorIdentityId: identityId, clinicId: createdClinicId },
@@ -118,7 +118,7 @@ describe("alta comercial y sintética recuperable", () => {
         ).rejects.toThrow("La invitación no es válida o venció");
         await expect(
           getClinicInvitationActivationMode({ token: newToken }),
-        ).resolves.toBe("new");
+        ).resolves.toMatchObject({ mode: "new", role: "owner" });
         await expect(
           acceptClinicOwnerInvitation({
             password: "Contraseña-renovada-APO-96",
@@ -135,7 +135,7 @@ describe("alta comercial y sintética recuperable", () => {
         ownerIdentityId = activation.identityId;
         await expect(
           getClinicInvitationActivationMode({ token: newToken }),
-        ).rejects.toThrow("La invitación no es válida o venció");
+        ).resolves.toMatchObject({ mode: "accepted", role: "owner" });
 
         const persisted = await inSuperadminTransaction(
           identityId,

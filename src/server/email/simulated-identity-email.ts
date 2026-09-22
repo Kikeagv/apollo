@@ -9,6 +9,8 @@ import type {
   ClinicDoctorInvitationDelivery,
   ClinicOwnerInvitationDelivery,
 } from "~/server/email/clinic-invitation-email";
+import { env } from "~/env";
+import { clinicInvitationUrl } from "~/domain/clinic-invitation";
 
 type ClinicOwnerInvitation = ClinicOwnerInvitationDelivery & {
   activationUrl: string;
@@ -50,7 +52,7 @@ export async function sendSimulatedClinicOwnerInvitation(
 ) {
   sentClinicOwnerInvitations.push({
     ...invitation,
-    activationUrl: `/activar-invitacion?token=${encodeURIComponent(invitation.token)}`,
+    activationUrl: clinicInvitationUrl(env.PUBLIC_SITE_URL, invitation.token),
   });
 }
 
@@ -64,7 +66,7 @@ export async function sendSimulatedClinicDoctorInvitation(
 ) {
   sentClinicDoctorInvitations.push({
     ...invitation,
-    activationUrl: `/activar-invitacion?token=${encodeURIComponent(invitation.token)}`,
+    activationUrl: clinicInvitationUrl(env.PUBLIC_SITE_URL, invitation.token),
   });
 }
 

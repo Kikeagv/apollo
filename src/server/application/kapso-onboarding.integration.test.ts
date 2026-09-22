@@ -7,6 +7,7 @@ import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection"
 import { db } from "~/server/db";
 import {
   inClinicTransaction,
+  inWhatsAppSetupLinkReturnTransaction,
   inSuperadminTransaction,
 } from "~/server/db/clinic-context";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
@@ -129,6 +130,60 @@ describe("persistencia y RLS del onboarding Kapso", () => {
           },
           setupLinkProviderId: "kapso-link-apo-84",
         });
+
+        await expect(
+          drizzleKapsoOnboardingStore.findSetupLinkByProviderId(
+            "kapso-link-apo-84",
+          ),
+        ).resolves.toMatchObject({
+          clinicId: fixture.primaryClinicId,
+          customerId: "kapso-customer-apo-83",
+        });
+        await expect(
+          drizzleKapsoOnboardingStore.recordSetupLinkReturn({
+            errorCode: null,
+            returnedAt: new Date("2026-09-06T12:05:00.000Z"),
+            setupLinkId: "kapso-link-apo-84",
+            status: "success",
+          }),
+        ).resolves.toBe(true);
+        await expect(
+          drizzleKapsoOnboardingStore.recordSetupLinkReturn({
+            errorCode: null,
+            returnedAt: new Date("2026-09-06T12:06:00.000Z"),
+            setupLinkId: "kapso-link-apo-84",
+            status: "success",
+          }),
+        ).resolves.toBe(false);
+        await expect(
+          drizzleKapsoOnboardingStore.read({
+            access: "clinic-owner",
+            actorIdentityId: primaryOwnerIdentityId,
+            clinicId: fixture.primaryClinicId,
+          }),
+        ).resolves.toMatchObject({
+          setupLinkReturn: {
+            errorCode: null,
+            status: "success",
+          },
+        });
+        await expect(
+          drizzleKapsoOnboardingStore.findSetupLinkByProviderId(
+            "kapso-link-does-not-exist",
+          ),
+        ).resolves.toBeUndefined();
+        await expect(
+          inWhatsAppSetupLinkReturnTransaction(
+            "kapso-link-apo-84",
+            (transaction) =>
+              transaction
+                .update(whatsappSetupLinks)
+                .set({ status: "revoked" })
+                .where(
+                  eq(whatsappSetupLinks.kapsoSetupLinkId, "kapso-link-apo-84"),
+                ),
+          ),
+        ).rejects.toThrow();
 
         await expect(
           inClinicTransaction(

@@ -855,6 +855,28 @@ describe("activación persistente por invitación del médico propietario", () =
   );
 
   databaseTest(
+    "permite retomar el siguiente paso al recargar una invitación ya activada",
+    async () => {
+      const fixture = await createActivationFixture();
+
+      try {
+        await acceptClinicOwnerInvitation({
+          password: "Contraseña-segura-APO-103",
+          token: fixture.invitationToken,
+        });
+
+        await expect(
+          getClinicInvitationActivationMode({
+            token: fixture.invitationToken,
+          }),
+        ).resolves.toMatchObject({ mode: "accepted", role: "owner" });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
     "rechaza el segundo uso sin guardar la nueva contraseña",
     async () => {
       const fixture = await createActivationFixture();

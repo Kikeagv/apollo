@@ -34,8 +34,8 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
     expect(provider.createSetupLink).toHaveBeenCalledWith({
       allowedOrigin: "https://app.praxia.test",
       customerId: "kapso-customer-1",
-      failureRedirectUrl: "https://app.praxia.test/configuracion/whatsapp",
-      successRedirectUrl: "https://app.praxia.test/configuracion/whatsapp",
+      failureRedirectUrl: "https://app.praxia.test/whatsapp/activacion/retorno",
+      successRedirectUrl: "https://app.praxia.test/whatsapp/activacion/retorno",
     });
     expect(result.setupLink).toMatchObject({
       status: "active",
@@ -68,9 +68,9 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
     expect(provider.createSetupLink).toHaveBeenCalledWith({
       allowedOrigin: "https://app.praxia.test",
       customerId: "kapso-customer-1",
-      failureRedirectUrl: "https://app.praxia.test/configuracion/whatsapp",
+      failureRedirectUrl: "https://app.praxia.test/whatsapp/activacion/retorno",
       reconnectPhoneNumber: "+50370000000",
-      successRedirectUrl: "https://app.praxia.test/configuracion/whatsapp",
+      successRedirectUrl: "https://app.praxia.test/whatsapp/activacion/retorno",
     });
   });
 

@@ -4,15 +4,18 @@ import { type FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { WHATSAPP_CONFIGURATION_PATH } from "~/domain/whatsapp-setup-link-return";
 import { api } from "~/trpc/react";
 
 const REDIRECT_TO_LOGIN_DELAY_MS = 3_000;
+const CALENDAR_PATH = "/calendario";
 
 export function ActivateInvitationForm({ token }: { token: string }) {
   const router = useRouter();
   const [result, setResult] = useState<string>();
   const [existingIdentity, setExistingIdentity] = useState(false);
   const [activated, setActivated] = useState(false);
+  const [nextPath, setNextPath] = useState(CALENDAR_PATH);
   const [requiresSupport, setRequiresSupport] = useState(false);
   const activationMode = api.panacea.getClinicInvitationActivationMode.useQuery(
     { token },
@@ -32,10 +35,13 @@ export function ActivateInvitationForm({ token }: { token: string }) {
       setRequiresSupport(false);
       setActivated(true);
       setExistingIdentity(data.identityStatus === "existing");
+      setNextPath(nextPathForRole(data.role));
       setResult(
-        data.identityStatus === "existing"
-          ? "La invitación se vinculó a su Identidad existente."
-          : "La cuenta se activó. En unos segundos la llevaremos al inicio de sesión.",
+        data.role === "owner"
+          ? data.identityStatus === "existing"
+            ? "La invitación se vinculó a su Identidad existente. Inicie sesión para continuar con la configuración de WhatsApp."
+            : "La cuenta se activó. Inicie sesión para continuar con la configuración de WhatsApp."
+          : "La cuenta se activó. Inicie sesión para continuar.",
       );
     },
   });
@@ -43,11 +49,11 @@ export function ActivateInvitationForm({ token }: { token: string }) {
   useEffect(() => {
     if (!activated) return;
     const timer = window.setTimeout(
-      () => router.replace("/"),
+      () => router.replace(loginPath(nextPath)),
       REDIRECT_TO_LOGIN_DELAY_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [activated, router]);
+  }, [activated, nextPath, router]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -57,7 +63,7 @@ export function ActivateInvitationForm({ token }: { token: string }) {
     const password = data.get("password");
     const confirmation = data.get("confirmation");
 
-    if (activationMode.data === "new") {
+    if (activationMode.data.mode === "new") {
       if (typeof password !== "string" || password !== confirmation) {
         setResult("Las contraseñas no coinciden.");
         return;
@@ -67,10 +73,12 @@ export function ActivateInvitationForm({ token }: { token: string }) {
       return;
     }
 
-    if (activationMode.data !== "existing") return;
+    if (activationMode.data.mode !== "existing") return;
     setResult(undefined);
     activation.mutate({ token });
   }
+
+  const activationDetails = activationMode.data;
 
   return (
     <div className="space-y-4">
@@ -80,15 +88,28 @@ export function ActivateInvitationForm({ token }: { token: string }) {
         <p className="text-sm text-rose-300" role="alert">
           {activationMode.error.message}
         </p>
-      ) : activated || requiresSupport ? null : activationMode.data ===
+      ) : activated || requiresSupport ? null : activationDetails?.mode ===
         "expired" ? (
         <p className="text-sm text-amber-300" role="alert">
           Esta invitación venció. Solicite al equipo de la Clínica que emita una
           nueva invitación.
         </p>
-      ) : activationMode.data === undefined ? null : (
+      ) : activationDetails?.mode === "accepted" ? (
+        <div className="space-y-3 text-sm text-teal-300">
+          <p>
+            Esta invitación ya fue activada y puede retomarse desde otro
+            dispositivo.
+          </p>
+          <Link
+            className="inline-block underline"
+            href={loginPath(nextPathForRole(activationDetails.role))}
+          >
+            Inicie sesión para continuar.
+          </Link>
+        </div>
+      ) : activationDetails === undefined ? null : (
         <form className="space-y-4" onSubmit={submit}>
-          {activationMode.data === "new" ? (
+          {activationDetails.mode === "new" ? (
             <>
               <p className="text-sm text-slate-300">
                 Cree la contraseña de su nueva Identidad para activar el acceso
@@ -130,7 +151,7 @@ export function ActivateInvitationForm({ token }: { token: string }) {
           >
             {activation.isPending
               ? "Activando…"
-              : activationMode.data === "new"
+              : activationDetails.mode === "new"
                 ? "Activar cuenta"
                 : "Vincular acceso"}
           </button>
@@ -158,12 +179,20 @@ export function ActivateInvitationForm({ token }: { token: string }) {
       {activated ? (
         <p className="text-sm">
           Si el inicio de sesión no abre solo,{" "}
-          <Link className="text-teal-300 underline" href="/">
-            ingrese desde aquí
+          <Link className="text-teal-300 underline" href={loginPath(nextPath)}>
+            ingrese desde aquí para continuar
           </Link>
           .
         </p>
       ) : null}
     </div>
   );
+}
+
+function nextPathForRole(role: "doctor" | "owner") {
+  return role === "owner" ? WHATSAPP_CONFIGURATION_PATH : CALENDAR_PATH;
+}
+
+function loginPath(nextPath: string) {
+  return `/?next=${encodeURIComponent(nextPath)}`;
 }
