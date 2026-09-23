@@ -28,12 +28,18 @@ export function parseKapsoInboundMessagePayload(
   }
 
   const firstSequence = readInteger(asRecord(root.batch_info)?.first_sequence);
+  const rootCustomerReference = firstString(
+    asRecord(root.customer)?.id,
+    root.customer_id,
+    root.customerId,
+  );
   return entries.map((entry, index) =>
     parseInboundMessage(entry, {
       batchFirstSequence: firstSequence,
       batchSequence: firstSequence === null ? null : firstSequence + index,
       eventName,
       fallbackConnectionReference: readString(root.phone_number_id),
+      fallbackCustomerReference: rootCustomerReference,
     }),
   );
 }
@@ -45,6 +51,7 @@ function parseInboundMessage(
     batchSequence: number | null;
     eventName: WhatsAppInboundEventName;
     fallbackConnectionReference: string | null;
+    fallbackCustomerReference: string | null;
   },
 ): WhatsAppInboundMessage {
   const message = asRecord(
@@ -137,6 +144,7 @@ function parseInboundMessage(
       asRecord(payload.customer)?.id,
       payload.customer_id,
       payload.customerId,
+      input.fallbackCustomerReference,
     ),
     direction,
     eventName: input.eventName,

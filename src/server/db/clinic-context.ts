@@ -237,14 +237,53 @@ export async function inAppointmentSchedulerTransaction<T>(
  * de confirmación solo permite devolver el UUID generado o detectar un
  * duplicado, no expone el payload al endpoint.
  */
-export async function inWhatsAppWebhookIngressTransaction<T>(
+type WhatsAppWebhookIngressScope = {
+  customerReference: string | null;
+  idempotencyKey: string;
+  messageId: string;
+  phoneNumberId: string;
+};
+
+export function inWhatsAppWebhookIngressTransaction<T>(
   operation: (transaction: ClinicTransaction) => Promise<T>,
+): Promise<T>;
+export function inWhatsAppWebhookIngressTransaction<T>(
+  scope: WhatsAppWebhookIngressScope,
+  operation: (transaction: ClinicTransaction) => Promise<T>,
+): Promise<T>;
+export async function inWhatsAppWebhookIngressTransaction<T>(
+  operationOrScope:
+    | ((transaction: ClinicTransaction) => Promise<T>)
+    | WhatsAppWebhookIngressScope,
+  scopedOperation?: (transaction: ClinicTransaction) => Promise<T>,
 ) {
+  const scope =
+    typeof operationOrScope === "function" ? undefined : operationOrScope;
+  const operation =
+    typeof operationOrScope === "function" ? operationOrScope : scopedOperation;
+  if (operation === undefined) {
+    throw new Error("Falta la operación de ingreso del webhook de WhatsApp");
+  }
+
   return db.transaction(async (transaction) => {
     await transaction.execute(sql`set local role panacea_clinical_access`);
     await transaction.execute(
       sql`select set_config('app.whatsapp_webhook_ingress', 'true', true)`,
     );
+    if (scope !== undefined) {
+      await transaction.execute(
+        sql`select set_config('app.whatsapp_webhook_customer', ${scope.customerReference ?? ""}, true)`,
+      );
+      await transaction.execute(
+        sql`select set_config('app.whatsapp_webhook_idempotency_key', ${scope.idempotencyKey}, true)`,
+      );
+      await transaction.execute(
+        sql`select set_config('app.whatsapp_webhook_message_id', ${scope.messageId}, true)`,
+      );
+      await transaction.execute(
+        sql`select set_config('app.whatsapp_webhook_phone_number_id', ${scope.phoneNumberId}, true)`,
+      );
+    }
     return operation(transaction);
   });
 }

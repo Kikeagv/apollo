@@ -784,7 +784,7 @@ function ContactDirectoryList({
           <li className="border-border rounded-xl border p-4" key={contact.id}>
             <p className="font-medium">{contact.name}</p>
             <p className="text-muted-foreground mt-1 text-sm">
-              {contact.phoneE164}
+              {contact.phoneE164 ?? "Teléfono pendiente de identificar"}
             </p>
             <div className="mt-3 space-y-2">
               <p className="text-muted-foreground text-xs">
@@ -902,7 +902,8 @@ function PatientDetail({
                   <div>
                     <p className="font-medium">{link.contact.name}</p>
                     <p className="text-muted-foreground text-sm">
-                      {link.contact.phoneE164}
+                      {link.contact.phoneE164 ??
+                        "Teléfono pendiente de identificar"}
                     </p>
                   </div>
                   <Badge
@@ -1105,7 +1106,7 @@ function ContactMatchNotice({
   onReuse,
   reused,
 }: {
-  contact: { name: string; patientIds: string[]; phoneE164: string };
+  contact: { name: string; patientIds: string[]; phoneE164: string | null };
   onReuse: () => void;
   reused: boolean;
 }) {
@@ -1136,12 +1137,14 @@ function ContactMatchNotice({
 function SelectedContact({
   contact,
 }: {
-  contact: { name: string; phoneE164: string } | undefined;
+  contact: { name: string; phoneE164: string | null } | undefined;
 }) {
   return contact ? (
     <div className="bg-muted/40 rounded-lg border p-3 text-sm">
       <p className="font-medium">Contacto seleccionado: {contact.name}</p>
-      <p className="text-muted-foreground">{contact.phoneE164}</p>
+      <p className="text-muted-foreground">
+        {contact.phoneE164 ?? "Teléfono pendiente de identificar"}
+      </p>
     </div>
   ) : null;
 }

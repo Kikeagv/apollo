@@ -2214,7 +2214,8 @@ export const contacts = createTable(
       .notNull()
       .references(() => clinics.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    phoneE164: text("phone_e164").notNull(),
+    // A Contacto can be resolved by WhatsApp BSUID before Meta reveals a phone.
+    phoneE164: text("phone_e164"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -2353,9 +2354,11 @@ export const whatsappInboundMessages = createTable(
   },
   (table) => [
     uniqueIndex("whatsapp_inbound_message_idempotency_unique").on(
+      sql`coalesce(${table.customerId}, '')`,
       table.idempotencyKey,
     ),
     uniqueIndex("whatsapp_inbound_message_message_unique").on(
+      sql`coalesce(${table.customerId}, '')`,
       table.phoneNumberId,
       table.messageId,
     ),

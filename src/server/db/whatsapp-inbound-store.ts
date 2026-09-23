@@ -7,6 +7,7 @@ import {
   resolveWhatsAppIdentity,
   type WhatsAppIdentityRecord,
 } from "~/domain/whatsapp-identity";
+import { resolveWhatsAppInboundDuplicate } from "~/domain/whatsapp-inbound-idempotency";
 import {
   matchesWhatsAppCustomer,
   type WhatsAppInboundMessage,
@@ -73,59 +74,84 @@ export type WhatsAppInboundPersistenceStore = WhatsAppInboundStore &
 /** Persistencia del webhook y del worker inbound con contextos RLS separados. */
 export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
   async enqueueInbound({ idempotencyKey, message }) {
-    return inWhatsAppWebhookIngressTransaction(async (transaction) => {
-      const [inserted] = await transaction
-        .insert(whatsappInboundMessages)
-        .values({
-          batchSequence: message.batchSequence,
-          businessScopedUserId: message.businessScopedUserId,
-          conversationId: message.conversationId,
-          customerId: message.customerReference,
-          direction: message.direction,
-          eventName: message.eventName,
-          fromWaId: message.fromWaId,
+    return inWhatsAppWebhookIngressTransaction(
+      {
+        customerReference: message.customerReference,
+        idempotencyKey,
+        messageId: message.id,
+        phoneNumberId: message.connectionReference,
+      },
+      async (transaction) => {
+        const [inserted] = await transaction
+          .insert(whatsappInboundMessages)
+          .values({
+            batchSequence: message.batchSequence,
+            businessScopedUserId: message.businessScopedUserId,
+            conversationId: message.conversationId,
+            customerId: message.customerReference,
+            direction: message.direction,
+            eventName: message.eventName,
+            fromWaId: message.fromWaId,
+            idempotencyKey,
+            messageId: message.id,
+            messageTimestamp: message.messageTimestamp,
+            origin: inboundOriginToStorage(message.origin),
+            parentBusinessScopedUserId: message.parentBusinessScopedUserId,
+            phoneE164: message.phoneE164,
+            phoneNumberId: message.connectionReference,
+            batchFirstSequence: message.batchFirstSequence,
+            rawPayload: message.rawPayload,
+            interactiveAction: message.interactiveAction,
+            status: "pending",
+            text: message.text,
+            type: message.type,
+            username: message.username,
+          })
+          .onConflictDoNothing()
+          .returning({ id: whatsappInboundMessages.id });
+        if (inserted !== undefined) {
+          return { accepted: true, eventId: inserted.id };
+        }
+
+        const existing = await transaction
+          .select({
+            eventId: whatsappInboundMessages.id,
+            idempotencyKey: whatsappInboundMessages.idempotencyKey,
+            messageId: whatsappInboundMessages.messageId,
+            phoneNumberId: whatsappInboundMessages.phoneNumberId,
+            customerReference: whatsappInboundMessages.customerId,
+          })
+          .from(whatsappInboundMessages)
+          .where(
+            or(
+              eq(whatsappInboundMessages.idempotencyKey, idempotencyKey),
+              and(
+                eq(
+                  whatsappInboundMessages.phoneNumberId,
+                  message.connectionReference,
+                ),
+                eq(whatsappInboundMessages.messageId, message.id),
+              ),
+            ),
+          );
+        const duplicate = resolveWhatsAppInboundDuplicate({
+          candidates: existing,
           idempotencyKey,
           messageId: message.id,
-          messageTimestamp: message.messageTimestamp,
-          origin: inboundOriginToStorage(message.origin),
-          parentBusinessScopedUserId: message.parentBusinessScopedUserId,
-          phoneE164: message.phoneE164,
           phoneNumberId: message.connectionReference,
-          batchFirstSequence: message.batchFirstSequence,
-          rawPayload: message.rawPayload,
-          interactiveAction: message.interactiveAction,
-          status: "pending",
-          text: message.text,
-          type: message.type,
-          username: message.username,
-        })
-        .onConflictDoNothing()
-        .returning({ id: whatsappInboundMessages.id });
-      if (inserted !== undefined) {
-        return { accepted: true, eventId: inserted.id };
-      }
-
-      const existing = await transaction
-        .select({ id: whatsappInboundMessages.id })
-        .from(whatsappInboundMessages)
-        .where(
-          or(
-            eq(whatsappInboundMessages.idempotencyKey, idempotencyKey),
-            and(
-              eq(
-                whatsappInboundMessages.phoneNumberId,
-                message.connectionReference,
-              ),
-              eq(whatsappInboundMessages.messageId, message.id),
-            ),
-          ),
-        )
-        .limit(1);
-      return {
-        accepted: false,
-        eventId: existing[0]?.id ?? "duplicate",
-      };
-    });
+          customerReference: message.customerReference,
+        });
+        if (duplicate === undefined) {
+          throw new Error(
+            "No se pudo confirmar la idempotencia del mensaje entrante de WhatsApp",
+          );
+        }
+        return {
+          accepted: false,
+          eventId: duplicate.eventId,
+        };
+      },
+    );
   },
 
   async readCurrentWhatsAppConsentPolicy({ clinicId }) {
@@ -278,10 +304,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           });
         if (
           connection !== undefined &&
-          !isBusinessAppContinuityAllowed(
-            candidate.origin,
-            connection.status,
-          ) &&
+          !isBusinessAppContinuityAllowed(candidate.origin) &&
           (await isWhatsAppCircuitOpenInTransaction(
             transaction,
             connection.clinicId,
@@ -362,7 +385,6 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
       }
       const businessAppContinuity = isBusinessAppContinuityAllowed(
         message.origin,
-        connection.status,
       );
       if (
         !businessAppContinuity &&
@@ -464,6 +486,43 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
               recipientPhoneE164: message.phoneE164,
             } satisfies WhatsAppInboundResolution;
           }
+        }
+        if (
+          mode === "live" &&
+          message.businessScopedUserId !== null &&
+          message.phoneE164 === null
+        ) {
+          const [contact] = await transaction
+            .insert(contacts)
+            .values({
+              clinicId: connection.clinicId,
+              name: message.username ?? "Contacto de WhatsApp",
+              phoneE164: null,
+            })
+            .returning({ id: contacts.id });
+          if (contact === undefined) {
+            throw new Error("No se pudo crear el Contacto de WhatsApp");
+          }
+          const identityId = await insertIdentitySnapshot(transaction, {
+            clinicId: connection.clinicId,
+            contactId: contact.id,
+            message,
+            status: "active",
+          });
+          await updateInboundResolution(transaction, message.eventId, {
+            clinicId: connection.clinicId,
+            contactId: contact.id,
+            identityId,
+            serviceWindowExpiresAt: serviceWindowExpiresAt(message),
+          });
+          return {
+            clinicId: connection.clinicId,
+            contactId: contact.id,
+            identityId,
+            kind: "matched",
+            recipientBusinessScopedUserId: message.businessScopedUserId,
+            recipientPhoneE164: null,
+          } satisfies WhatsAppInboundResolution;
         }
         await insertIdentitySnapshot(transaction, {
           clinicId: connection.clinicId,
@@ -1121,7 +1180,7 @@ async function insertIdentitySnapshot(
     clinicId: string;
     contactId?: string | null;
     message: WhatsAppInboundEvent;
-    status: "conflict" | "historical" | "unresolved";
+    status: "active" | "conflict" | "historical" | "unresolved";
   },
 ) {
   const [inserted] = await transaction
@@ -1186,13 +1245,22 @@ async function preserveIdentitySnapshot(
   );
   if (exact !== undefined) return exact.id;
 
-  const related = input.existing.filter(
+  const sameContactAndConnection = input.existing.filter(
     (identity) =>
       identity.contactId === input.contactId &&
-      ((next.businessScopedUserId !== null &&
-        identity.businessScopedUserId === next.businessScopedUserId) ||
-        (next.phoneE164 !== null && identity.phoneE164 === next.phoneE164)),
+      identity.phoneNumberId === next.phoneNumberId,
   );
+  const matching = sameContactAndConnection.filter(
+    (identity) =>
+      (next.businessScopedUserId !== null &&
+        identity.businessScopedUserId === next.businessScopedUserId) ||
+      (next.phoneE164 !== null && identity.phoneE164 === next.phoneE164),
+  );
+  const related = (
+    base === undefined && sameContactAndConnection.length === 1
+      ? sameContactAndConnection
+      : matching
+  ).filter((identity) => hasWhatsAppIdentityChanged(identity, next));
   if (related.length > 0) {
     await transaction
       .update(whatsappIdentities)
@@ -1257,14 +1325,8 @@ function storageOriginToDomain(origin: string): WhatsAppInboundMessageOrigin {
   }
 }
 
-function isBusinessAppContinuityAllowed(
-  origin: string,
-  connectionStatus: (typeof whatsappConnections.$inferSelect)["status"],
-) {
-  return (
-    (origin === "business_app" || origin === "business-app") &&
-    connectionStatus === "blocked"
-  );
+function isBusinessAppContinuityAllowed(origin: string) {
+  return origin === "business_app" || origin === "business-app";
 }
 
 function toIdentityRecord(

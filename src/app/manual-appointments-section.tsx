@@ -569,7 +569,7 @@ export function ManualAppointmentsSection({
                     </NativeSelectOption>
                     {selectedPatient?.contacts.map((contact) => (
                       <NativeSelectOption key={contact.id} value={contact.id}>
-                        {contact.name} · {contact.phoneE164}
+                        {contact.name} · {formatContactPhone(contact.phoneE164)}
                       </NativeSelectOption>
                     ))}
                   </NativeSelect>
@@ -712,7 +712,9 @@ export function ManualAppointmentsSection({
                         {registrationContactMatch.data?.name}
                       </p>
                       <p className="text-muted-foreground">
-                        {registrationContactMatch.data?.phoneE164}
+                        {formatContactPhone(
+                          registrationContactMatch.data?.phoneE164 ?? null,
+                        )}
                       </p>
                     </div>
                   ) : null}
@@ -1590,7 +1592,10 @@ function AppointmentDetail({
         <Detail
           label="Contacto"
           value={appointment.contacts
-            .map((contact) => `${contact.name} · ${contact.phoneE164}`)
+            .map(
+              (contact) =>
+                `${contact.name} · ${formatContactPhone(contact.phoneE164)}`,
+            )
             .join(", ")}
         />
         <Detail label="Médico" value={appointment.doctor.name} />
@@ -1630,7 +1635,7 @@ function AppointmentDetail({
             <li key={`${event.type}-${event.occurredAt.toString()}`}>
               {appointmentEventLabel(event.type)}
               {event.recipient
-                ? ` · ${event.recipient.name} · ${event.recipient.phoneE164}`
+                ? ` · ${event.recipient.name} · ${formatContactPhone(event.recipient.phoneE164)}`
                 : ""}
               {event.reason ? ` · ${event.reason}` : ""} · Usuario de clínica{" "}
               {event.actorClinicUserId} · {formatClinicDate(event.occurredAt)}
@@ -1665,7 +1670,7 @@ function AppointmentDetail({
                 </NativeSelectOption>
                 {appointment.contacts.map((contact) => (
                   <NativeSelectOption key={contact.id} value={contact.id}>
-                    {contact.name} · {contact.phoneE164}
+                    {contact.name} · {formatContactPhone(contact.phoneE164)}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
@@ -1964,6 +1969,10 @@ function formatTime(value: Date | string) {
 function formatMinutes(value: number | null) {
   if (value === null) return "Sin dato";
   return `${value} min`;
+}
+
+function formatContactPhone(value: string | null) {
+  return value ?? "Teléfono pendiente de identificar";
 }
 
 function localDate(value: Date | string) {

@@ -259,7 +259,10 @@ describe("webhook compartido de Kapso", () => {
     expect(enqueueInbound).toHaveBeenCalledTimes(2);
     expect(
       enqueueInbound.mock.calls.map(([call]) => call.idempotencyKey),
-    ).toEqual(["kapso-batch-1:message-1", "kapso-batch-1:message-2"]);
+    ).toEqual([
+      "kapso-batch-1:phone-1:message-1",
+      "kapso-batch-1:phone-1:message-2",
+    ]);
     expect(
       enqueueInbound.mock.calls.map(([call]) => call.message.batchSequence),
     ).toEqual([10, 11]);

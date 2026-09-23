@@ -312,10 +312,11 @@ async function enqueueKapsoInboundMessages(input: {
   return Promise.all(
     input.messages.map((message) =>
       input.enqueueInbound({
-        idempotencyKey:
-          input.batchSize === 1
-            ? input.idempotencyKey
-            : `${input.idempotencyKey}:${message.id}`,
+        idempotencyKey: idempotencyKeyForKapsoMessage({
+          batchSize: input.batchSize,
+          idempotencyKey: input.idempotencyKey,
+          message,
+        }),
         message,
       }),
     ),
@@ -331,10 +332,11 @@ async function enqueueKapsoSentMessages(input: {
 }) {
   const results = await Promise.all(
     input.messages.map(async (message) => {
-      const idempotencyKey =
-        input.messages.length === 1
-          ? input.idempotencyKey
-          : `${input.idempotencyKey}:${message.id}`;
+      const idempotencyKey = idempotencyKeyForKapsoMessage({
+        batchSize: input.messages.length,
+        idempotencyKey: input.idempotencyKey,
+        message,
+      });
       if (
         message.origin === "business-app" ||
         message.origin === "history-sync"
@@ -369,6 +371,15 @@ async function enqueueKapsoSentMessages(input: {
     }),
   );
   return summarizeKapsoQueueResults(results);
+}
+
+function idempotencyKeyForKapsoMessage(input: {
+  batchSize: number;
+  idempotencyKey: string;
+  message: WhatsAppInboundMessage;
+}) {
+  if (input.batchSize === 1) return input.idempotencyKey;
+  return `${input.idempotencyKey}:${input.message.connectionReference}:${input.message.id}`;
 }
 
 function summarizeKapsoQueueResults(

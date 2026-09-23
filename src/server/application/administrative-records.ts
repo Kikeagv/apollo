@@ -5,7 +5,7 @@ const MAX_RECORD_NAME_LENGTH = 120;
 export type Contact = {
   id: string;
   name: string;
-  phoneE164: string;
+  phoneE164: string | null;
 };
 
 export type Patient = {

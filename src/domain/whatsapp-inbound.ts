@@ -85,13 +85,13 @@ export function classifyWhatsAppInboundMessage(
   return "unsupported";
 }
 
-/** La referencia de customer es opcional; la conexión ya delimita la Clínica. */
+/** La Conexión sólo acepta eventos vinculados a su customer de Kapso. */
 export function matchesWhatsAppCustomer(input: {
   connectionCustomerReference: string;
   messageCustomerReference: string | null;
 }) {
   return (
-    input.messageCustomerReference === null ||
+    input.messageCustomerReference !== null &&
     input.messageCustomerReference === input.connectionCustomerReference
   );
 }

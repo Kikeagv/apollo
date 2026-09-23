@@ -15,6 +15,7 @@ import {
   runKapsoInboundWorker,
   type WhatsAppInboundAssistant,
 } from "./whatsapp-inbound";
+import { receiveKapsoWebhook } from "./whatsapp-provisioning";
 import {
   activateWhatsAppHumanTakeover,
   isWhatsAppHumanTakeoverActive,
@@ -61,6 +62,7 @@ import {
   reactivatePendingWhatsAppDeliveries,
 } from "../db/transactional-delivery-store";
 import { drizzleWhatsAppInboundStore } from "../db/whatsapp-inbound-store";
+import { drizzleWhatsAppProvisioningStore } from "../db/whatsapp-provisioning-store";
 import {
   getSentSimulatedAppointmentReminders,
   simulatedAppointmentReminderSender,
@@ -1604,7 +1606,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
   );
 
   databaseTest(
-    "procesa por phone_number_id un mensaje v2 sin customer y lo entrega una sola vez",
+    "procesa por customer y phone_number_id un mensaje v2 y lo entrega una sola vez",
     async () => {
       const fixture = await createFixture();
       const now = new Date("2026-09-08T12:00:00.000Z");
@@ -1619,7 +1621,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
         batchSequence: 101,
         businessScopedUserId: null,
         conversationId: `conversation-${fixture.contactId}`,
-        customerReference: null,
+        customerReference: `kapso-customer-${fixture.clinicId}`,
         direction: "inbound",
         eventName: "whatsapp.message.received",
         fromWaId: fixture.contactPhone,
@@ -1681,7 +1683,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           },
         };
         const result = await runKapsoInboundWorker(
-          { now },
+          { limit: 1, now },
           drizzleWhatsAppInboundStore,
           assistant,
           createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
@@ -1739,26 +1741,384 @@ describe("Reserva simulada de WhatsApp persistente", () => {
   );
 
   databaseTest(
+    "conserva Business App, history_sync y multimedia sin despertar al asistente",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-09-22T12:00:00.000Z");
+      const phoneNumberId = `kapso-origins-${fixture.clinicId}`;
+      const customerId = `kapso-customer-${fixture.clinicId}`;
+      const businessScopedUserId = `US.APO104.ORIGINS.${fixture.clinicId}`;
+      const businessAppMessageId = `apo-104-business-app-${fixture.clinicId}`;
+      const historyMessageId = `apo-104-history-${fixture.clinicId}`;
+      const mediaMessageId = `apo-104-media-${fixture.clinicId}`;
+      const assistantCalls: string[] = [];
+      const replies: string[] = [];
+
+      try {
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                customer: customerId,
+                phoneNumberId,
+                provider: "kapso",
+                status: "ready",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+          },
+        );
+        await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+          );
+          await transaction
+            .update(whatsappIdentities)
+            .set({ businessScopedUserId, phoneNumberId })
+            .where(
+              and(
+                eq(whatsappIdentities.clinicId, fixture.clinicId),
+                eq(whatsappIdentities.contactId, fixture.contactId),
+              ),
+            );
+        });
+
+        const payload = (input: {
+          direction: "inbound" | "outbound";
+          id: string;
+          origin: "business_app" | "cloud_api" | "history_sync";
+          type: "image" | "text";
+          text?: string;
+        }) => {
+          const outbound = input.direction === "outbound";
+          return {
+            conversation: {
+              business_scoped_user_id: businessScopedUserId,
+              id: `conversation-${fixture.contactId}`,
+              phone_number: fixture.contactPhone,
+              phone_number_id: phoneNumberId,
+            },
+            customer: { id: customerId },
+            message: {
+              ...(outbound
+                ? {
+                    from: "+50370001099",
+                    from_user_id: "US.BUSINESS.APP",
+                    to: fixture.contactPhone,
+                    to_user_id: businessScopedUserId,
+                  }
+                : {
+                    from: fixture.contactPhone,
+                    from_user_id: businessScopedUserId,
+                  }),
+              ...(input.type === "image"
+                ? {
+                    image: {
+                      id: "media-apo-104",
+                      mime_type: "image/jpeg",
+                      url: "https://kapso.example/should-not-be-stored",
+                    },
+                  }
+                : { text: { body: input.text ?? "hola" } }),
+              id: input.id,
+              kapso: {
+                direction: input.direction,
+                origin: input.origin,
+              },
+              type: input.type,
+            },
+            phone_number_id: phoneNumberId,
+          };
+        };
+
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.sent",
+            idempotencyKey: `${businessAppMessageId}-webhook`,
+            payload: payload({
+              direction: "outbound",
+              id: businessAppMessageId,
+              origin: "business_app",
+              type: "text",
+              text: "Atención humana",
+            }),
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.received",
+            idempotencyKey: `${historyMessageId}-webhook`,
+            payload: payload({
+              direction: "inbound",
+              id: historyMessageId,
+              origin: "history_sync",
+              type: "text",
+              text: "mensaje histórico",
+            }),
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.received",
+            idempotencyKey: `${mediaMessageId}-webhook`,
+            payload: payload({
+              direction: "inbound",
+              id: mediaMessageId,
+              origin: "cloud_api",
+              type: "image",
+            }),
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+
+        const result = await runKapsoInboundWorker(
+          { limit: 3, now },
+          drizzleWhatsAppInboundStore,
+          {
+            processText: async ({ messageId }) => {
+              assistantCalls.push(messageId);
+              return { text: "no debe responder" };
+            },
+          },
+          createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+          {
+            send: async ({ text }) => {
+              replies.push(text);
+            },
+          },
+          undefined,
+          {
+            activate: (input) =>
+              activateWhatsAppHumanTakeover(
+                input,
+                drizzleSimulatedWhatsAppBookingStore,
+              ),
+            isActive: (input) =>
+              isWhatsAppHumanTakeoverActive(
+                input,
+                drizzleSimulatedWhatsAppBookingStore,
+              ),
+          },
+        );
+
+        expect(result).toMatchObject({
+          claimed: 3,
+          processed: 3,
+          rejected: 0,
+        });
+        expect(assistantCalls).toEqual([]);
+        expect(replies).toHaveLength(1);
+        await expect(
+          listConversationEscalations(
+            fixture,
+            drizzleConversationEscalationReader,
+          ),
+        ).resolves.toMatchObject([
+          {
+            contact: { id: fixture.contactId },
+            sourceMessageType: "text",
+            trigger: "business-app",
+          },
+        ]);
+
+        const stored = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          (transaction) =>
+            transaction
+              .select({
+                eventName: whatsappInboundMessages.eventName,
+                id: whatsappInboundMessages.messageId,
+                origin: whatsappInboundMessages.origin,
+                rawPayload: whatsappInboundMessages.rawPayload,
+                status: whatsappInboundMessages.status,
+              })
+              .from(whatsappInboundMessages)
+              .where(
+                inArray(whatsappInboundMessages.messageId, [
+                  businessAppMessageId,
+                  historyMessageId,
+                  mediaMessageId,
+                ]),
+              ),
+        );
+        expect(stored).toHaveLength(3);
+        expect(stored).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              eventName: "whatsapp.message.sent",
+              id: businessAppMessageId,
+              origin: "business_app",
+              status: "processed",
+            }),
+            expect.objectContaining({
+              id: historyMessageId,
+              origin: "history_sync",
+              status: "processed",
+            }),
+            expect.objectContaining({
+              id: mediaMessageId,
+              origin: "cloud_api",
+              status: "processed",
+            }),
+          ]),
+        );
+        const mediaPayload = stored.find(
+          (message) => message.id === mediaMessageId,
+        )?.rawPayload;
+        expect(JSON.stringify(mediaPayload)).not.toContain(
+          "should-not-be-stored",
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "activa takeover de Business App aunque la Conexión esté degradada",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-09-22T12:00:00.000Z");
+      const phoneNumberId = `kapso-takeover-degraded-${fixture.clinicId}`;
+      const customerId = `kapso-customer-${fixture.clinicId}`;
+      const businessScopedUserId = `US.APO104.TAKEOVER.${fixture.clinicId}`;
+      const messageId = `apo-104-takeover-degraded-${fixture.clinicId}`;
+
+      try {
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                customer: customerId,
+                phoneNumberId,
+                provider: "kapso",
+                status: "degraded",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+          },
+        );
+        await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+          );
+          await transaction
+            .update(whatsappIdentities)
+            .set({ businessScopedUserId, phoneNumberId })
+            .where(
+              and(
+                eq(whatsappIdentities.clinicId, fixture.clinicId),
+                eq(whatsappIdentities.contactId, fixture.contactId),
+              ),
+            );
+        });
+
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.sent",
+            idempotencyKey: `${messageId}-webhook`,
+            payload: {
+              conversation: {
+                business_scoped_user_id: businessScopedUserId,
+                id: `conversation-${fixture.contactId}`,
+                phone_number: fixture.contactPhone,
+                phone_number_id: phoneNumberId,
+              },
+              customer: { id: customerId },
+              message: {
+                from: "+50370001099",
+                from_user_id: "US.BUSINESS.APP",
+                id: messageId,
+                kapso: { direction: "outbound", origin: "business_app" },
+                text: { body: "Atención humana" },
+                to: fixture.contactPhone,
+                to_user_id: businessScopedUserId,
+                type: "text",
+              },
+              phone_number_id: phoneNumberId,
+            },
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+
+        await expect(
+          runKapsoInboundWorker(
+            { limit: 1, now },
+            drizzleWhatsAppInboundStore,
+            {
+              processText: async () => ({ text: "no debe responder" }),
+            },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            { send: async () => undefined },
+            undefined,
+            {
+              activate: (input) =>
+                activateWhatsAppHumanTakeover(
+                  input,
+                  drizzleSimulatedWhatsAppBookingStore,
+                ),
+              isActive: (input) =>
+                isWhatsAppHumanTakeoverActive(
+                  input,
+                  drizzleSimulatedWhatsAppBookingStore,
+                ),
+            },
+          ),
+        ).resolves.toMatchObject({
+          claimed: 1,
+          processed: 1,
+          rejected: 0,
+        });
+        await expect(
+          listConversationEscalations(
+            fixture,
+            drizzleConversationEscalationReader,
+          ),
+        ).resolves.toMatchObject([
+          {
+            contact: { id: fixture.contactId },
+            trigger: "business-app",
+          },
+        ]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
     "procesa un lote Kapso fuera de orden sin duplicar efectos",
     async () => {
-      const phoneNumberId = `kapso-ordering-${randomUUID()}`;
-      const conversationId = `conversation-ordering-${randomUUID()}`;
+      const fixture = await createFixture();
+      const now = new Date("2026-09-22T12:00:00.000Z");
+      const phoneNumberId = `kapso-ordering-${fixture.clinicId}`;
+      const conversationId = `conversation-ordering-${fixture.clinicId}`;
+      const customerId = `kapso-customer-${fixture.clinicId}`;
+      const businessScopedUserId = `US.APO104.ORDERING.${fixture.clinicId}`;
       const firstSequence = 501;
+      const assistantCalls: string[] = [];
+      const replies: string[] = [];
       const makeMessage = (sequence: number): WhatsAppInboundMessage => ({
         batchFirstSequence: firstSequence,
         batchSequence: sequence,
-        businessScopedUserId: null,
+        businessScopedUserId,
         conversationId,
-        customerReference: null,
+        customerReference: customerId,
         direction: "inbound",
         eventName: "whatsapp.message.received",
-        fromWaId: "+50370000009",
+        fromWaId: fixture.contactPhone,
         id: `${phoneNumberId}-${sequence}`,
         interactiveAction: null,
-        messageTimestamp: new Date(),
+        messageTimestamp: now,
         origin: "api",
         parentBusinessScopedUserId: null,
-        phoneE164: "+50370000009",
+        phoneE164: fixture.contactPhone,
         connectionReference: phoneNumberId,
         rawPayload: { message: { id: `${phoneNumberId}-${sequence}` } },
         text: "info",
@@ -1767,35 +2127,113 @@ describe("Reserva simulada de WhatsApp persistente", () => {
       });
 
       try {
-        await drizzleWhatsAppInboundStore.enqueueInbound({
-          idempotencyKey: `${phoneNumberId}-502`,
-          message: makeMessage(502),
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                customer: customerId,
+                phoneNumberId,
+                provider: "kapso",
+                status: "ready",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+          },
+        );
+        await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+          );
+          await transaction
+            .update(whatsappIdentities)
+            .set({
+              businessScopedUserId,
+              phoneE164: fixture.contactPhone,
+              phoneNumberId,
+            })
+            .where(
+              and(
+                eq(whatsappIdentities.clinicId, fixture.clinicId),
+                eq(whatsappIdentities.contactId, fixture.contactId),
+              ),
+            );
         });
-        const firstClaimAt = new Date();
+
         await expect(
-          drizzleWhatsAppInboundStore.claimDueMessages({
-            limit: 10,
-            now: firstClaimAt,
+          drizzleWhatsAppInboundStore.enqueueInbound({
+            idempotencyKey: `${phoneNumberId}-502`,
+            message: makeMessage(502),
           }),
-        ).resolves.toMatchObject([
-          { batchFirstSequence: firstSequence, batchSequence: 502 },
+        ).resolves.toMatchObject({ accepted: true });
+
+        await expect(
+          drizzleWhatsAppInboundStore.enqueueInbound({
+            idempotencyKey: `${phoneNumberId}-501`,
+            message: makeMessage(501),
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+
+        await expect(
+          runKapsoInboundWorker(
+            { limit: 2, now },
+            drizzleWhatsAppInboundStore,
+            {
+              processText: async ({ messageId }) => {
+                assistantCalls.push(messageId);
+                return { text: `respuesta-${messageId}` };
+              },
+            },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            {
+              send: async ({ text }) => {
+                replies.push(text);
+              },
+            },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({ claimed: 2, processed: 2 });
+        expect(assistantCalls).toEqual([
+          `${phoneNumberId}-501`,
+          `${phoneNumberId}-502`,
+        ]);
+        expect(replies).toEqual([
+          `respuesta-${phoneNumberId}-501`,
+          `respuesta-${phoneNumberId}-502`,
         ]);
 
-        await drizzleWhatsAppInboundStore.enqueueInbound({
-          idempotencyKey: `${phoneNumberId}-501`,
-          message: makeMessage(501),
-        });
-        const claimed = await drizzleWhatsAppInboundStore.claimDueMessages({
-          limit: 10,
-          now: new Date(firstClaimAt.valueOf() + 1_000),
-        });
-        expect(claimed.map(({ batchSequence }) => batchSequence)).toEqual([
-          501,
-        ]);
+        await expect(
+          drizzleWhatsAppInboundStore.enqueueInbound({
+            idempotencyKey: `${phoneNumberId}-502-replay`,
+            message: makeMessage(502),
+          }),
+        ).resolves.toMatchObject({ accepted: false });
+        await expect(
+          runKapsoInboundWorker(
+            { limit: 2, now: new Date(now.valueOf() + 1_000) },
+            drizzleWhatsAppInboundStore,
+            {
+              processText: async ({ messageId }) => {
+                assistantCalls.push(messageId);
+                return { text: `respuesta-${messageId}` };
+              },
+            },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            {
+              send: async ({ text }) => {
+                replies.push(text);
+              },
+            },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({ claimed: 0, processed: 0 });
+        expect(assistantCalls).toHaveLength(2);
+        expect(replies).toHaveLength(2);
       } finally {
-        await db
-          .delete(whatsappInboundMessages)
-          .where(eq(whatsappInboundMessages.phoneNumberId, phoneNumberId));
+        await fixture.cleanup();
       }
     },
   );
@@ -1965,6 +2403,825 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             "missing-privacy",
             "patient-that-does-not-exist",
           ),
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "conserva cambios de Identidad de WhatsApp y no repite efectos al reentregar el mismo mensaje",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-09-22T12:00:00.000Z");
+      const phoneNumberId = `kapso-identity-${fixture.clinicId}`;
+      const customerId = `kapso-customer-${fixture.clinicId}`;
+      const businessScopedUserId = `US.APO104.${fixture.clinicId}`;
+      const changedBusinessScopedUserId = `US.APO104.CHANGED.${fixture.clinicId}`;
+      const newContactBusinessScopedUserId = `US.APO104.NEW.${fixture.clinicId}`;
+      const firstMessageId = `apo-104-identity-first-${fixture.clinicId}`;
+      const secondMessageId = `apo-104-identity-second-${fixture.clinicId}`;
+      const newContactMessageId = `apo-104-identity-new-${fixture.clinicId}`;
+      const secondPhone = "+50370001042";
+      const assistantCalls: string[] = [];
+      const replies: string[] = [];
+
+      try {
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                customer: customerId,
+                phoneNumberId,
+                provider: "kapso",
+                status: "ready",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+          },
+        );
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(contacts)
+              .set({ phoneE164: null })
+              .where(
+                and(
+                  eq(contacts.clinicId, fixture.clinicId),
+                  eq(contacts.id, fixture.contactId),
+                ),
+              );
+            await transaction
+              .update(whatsappIdentities)
+              .set({
+                businessScopedUserId,
+                phoneE164: null,
+                phoneNumberId,
+              })
+              .where(
+                and(
+                  eq(whatsappIdentities.clinicId, fixture.clinicId),
+                  eq(whatsappIdentities.contactId, fixture.contactId),
+                ),
+              );
+          },
+        );
+
+        const createPayload = (input: {
+          businessScopedUserId: string;
+          id: string;
+          phoneE164: string | null;
+        }) => ({
+          conversation: {
+            business_scoped_user_id: input.businessScopedUserId,
+            id: `conversation-${fixture.contactId}`,
+            phone_number: input.phoneE164,
+            phone_number_id: phoneNumberId,
+          },
+          customer: { id: customerId },
+          message: {
+            from: input.phoneE164 ?? input.businessScopedUserId,
+            from_user_id: input.businessScopedUserId,
+            id: input.id,
+            kapso: { direction: "inbound", origin: "cloud_api" },
+            text: { body: "info" },
+            type: "text",
+          },
+          phone_number_id: phoneNumberId,
+        });
+        const firstPayload = createPayload({
+          businessScopedUserId,
+          id: firstMessageId,
+          phoneE164: null,
+        });
+
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.received",
+            idempotencyKey: `apo-104-first-${fixture.clinicId}`,
+            payload: firstPayload,
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+        await expect(
+          runKapsoInboundWorker(
+            { now },
+            drizzleWhatsAppInboundStore,
+            {
+              processText: async ({ messageId }) => {
+                assistantCalls.push(messageId);
+                return { text: `respuesta-${messageId}` };
+              },
+            },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            {
+              send: async ({ text }) => {
+                replies.push(text);
+              },
+            },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({ processed: 1 });
+
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(contacts)
+              .set({ phoneE164: secondPhone })
+              .where(
+                and(
+                  eq(contacts.clinicId, fixture.clinicId),
+                  eq(contacts.id, fixture.contactId),
+                ),
+              );
+          },
+        );
+
+        const secondPayload = createPayload({
+          businessScopedUserId: changedBusinessScopedUserId,
+          id: secondMessageId,
+          phoneE164: secondPhone,
+        });
+
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.received",
+            idempotencyKey: `apo-104-second-${fixture.clinicId}`,
+            payload: secondPayload,
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+        await expect(
+          runKapsoInboundWorker(
+            { now },
+            drizzleWhatsAppInboundStore,
+            {
+              processText: async ({ messageId }) => {
+                assistantCalls.push(messageId);
+                return { text: `respuesta-${messageId}` };
+              },
+            },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            {
+              send: async ({ text }) => {
+                replies.push(text);
+              },
+            },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({ processed: 1 });
+
+        const newContactPayload = createPayload({
+          businessScopedUserId: newContactBusinessScopedUserId,
+          id: newContactMessageId,
+          phoneE164: null,
+        });
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.received",
+            idempotencyKey: `apo-104-new-${fixture.clinicId}`,
+            payload: newContactPayload,
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+        await expect(
+          runKapsoInboundWorker(
+            { now },
+            drizzleWhatsAppInboundStore,
+            {
+              processText: async ({ messageId }) => {
+                assistantCalls.push(messageId);
+                return { text: `respuesta-${messageId}` };
+              },
+            },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            {
+              send: async ({ text }) => {
+                replies.push(text);
+              },
+            },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({
+          awaitingConsent: 1,
+          claimed: 1,
+          processed: 0,
+        });
+        expect(assistantCalls).toEqual([firstMessageId, secondMessageId]);
+        expect(replies).toHaveLength(3);
+
+        const newInbound = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) =>
+            transaction
+              .select({
+                contactId: whatsappInboundMessages.contactId,
+                identityId: whatsappInboundMessages.identityId,
+                status: whatsappInboundMessages.status,
+              })
+              .from(whatsappInboundMessages)
+              .where(
+                eq(whatsappInboundMessages.messageId, newContactMessageId),
+              ),
+        );
+        const newContactId = newInbound[0]?.contactId;
+        if (newContactId === null || newContactId === undefined) {
+          throw new Error("El inbound BSUID no creó un Contacto");
+        }
+        expect(newInbound[0]).toMatchObject({ status: "awaiting-consent" });
+        await expect(
+          inSuperadminTransaction(fixture.superadminIdentityId, (transaction) =>
+            transaction
+              .select({
+                name: contacts.name,
+                phoneE164: contacts.phoneE164,
+              })
+              .from(contacts)
+              .where(eq(contacts.id, newContactId)),
+          ),
+        ).resolves.toEqual([{ name: "Contacto de WhatsApp", phoneE164: null }]);
+
+        const replay = await receiveKapsoWebhook({
+          eventName: "whatsapp.message.received",
+          idempotencyKey: `apo-104-replay-${fixture.clinicId}`,
+          payload: firstPayload,
+          store: drizzleWhatsAppProvisioningStore,
+        });
+        expect(replay.accepted).toBe(false);
+        expect(replay.eventId).toBeTypeOf("string");
+        await expect(
+          drizzleWhatsAppInboundStore.claimDueMessages({ now, limit: 20 }),
+        ).resolves.toEqual([]);
+
+        expect(assistantCalls).toEqual([firstMessageId, secondMessageId]);
+        expect(replies.slice(0, 2)).toEqual([
+          `respuesta-${firstMessageId}`,
+          `respuesta-${secondMessageId}`,
+        ]);
+
+        const identities = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) =>
+            transaction
+              .select({
+                businessScopedUserId: whatsappIdentities.businessScopedUserId,
+                phoneE164: whatsappIdentities.phoneE164,
+                sourceMessageId: whatsappIdentities.sourceMessageId,
+                status: whatsappIdentities.status,
+              })
+              .from(whatsappIdentities)
+              .where(
+                and(
+                  eq(whatsappIdentities.clinicId, fixture.clinicId),
+                  eq(whatsappIdentities.contactId, fixture.contactId),
+                ),
+              ),
+        );
+        expect(identities).toHaveLength(2);
+        expect(identities).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              businessScopedUserId,
+              phoneE164: null,
+              status: "historical",
+            }),
+            expect.objectContaining({
+              businessScopedUserId: changedBusinessScopedUserId,
+              phoneE164: secondPhone,
+              sourceMessageId: secondMessageId,
+              status: "active",
+            }),
+          ]),
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "conserva identidades activas no relacionadas durante un rollover",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-09-22T12:00:00.000Z");
+      const phoneNumberId = `kapso-multiple-identities-${fixture.clinicId}`;
+      const customerId = `kapso-customer-${fixture.clinicId}`;
+      const oldBusinessScopedUserId = `US.APO104.OLD.${fixture.clinicId}`;
+      const nextBusinessScopedUserId = `US.APO104.NEXT.${fixture.clinicId}`;
+      const unrelatedBusinessScopedUserId = `US.APO104.UNRELATED.${fixture.clinicId}`;
+      const unrelatedPhone = "+50370001046";
+      const messageId = `apo-104-multiple-identities-${fixture.clinicId}`;
+
+      try {
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                customer: customerId,
+                phoneNumberId,
+                provider: "kapso",
+                status: "ready",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+            await transaction
+              .update(contacts)
+              .set({ phoneE164: fixture.contactPhone })
+              .where(
+                and(
+                  eq(contacts.clinicId, fixture.clinicId),
+                  eq(contacts.id, fixture.contactId),
+                ),
+              );
+          },
+        );
+        await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+          );
+          await transaction
+            .update(whatsappIdentities)
+            .set({
+              businessScopedUserId: oldBusinessScopedUserId,
+              phoneE164: fixture.contactPhone,
+              phoneNumberId,
+            })
+            .where(
+              and(
+                eq(whatsappIdentities.clinicId, fixture.clinicId),
+                eq(whatsappIdentities.contactId, fixture.contactId),
+              ),
+            );
+          await transaction.insert(whatsappIdentities).values({
+            businessScopedUserId: unrelatedBusinessScopedUserId,
+            clinicId: fixture.clinicId,
+            contactId: fixture.contactId,
+            phoneE164: unrelatedPhone,
+            phoneNumberId,
+            status: "active",
+          });
+        });
+
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.received",
+            idempotencyKey: `apo-104-multiple-identities-key-${fixture.clinicId}`,
+            payload: {
+              conversation: {
+                business_scoped_user_id: nextBusinessScopedUserId,
+                id: `conversation-${fixture.contactId}`,
+                phone_number: fixture.contactPhone,
+                phone_number_id: phoneNumberId,
+              },
+              customer: { id: customerId },
+              message: {
+                from: fixture.contactPhone,
+                from_user_id: nextBusinessScopedUserId,
+                id: messageId,
+                kapso: { direction: "inbound", origin: "cloud_api" },
+                text: { body: "info" },
+                type: "text",
+              },
+              phone_number_id: phoneNumberId,
+            },
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+        await expect(
+          runKapsoInboundWorker(
+            { now },
+            drizzleWhatsAppInboundStore,
+            { processText: async () => ({ text: "Respuesta." }) },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            { send: async () => undefined },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({ processed: 1 });
+
+        await expect(
+          inSuperadminTransaction(
+            fixture.superadminIdentityId,
+            async (transaction) =>
+              transaction
+                .select({
+                  businessScopedUserId: whatsappIdentities.businessScopedUserId,
+                  phoneE164: whatsappIdentities.phoneE164,
+                  status: whatsappIdentities.status,
+                })
+                .from(whatsappIdentities)
+                .where(
+                  and(
+                    eq(whatsappIdentities.clinicId, fixture.clinicId),
+                    eq(whatsappIdentities.contactId, fixture.contactId),
+                    eq(whatsappIdentities.phoneNumberId, phoneNumberId),
+                  ),
+                ),
+          ),
+        ).resolves.toEqual(
+          expect.arrayContaining([
+            {
+              businessScopedUserId: oldBusinessScopedUserId,
+              phoneE164: fixture.contactPhone,
+              status: "historical",
+            },
+            {
+              businessScopedUserId: unrelatedBusinessScopedUserId,
+              phoneE164: unrelatedPhone,
+              status: "active",
+            },
+            {
+              businessScopedUserId: nextBusinessScopedUserId,
+              phoneE164: fixture.contactPhone,
+              status: "active",
+            },
+          ]),
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "retira ambos snapshots cuando BSUID y teléfono cruzan identidades del mismo Contacto",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-09-22T12:00:00.000Z");
+      const phoneNumberId = `kapso-overlap-${fixture.clinicId}`;
+      const customerId = `kapso-customer-${fixture.clinicId}`;
+      const firstBusinessScopedUserId = `US.APO104.OVERLAP.FIRST.${fixture.clinicId}`;
+      const secondBusinessScopedUserId = `US.APO104.OVERLAP.SECOND.${fixture.clinicId}`;
+      const firstPhone = "+50370001047";
+      const secondPhone = "+50370001048";
+      const messageId = `apo-104-overlap-${fixture.clinicId}`;
+
+      try {
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                customer: customerId,
+                phoneNumberId,
+                provider: "kapso",
+                status: "ready",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+          },
+        );
+        await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+          );
+          await transaction
+            .update(whatsappIdentities)
+            .set({
+              businessScopedUserId: firstBusinessScopedUserId,
+              phoneE164: firstPhone,
+              phoneNumberId,
+            })
+            .where(
+              and(
+                eq(whatsappIdentities.clinicId, fixture.clinicId),
+                eq(whatsappIdentities.contactId, fixture.contactId),
+              ),
+            );
+          await transaction.insert(whatsappIdentities).values({
+            businessScopedUserId: secondBusinessScopedUserId,
+            clinicId: fixture.clinicId,
+            contactId: fixture.contactId,
+            phoneE164: secondPhone,
+            phoneNumberId,
+            status: "active",
+          });
+        });
+
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.received",
+            idempotencyKey: `apo-104-overlap-key-${fixture.clinicId}`,
+            payload: {
+              conversation: {
+                business_scoped_user_id: secondBusinessScopedUserId,
+                id: `conversation-${fixture.contactId}`,
+                phone_number: firstPhone,
+                phone_number_id: phoneNumberId,
+              },
+              customer: { id: customerId },
+              message: {
+                from: firstPhone,
+                from_user_id: secondBusinessScopedUserId,
+                id: messageId,
+                kapso: { direction: "inbound", origin: "cloud_api" },
+                text: { body: "info" },
+                type: "text",
+              },
+              phone_number_id: phoneNumberId,
+            },
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+        await expect(
+          runKapsoInboundWorker(
+            { now },
+            drizzleWhatsAppInboundStore,
+            { processText: async () => ({ text: "Respuesta." }) },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            { send: async () => undefined },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({ processed: 1 });
+
+        await expect(
+          inSuperadminTransaction(
+            fixture.superadminIdentityId,
+            async (transaction) =>
+              transaction
+                .select({
+                  businessScopedUserId: whatsappIdentities.businessScopedUserId,
+                  phoneE164: whatsappIdentities.phoneE164,
+                  status: whatsappIdentities.status,
+                })
+                .from(whatsappIdentities)
+                .where(
+                  and(
+                    eq(whatsappIdentities.clinicId, fixture.clinicId),
+                    eq(whatsappIdentities.contactId, fixture.contactId),
+                    eq(whatsappIdentities.phoneNumberId, phoneNumberId),
+                  ),
+                ),
+          ),
+        ).resolves.toEqual(
+          expect.arrayContaining([
+            {
+              businessScopedUserId: firstBusinessScopedUserId,
+              phoneE164: firstPhone,
+              status: "historical",
+            },
+            {
+              businessScopedUserId: secondBusinessScopedUserId,
+              phoneE164: secondPhone,
+              status: "historical",
+            },
+            {
+              businessScopedUserId: secondBusinessScopedUserId,
+              phoneE164: firstPhone,
+              status: "active",
+            },
+          ]),
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "resuelve el mismo BSUID dentro de su phone_number_id y conserva el aislamiento entre Clínicas",
+    async () => {
+      const fixture = await createFixture();
+      const primaryPhoneNumberId = `kapso-isolation-primary-${fixture.clinicId}`;
+      const otherPhoneNumberId = `kapso-isolation-other-${fixture.other.clinicId}`;
+      const sharedBusinessScopedUserId = `US.APO104.ISOLATION.${fixture.clinicId}`;
+      const sharedPhone = "+50370001043";
+      let otherContactId: string | undefined;
+      const assistantCalls: string[] = [];
+
+      try {
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                customer: `kapso-primary-${fixture.clinicId}`,
+                phoneNumberId: primaryPhoneNumberId,
+                provider: "kapso",
+                status: "ready",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                customer: `kapso-other-${fixture.other.clinicId}`,
+                phoneNumberId: otherPhoneNumberId,
+                provider: "kapso",
+                status: "ready",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.other.clinicId));
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.other.clinicId}, true)`,
+            );
+            const [contact] = await transaction
+              .insert(contacts)
+              .values({
+                clinicId: fixture.other.clinicId,
+                name: "Contacto aislado APO-104",
+                phoneE164: sharedPhone,
+              })
+              .returning({ id: contacts.id });
+            otherContactId = contact?.id;
+          },
+        );
+        if (otherContactId === undefined) {
+          throw new Error("No se creó el Contacto aislado");
+        }
+
+        await inWhatsAppInboundWorkerTransaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+          );
+          await transaction
+            .update(whatsappIdentities)
+            .set({
+              businessScopedUserId: sharedBusinessScopedUserId,
+              phoneE164: sharedPhone,
+              phoneNumberId: primaryPhoneNumberId,
+            })
+            .where(
+              and(
+                eq(whatsappIdentities.clinicId, fixture.clinicId),
+                eq(whatsappIdentities.contactId, fixture.contactId),
+              ),
+            );
+          await transaction.execute(
+            sql`select set_config('app.clinic_id', ${fixture.other.clinicId}, true)`,
+          );
+          await transaction.insert(whatsappIdentities).values({
+            businessScopedUserId: sharedBusinessScopedUserId,
+            clinicId: fixture.other.clinicId,
+            contactId: otherContactId,
+            phoneE164: sharedPhone,
+            phoneNumberId: otherPhoneNumberId,
+            status: "active",
+          });
+        });
+
+        const messageId = `apo-104-isolation-${fixture.clinicId}`;
+        await expect(
+          drizzleWhatsAppInboundStore.enqueueInbound({
+            idempotencyKey: `apo-104-isolation-key-${fixture.clinicId}`,
+            message: {
+              batchFirstSequence: null,
+              batchSequence: null,
+              businessScopedUserId: sharedBusinessScopedUserId,
+              connectionReference: primaryPhoneNumberId,
+              conversationId: "apo-104-isolation-conversation",
+              customerReference: `kapso-primary-${fixture.clinicId}`,
+              direction: "inbound",
+              eventName: "whatsapp.message.received",
+              fromWaId: sharedPhone,
+              id: messageId,
+              interactiveAction: null,
+              messageTimestamp: new Date("2026-09-22T12:00:00.000Z"),
+              origin: "api",
+              parentBusinessScopedUserId: null,
+              phoneE164: sharedPhone,
+              rawPayload: { message: { id: messageId } },
+              text: "info",
+              type: "text",
+              username: null,
+            },
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+
+        await expect(
+          runKapsoInboundWorker(
+            { now: new Date("2026-09-22T12:01:00.000Z") },
+            drizzleWhatsAppInboundStore,
+            {
+              processText: async ({ messageId: processedMessageId }) => {
+                assistantCalls.push(processedMessageId);
+                return { text: "Respuesta aislada." };
+              },
+            },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            { send: async () => undefined },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({ processed: 1 });
+
+        await expect(
+          inSuperadminTransaction(
+            fixture.superadminIdentityId,
+            async (transaction) =>
+              transaction
+                .select({
+                  clinicId: whatsappInboundMessages.clinicId,
+                  contactId: whatsappInboundMessages.contactId,
+                })
+                .from(whatsappInboundMessages)
+                .where(eq(whatsappInboundMessages.messageId, messageId)),
+          ),
+        ).resolves.toEqual([
+          {
+            clinicId: fixture.clinicId,
+            contactId: fixture.contactId,
+          },
+        ]);
+        await expect(
+          inClinicTransaction(fixture, (transaction) =>
+            transaction
+              .select({ contactId: whatsappIdentities.contactId })
+              .from(whatsappIdentities),
+          ),
+        ).resolves.toEqual([
+          { contactId: fixture.contactId },
+          { contactId: fixture.contactId },
+        ]);
+        await expect(
+          inClinicTransaction(fixture.other, (transaction) =>
+            transaction
+              .select({ contactId: whatsappIdentities.contactId })
+              .from(whatsappIdentities),
+          ),
+        ).resolves.toEqual([{ contactId: otherContactId }]);
+
+        const mismatchedMessageId = `apo-104-customer-mismatch-${fixture.clinicId}`;
+        await expect(
+          receiveKapsoWebhook({
+            eventName: "whatsapp.message.received",
+            idempotencyKey: `apo-104-customer-mismatch-key-${fixture.clinicId}`,
+            payload: {
+              conversation: {
+                business_scoped_user_id: sharedBusinessScopedUserId,
+                id: "apo-104-customer-mismatch-conversation",
+                phone_number: sharedPhone,
+                phone_number_id: primaryPhoneNumberId,
+              },
+              customer: { id: "kapso-wrong-customer" },
+              message: {
+                from: sharedPhone,
+                from_user_id: sharedBusinessScopedUserId,
+                id: mismatchedMessageId,
+                kapso: { direction: "inbound", origin: "cloud_api" },
+                text: { body: "no debe cruzar" },
+                type: "text",
+              },
+              phone_number_id: primaryPhoneNumberId,
+            },
+            store: drizzleWhatsAppProvisioningStore,
+          }),
+        ).resolves.toMatchObject({ accepted: true });
+        await expect(
+          runKapsoInboundWorker(
+            { now: new Date("2026-09-22T12:02:00.000Z") },
+            drizzleWhatsAppInboundStore,
+            {
+              processText: async ({ messageId: rejectedMessageId }) => {
+                assistantCalls.push(rejectedMessageId);
+                return { text: "no debe responder" };
+              },
+            },
+            createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
+            { send: async () => undefined },
+            undefined,
+            { activate: async () => undefined, isActive: async () => false },
+          ),
+        ).resolves.toMatchObject({
+          claimed: 1,
+          processed: 0,
+          rejected: 1,
+        });
+        expect(assistantCalls).toEqual([messageId]);
+        const rejected = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          (transaction) =>
+            transaction
+              .select({ id: whatsappInboundMessages.id })
+              .from(whatsappInboundMessages)
+              .where(
+                eq(whatsappInboundMessages.messageId, mismatchedMessageId),
+              ),
+        );
+        expect(rejected).toHaveLength(1);
+        const alerts = await listWhatsAppInboundOperationalAlerts({
+          identityId: fixture.superadminIdentityId,
+        });
+        expect(alerts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              customerReference: "kapso-wrong-customer",
+              inboundMessageId: rejected[0]?.id,
+            }),
+          ]),
         );
       } finally {
         await fixture.cleanup();
@@ -2199,6 +3456,14 @@ async function createFixture() {
           await transaction.execute(
             sql`select set_config('app.clinic_id', ${primary.clinicId}, true)`,
           );
+          await transaction
+            .delete(whatsappInboundMessages)
+            .where(
+              inArray(whatsappInboundMessages.clinicId, [
+                primary.clinicId,
+                other.clinicId,
+              ]),
+            );
           await transaction
             .delete(transactionalDeliveryAlerts)
             .where(eq(transactionalDeliveryAlerts.clinicId, primary.clinicId));

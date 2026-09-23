@@ -51,7 +51,7 @@ export type ManualAppointmentFormData = {
 export type ManualAppointmentContact = {
   id: string;
   name: string;
-  phoneE164: string;
+  phoneE164: string | null;
 };
 
 /** Contrato seguro para cliente de una Cita que Panacea puede consultar. */

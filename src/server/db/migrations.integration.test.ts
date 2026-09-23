@@ -2196,6 +2196,30 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
+          const inboundIngressAckPolicy = await migrated<
+            Array<{ definition: string }>
+          >`
+            select qual as definition
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_whatsapp_inbound_message'
+              and policyname = 'whatsapp_inbound_message_ingress_ack'
+          `;
+          expect(inboundIngressAckPolicy[0]?.definition).toMatch(
+            /idempotency_key.*phone_number_id.*customer_id.*whatsapp_webhook_message_id/s,
+          );
+          const contactPhoneColumn = await migrated<
+            Array<{ columnName: string; isNullable: string }>
+          >`
+            select column_name as "columnName", is_nullable as "isNullable"
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_contact'
+              and column_name = 'phone_e164'
+          `;
+          expect(contactPhoneColumn).toEqual([
+            { columnName: "phone_e164", isNullable: "YES" },
+          ]);
 
           const circuitTables = await migrated<
             Array<{

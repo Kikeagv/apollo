@@ -516,14 +516,62 @@ describe("recepción del webhook Kapso", () => {
 
     expect(enqueueInbound).toHaveBeenCalledWith(
       expect.objectContaining({
-        idempotencyKey: "kapso-sent-batch-1:wamid-business-app-batch-1",
+        idempotencyKey: "kapso-sent-batch-1:phone-1:wamid-business-app-batch-1",
       }),
     );
     expect(enqueueDeliveryStatus).toHaveBeenCalledWith(
       expect.objectContaining({
-        idempotencyKey: "kapso-sent-batch-1:wamid-cloud-api-batch-1",
+        idempotencyKey: "kapso-sent-batch-1:phone-1:wamid-cloud-api-batch-1",
       }),
     );
+  });
+
+  it("separa las claves de mensajes homónimos cuando un lote cruza phone_number_id", async () => {
+    const fake = createFakeStore();
+    const enqueueInbound = vi
+      .fn<NonNullable<KapsoProvisioningStore["enqueueInbound"]>>()
+      .mockResolvedValue({ accepted: true, eventId: "message-event" });
+
+    await receiveKapsoWebhook({
+      eventName: "whatsapp.message.received",
+      idempotencyKey: "kapso-cross-clinic-batch-1",
+      payload: {
+        batch: true,
+        data: [
+          {
+            message: {
+              from: "50370000001",
+              id: "wamid-shared",
+              kapso: { direction: "inbound", origin: "cloud_api" },
+              text: { body: "hola" },
+              type: "text",
+            },
+            phone_number_id: "phone-clinic-a",
+          },
+          {
+            message: {
+              from: "50370000002",
+              id: "wamid-shared",
+              kapso: { direction: "inbound", origin: "cloud_api" },
+              text: { body: "hola" },
+              type: "text",
+            },
+            phone_number_id: "phone-clinic-b",
+          },
+        ],
+      },
+      store: {
+        ...fake.store,
+        enqueueInbound,
+      },
+    });
+
+    expect(
+      enqueueInbound.mock.calls.map(([call]) => call.idempotencyKey),
+    ).toEqual([
+      "kapso-cross-clinic-batch-1:phone-clinic-a:wamid-shared",
+      "kapso-cross-clinic-batch-1:phone-clinic-b:wamid-shared",
+    ]);
   });
 
   it("guarda una sola vez el evento usando la clave de idempotencia", async () => {

@@ -397,7 +397,7 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
               (contact) =>
                 query.length === 0 ||
                 contact.name.toLocaleLowerCase().includes(query) ||
-                contact.phoneE164.includes(phoneQuery),
+                (contact.phoneE164?.includes(phoneQuery) ?? false),
             )
             .map((contact) => {
               const patientIds = contactPatientIds.get(contact.id) ?? [];
@@ -808,7 +808,7 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
 function toPatientContactLink(link: {
   contactId: string;
   contactName: string;
-  contactPhoneE164: string;
+  contactPhoneE164: string | null;
   guardianshipVerificationStatus: string | null;
   guardianDui: string | null;
   id: string;
@@ -837,7 +837,7 @@ const contactFields = {
 type ContactRow = {
   id: string;
   name: string;
-  phoneE164: string;
+  phoneE164: string | null;
 };
 
 const patientFields = {

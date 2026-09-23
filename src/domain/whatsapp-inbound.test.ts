@@ -135,11 +135,11 @@ describe("payloads entrantes de Kapso", () => {
   });
 
   it.each([
-    ["sin customer en el evento", null, true],
+    ["sin customer en el evento", null, false],
     ["customer asociado", "customer-1", true],
     ["customer de otra Conexión", "customer-2", false],
   ])(
-    "valida el customer opcional: %s",
+    "valida el customer requerido: %s",
     (_label, messageCustomerId, expected) => {
       expect(
         matchesWhatsAppCustomer({
@@ -165,18 +165,21 @@ describe("payloads entrantes de Kapso", () => {
         }),
       ],
       batch_info: { first_sequence: 101, last_sequence: 102 },
+      customer: { id: "customer-1" },
     };
 
     expect(parseKapsoInboundMessagePayload(payload)).toMatchObject([
       {
         batchFirstSequence: 101,
         batchSequence: 101,
+        customerReference: "customer-1",
         id: "wamid.123",
         text: "info",
       },
       {
         batchFirstSequence: 101,
         batchSequence: 102,
+        customerReference: "customer-1",
         id: "wamid.124",
         text: "servicios",
       },
