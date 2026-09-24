@@ -63,6 +63,7 @@ import {
 } from "../db/transactional-delivery-store";
 import { drizzleWhatsAppInboundStore } from "../db/whatsapp-inbound-store";
 import { drizzleWhatsAppProvisioningStore } from "../db/whatsapp-provisioning-store";
+import { createKapsoInboundReplySender } from "../whatsapp/kapso-whatsapp";
 import {
   getSentSimulatedAppointmentReminders,
   simulatedAppointmentReminderSender,
@@ -2002,8 +2003,26 @@ describe("Reserva simulada de WhatsApp persistente", () => {
                 status: "degraded",
               })
               .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+            await transaction
+              .update(clinics)
+              .set({
+                escalationNotificationsEnabled: true,
+                escalationSecretaryPhoneE164: "+50370000009",
+              })
+              .where(eq(clinics.id, fixture.clinicId));
           },
         );
+        await expect(
+          inSuperadminTransaction(fixture.superadminIdentityId, (transaction) =>
+            transaction
+              .select({
+                enabled: clinics.escalationNotificationsEnabled,
+                phone: clinics.escalationSecretaryPhoneE164,
+              })
+              .from(clinics)
+              .where(eq(clinics.id, fixture.clinicId)),
+          ),
+        ).resolves.toEqual([{ enabled: true, phone: "+50370000009" }]);
         await inWhatsAppInboundWorkerTransaction(async (transaction) => {
           await transaction.execute(
             sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
@@ -2047,6 +2066,28 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           }),
         ).resolves.toMatchObject({ accepted: true });
 
+        const inboundReplySender = createKapsoInboundReplySender();
+        const takeoverStore = {
+          getConversation: (input: { clinicId: string; contactId: string }) =>
+            drizzleSimulatedWhatsAppBookingStore.getConversation(input),
+          openHumanTakeover: (
+            input: Parameters<
+              typeof drizzleSimulatedWhatsAppBookingStore.openHumanTakeover
+            >[0],
+          ) => drizzleSimulatedWhatsAppBookingStore.openHumanTakeover(input),
+          notifySecretaryOfConversationEscalation: (input: {
+            clinicId: string;
+            escalationId: string;
+            recipientPhoneE164: string;
+          }) =>
+            inboundReplySender.send({
+              clinicId: input.clinicId,
+              idempotencyKey: `escalation:${input.escalationId}`,
+              recipientBusinessScopedUserId: null,
+              recipientPhoneE164: input.recipientPhoneE164,
+              text: "La Clínica recibió tu solicitud y una persona te contactará pronto.",
+            }),
+        };
         await expect(
           runKapsoInboundWorker(
             { limit: 1, now },
@@ -2055,26 +2096,42 @@ describe("Reserva simulada de WhatsApp persistente", () => {
               processText: async () => ({ text: "no debe responder" }),
             },
             createWhatsAppConsentGate(drizzleWhatsAppInboundStore),
-            { send: async () => undefined },
+            inboundReplySender,
             undefined,
             {
               activate: (input) =>
-                activateWhatsAppHumanTakeover(
-                  input,
-                  drizzleSimulatedWhatsAppBookingStore,
-                ),
+                activateWhatsAppHumanTakeover(input, takeoverStore),
               isActive: (input) =>
-                isWhatsAppHumanTakeoverActive(
-                  input,
-                  drizzleSimulatedWhatsAppBookingStore,
-                ),
+                isWhatsAppHumanTakeoverActive(input, takeoverStore),
             },
           ),
         ).resolves.toMatchObject({
           claimed: 1,
           processed: 1,
+          retried: 0,
           rejected: 0,
         });
+        await expect(
+          inSuperadminTransaction(fixture.superadminIdentityId, (transaction) =>
+            transaction
+              .select({
+                recipientPhoneE164: whatsappInboundReplies.recipientPhoneE164,
+                status: whatsappInboundReplies.status,
+              })
+              .from(whatsappInboundReplies)
+              .where(
+                and(
+                  eq(whatsappInboundReplies.recipientPhoneE164, "+50370000009"),
+                  eq(whatsappInboundReplies.clinicId, fixture.clinicId),
+                ),
+              ),
+          ),
+        ).resolves.toEqual([
+          {
+            recipientPhoneE164: "+50370000009",
+            status: "pending",
+          },
+        ]);
         await expect(
           listConversationEscalations(
             fixture,

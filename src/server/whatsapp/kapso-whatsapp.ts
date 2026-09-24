@@ -613,10 +613,9 @@ function firstString(...values: unknown[]) {
 export function createKapsoInboundReplySender(): WhatsAppInboundReplySender {
   return {
     async send(input) {
-      await requireWhatsAppConnectionReady({
-        clinicId: input.clinicId,
-        provider: "kapso",
-      });
+      // Enqueue first even when Kapso is degraded. The outbound worker owns
+      // readiness/circuit checks and can retry the notification after manual
+      // reactivation without making the inbound takeover retry.
       await drizzleWhatsAppInboundStore.enqueueReply(input);
     },
   };
