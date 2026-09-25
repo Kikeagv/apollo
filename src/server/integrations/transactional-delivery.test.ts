@@ -6,6 +6,71 @@ import { appointmentSchedulerDeliveryAdapters } from "./appointment-scheduler-de
 import { transactionalDeliveryAdapter } from "./transactional-delivery";
 
 describe("adaptadores de Entrega transaccional", () => {
+  it.each(["confirmation", "cancellation", "reschedule"] as const)(
+    "envía el mensaje de Cita %s conservando su clave de idempotencia",
+    async (type) => {
+      const sendMessage = vi.fn().mockResolvedValue({
+        providerMessageId: "wamid-appointment-1",
+        status: "accepted" as const,
+      });
+      const provider: WhatsAppProvider = {
+        appointmentMessageSender: { send: sendMessage },
+        appointmentReminderSender: { send: vi.fn() },
+        provider: "kapso",
+        sendConversationReply: vi.fn(),
+        sendConversationEscalationNotification: vi.fn(),
+      };
+      const delivery: TransactionalDelivery = {
+        attempts: 1,
+        clinicId: "clinic-1",
+        id: "delivery-appointment-1",
+        idempotencyKey: `appointment-1:${type}:event-1:contact-1`,
+        kind: "appointment-message",
+        payload: {
+          appointmentId: "appointment-1",
+          recipient: {
+            id: "contact-1",
+            name: "Ana",
+            phoneE164: "+50370000001",
+          },
+          serviceWindowExpiresAt: new Date("2026-09-09T13:00:00.000Z"),
+          template: {
+            category: "UTILITY",
+            locale: "es",
+            name: `appointment_${type}`,
+            parameters: ["Ana", "Clínica Central"],
+            providerTemplateId: `template-${type}`,
+            status: "APPROVED",
+          },
+          text: "Aviso administrativo de cita.",
+          type,
+        },
+      };
+
+      await expect(
+        transactionalDeliveryAdapter(provider).send(delivery, {
+          now: new Date("2026-09-09T12:00:00.000Z"),
+        }),
+      ).resolves.toEqual({
+        providerMessageId: "wamid-appointment-1",
+        status: "accepted",
+      });
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idempotencyKey: delivery.idempotencyKey,
+          route: {
+            kind: "template",
+            locale: "es",
+            name: `appointment_${type}`,
+            parameters: ["Ana", "Clínica Central"],
+            providerTemplateId: `template-${type}`,
+          },
+          type,
+        }),
+      );
+    },
+  );
+
   it("usa el WhatsAppProvider inyectado para un recordatorio", async () => {
     const sendReminder = vi.fn().mockResolvedValue(undefined);
     const provider: WhatsAppProvider = {
@@ -32,6 +97,15 @@ describe("adaptadores de Entrega transaccional", () => {
           phoneE164: "+50370000001",
         },
         serviceWindowExpiresAt: new Date("2026-09-06T20:00:00.000Z"),
+        template: {
+          category: "UTILITY",
+          locale: "es",
+          name: "appointment_reminder",
+          parameters: ["Ana", "Clínica Central"],
+          providerTemplateId: "template-1",
+          status: "APPROVED",
+        },
+        text: "Te recordamos tu cita mañana.",
       },
     };
 
@@ -44,6 +118,13 @@ describe("adaptadores de Entrega transaccional", () => {
       clinicId: "clinic-1",
       idempotencyKey: delivery.idempotencyKey,
       recipient: delivery.payload.recipient,
+      route: {
+        kind: "template",
+        locale: "es",
+        name: "appointment_reminder",
+        parameters: ["Ana", "Clínica Central"],
+        providerTemplateId: "template-1",
+      },
     });
     expect(appointmentSchedulerDeliveryAdapters(provider).reminderSender).toBe(
       provider.appointmentReminderSender,

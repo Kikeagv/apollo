@@ -1752,6 +1752,20 @@ function appointmentEventLabel(type: AppointmentEventType) {
       return "Aviso de cancelación por WhatsApp enviado";
     case "manual-cancellation-failed":
       return "No se pudo enviar el aviso de cancelación por WhatsApp";
+    case "appointment-delivery-status":
+      return "Estado de entrega por WhatsApp";
+    case "appointment-reschedule-sent":
+      return "Aviso de reprogramación por WhatsApp enviado";
+    case "appointment-reschedule-failed":
+      return "No se pudo enviar el aviso de reprogramación por WhatsApp";
+    case "appointment-confirmation-sent":
+      return "Confirmación por WhatsApp enviada";
+    case "appointment-confirmation-failed":
+      return "No se pudo enviar la confirmación por WhatsApp";
+    case "appointment-cancellation-sent":
+      return "Aviso de cancelación por WhatsApp enviado";
+    case "appointment-cancellation-failed":
+      return "No se pudo enviar el aviso de cancelación por WhatsApp";
   }
 }
 

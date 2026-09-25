@@ -1,10 +1,11 @@
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 
 import {
   type AdministrativeRecordsStore,
   type ContactPatientRelationship,
   type GuardianshipVerificationStatus,
 } from "~/server/application/administrative-records";
+import type { AppointmentTransactionalMessageType } from "~/server/application/manual-appointments";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import {
@@ -16,9 +17,26 @@ import {
   patients,
   serviceOffers,
   services,
+  transactionalDeliveries,
 } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+function appointmentDeliveryType(
+  kind: string,
+  payload: Record<string, unknown>,
+): AppointmentTransactionalMessageType | "reminder" | undefined {
+  if (kind === "appointment-reminder") return "reminder";
+  if (kind !== "appointment-message") return undefined;
+  const type = payload.type;
+  return type === "manual-confirmation" ||
+    type === "manual-cancellation" ||
+    type === "confirmation" ||
+    type === "cancellation" ||
+    type === "reschedule"
+    ? type
+    : undefined;
+}
 
 export class ContactPhoneConflictError extends Error {
   constructor() {
@@ -298,6 +316,33 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
           ),
         )
         .orderBy(asc(appointmentEvents.occurredAt));
+      const deliveryRows = await transaction
+        .select({
+          appointmentId: transactionalDeliveries.appointmentId,
+          createdAt: transactionalDeliveries.createdAt,
+          id: transactionalDeliveries.id,
+          kind: transactionalDeliveries.kind,
+          payload: transactionalDeliveries.payload,
+          providerMessageId: transactionalDeliveries.providerMessageId,
+          providerStatus: transactionalDeliveries.providerStatus,
+          recipientContactId: transactionalDeliveries.recipientContactId,
+        })
+        .from(transactionalDeliveries)
+        .where(
+          and(
+            eq(transactionalDeliveries.clinicId, input.clinicId),
+            inArray(transactionalDeliveries.appointmentId, appointmentIds),
+            inArray(transactionalDeliveries.kind, [
+              "appointment-message",
+              "appointment-reminder",
+            ]),
+            or(
+              isNotNull(transactionalDeliveries.providerMessageId),
+              isNotNull(transactionalDeliveries.providerStatus),
+            ),
+          ),
+        )
+        .orderBy(asc(transactionalDeliveries.createdAt));
       const linkedContacts = new Map(
         linkRows.map((link) => [
           link.contactId,
@@ -325,6 +370,27 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
                   ? null
                   : (linkedContacts.get(recipientContactId) ?? null),
             })),
+          deliveryStatuses: deliveryRows.flatMap((delivery) => {
+            if (delivery.appointmentId !== appointment.id) return [];
+            const type = appointmentDeliveryType(
+              delivery.kind,
+              delivery.payload,
+            );
+            if (type === undefined) return [];
+            return [
+              {
+                createdAt: delivery.createdAt,
+                id: delivery.id,
+                providerMessageId: delivery.providerMessageId,
+                providerStatus: delivery.providerStatus,
+                recipient:
+                  delivery.recipientContactId === null
+                    ? null
+                    : (linkedContacts.get(delivery.recipientContactId) ?? null),
+                type,
+              },
+            ];
+          }),
           id: appointment.id,
           origin: appointment.origin,
           service: {

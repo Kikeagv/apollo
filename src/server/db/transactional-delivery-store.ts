@@ -37,7 +37,10 @@ import {
   type TransactionalWhatsAppTemplate,
   type WhatsAppDeliveryStatus,
 } from "~/domain/whatsapp-delivery";
-import type { ManualAppointmentMessageType } from "~/server/application/manual-appointments";
+import type {
+  AppointmentTransactionalMessageType,
+  ManualAppointmentMessageType,
+} from "~/server/application/manual-appointments";
 import type {
   TransactionalDeliveryStatusEvent,
   TransactionalDeliveryStatusStore,
@@ -221,6 +224,17 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
         const [delivery] = await transaction
           .update(transactionalDeliveries)
           .set({
+            ...(consentSnapshot === undefined
+              ? {}
+              : {
+                  consentAcceptedAt: consentSnapshot.acceptedAt,
+                  consentDecision: consentSnapshot.decision,
+                  consentPrivacyVersion: consentSnapshot.privacyVersion,
+                  patientConsentReference: consentSnapshot.patientReference,
+                  consentReference: consentSnapshot.reference,
+                  consentTermsVersion: consentSnapshot.termsVersion,
+                  consentTextReference: consentSnapshot.textReference,
+                }),
             attempts: candidate.attempts + 1,
             leaseExpiresAt: new Date(now.valueOf() + LEASE_MS),
             status: "processing",
@@ -278,6 +292,12 @@ export const drizzleTransactionalDeliveryStore: TransactionalDeliveryStore = {
         providerStatus: "accepted",
         retainUntil: new Date(now.valueOf() + RETAIN_MS),
       });
+      await recordAppointmentDeliveryEvent(
+        transaction,
+        delivery,
+        "accepted",
+        now,
+      );
     });
   },
 
@@ -505,26 +525,15 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
               retainUntil: delivery.retainUntil,
             },
           );
-          if (
-            callbackInserted &&
-            (input.status === "sent" ||
-              input.status === "delivered" ||
-              input.status === "read")
-          ) {
+          if (callbackInserted && reconciledStatus !== currentStatus) {
             await recordAppointmentDeliveryEvent(
               transaction,
               delivery,
-              "sent",
+              reconciledStatus,
               callbackNow,
             );
           }
           if (callbackInserted && reconciledStatus === "failed") {
-            await recordAppointmentDeliveryEvent(
-              transaction,
-              delivery,
-              "failed",
-              callbackNow,
-            );
             await insertDeliveryAlert(transaction, delivery, callbackNow);
           }
           return callbackMetricObservation(delivery, input, callbackInserted);
@@ -759,6 +768,7 @@ type ManualAppointmentTransactionalDeliveryInput = {
   message: {
     appointmentId: string;
     clinicId: string;
+    idempotencyKey?: string;
     recipient: { id: string; name: string; phoneE164: string | null };
     recipientBusinessScopedUserId?: string | null;
     route?: TransactionalWhatsAppRoute;
@@ -767,29 +777,41 @@ type ManualAppointmentTransactionalDeliveryInput = {
   now: Date;
 };
 
-async function readManualAppointmentDeliveryContext(
+async function readAppointmentDeliveryContext(
   transaction: SchedulerTransaction,
-  input: ManualAppointmentTransactionalDeliveryInput,
+  input: { appointmentId: string; clinicId: string },
 ) {
   const appointment = await transaction.query.appointments.findFirst({
     columns: { doctorId: true, patientId: true, startsAt: true },
     where: and(
-      eq(appointments.clinicId, input.message.clinicId),
-      eq(appointments.id, input.message.appointmentId),
+      eq(appointments.clinicId, input.clinicId),
+      eq(appointments.id, input.appointmentId),
     ),
   });
   if (appointment === undefined) {
     throw new Error("La Cita no existe para crear su Entrega");
   }
-  const doctor = await transaction.query.doctors.findFirst({
-    columns: { publicName: true },
-    where: and(
-      eq(doctors.clinicId, input.message.clinicId),
-      eq(doctors.id, appointment.doctorId),
-    ),
-  });
+  const [doctor, patient] = await Promise.all([
+    transaction.query.doctors.findFirst({
+      columns: { publicName: true },
+      where: and(
+        eq(doctors.clinicId, input.clinicId),
+        eq(doctors.id, appointment.doctorId),
+      ),
+    }),
+    appointment.patientId === null
+      ? undefined
+      : transaction.query.patients.findFirst({
+          columns: { name: true },
+          where: and(
+            eq(patients.clinicId, input.clinicId),
+            eq(patients.id, appointment.patientId),
+          ),
+        }),
+  ]);
   return {
     doctorName: doctor?.publicName ?? null,
+    patientName: patient?.name ?? null,
     patientId: appointment.patientId,
     startsAt: appointment.startsAt,
   };
@@ -808,86 +830,31 @@ export async function enqueueManualAppointmentTransactionalDelivery(
             identityId: input.actorIdentityId,
           },
           (transaction) =>
-            readManualAppointmentDeliveryContext(transaction, input),
+            readAppointmentDeliveryContext(transaction, {
+              appointmentId: input.message.appointmentId,
+              clinicId: input.message.clinicId,
+            }),
         )
-      : await readManualAppointmentDeliveryContext(existingTransaction, input);
+      : await readAppointmentDeliveryContext(existingTransaction, {
+          appointmentId: input.message.appointmentId,
+          clinicId: input.message.clinicId,
+        });
 
   const insertDelivery = async (transaction: SchedulerTransaction) => {
-    await setWhatsAppWorkerClinicContext(transaction, input.message.clinicId);
-    const consent = await readWhatsAppConsentSnapshot(transaction, {
+    await insertAppointmentTransactionalDelivery(transaction, {
+      appointment,
+      appointmentId: input.message.appointmentId,
       clinicId: input.message.clinicId,
-      contactId: input.message.recipient.id,
+      idempotencyKey:
+        input.message.idempotencyKey ??
+        `${input.message.appointmentId}:${input.message.type}:${input.message.recipient.id}`,
       now: input.now,
-      patientId: appointment.patientId,
+      recipient: input.message.recipient,
+      recipientBusinessScopedUserId:
+        input.message.recipientBusinessScopedUserId,
+      route: input.message.route,
+      type: input.message.type,
     });
-    const clinic = await transaction.query.clinics.findFirst({
-      columns: { name: true },
-      where: eq(clinics.id, input.message.clinicId),
-    });
-    if (clinic === undefined) throw new Error("La Clínica no existe");
-    const template = await readTemplateSnapshot(
-      transaction,
-      input.message.clinicId,
-      input.message.type === "manual-confirmation"
-        ? "confirmation"
-        : "cancellation",
-      {
-        clinicName: clinic.name,
-        doctorName: appointment.doctorName,
-        startsAt: appointment.startsAt,
-      },
-    );
-    const kind =
-      input.message.type === "manual-confirmation"
-        ? ("confirmation" as const)
-        : ("cancellation" as const);
-    const text = formatTransactionalAppointmentText({
-      clinicName: clinic.name,
-      doctorName: appointment.doctorName,
-      kind,
-      startsAt: appointment.startsAt,
-    });
-    const serviceWindowExpiresAt = await latestServiceWindowExpiry(
-      transaction,
-      input.message.clinicId,
-      input.message.recipient.id,
-    );
-    await transaction
-      .insert(transactionalDeliveries)
-      .values({
-        appointmentId: input.message.appointmentId,
-        clinicId: input.message.clinicId,
-        consentAcceptedAt: consent.acceptedAt,
-        consentDecision: consent.decision,
-        consentPrivacyVersion: consent.privacyVersion,
-        patientConsentReference: consent.patientReference,
-        consentReference: consent.reference,
-        consentTermsVersion: consent.termsVersion,
-        consentTextReference: consent.textReference,
-        idempotencyKey: `${input.message.appointmentId}:${input.message.type}:${input.message.recipient.id}`,
-        kind: "appointment-message",
-        lastError:
-          consent.decision === "blocked"
-            ? "Consentimiento de WhatsApp no vigente"
-            : null,
-        nextAttemptAt: input.now,
-        payload: {
-          appointmentId: input.message.appointmentId,
-          doctorName: appointment.doctorName,
-          recipient: input.message.recipient,
-          recipientBusinessScopedUserId:
-            input.message.recipientBusinessScopedUserId ?? null,
-          route: input.message.route,
-          serviceWindowExpiresAt,
-          template,
-          text,
-          type: input.message.type,
-        },
-        recipientContactId: input.message.recipient.id,
-        status: consent.decision === "allowed" ? "pending" : "suppressed",
-        retainUntil: new Date(input.now.valueOf() + RETAIN_MS),
-      })
-      .onConflictDoNothing();
   };
 
   return existingTransaction === undefined
@@ -901,6 +868,148 @@ export function enqueueManualAppointmentTransactionalDeliveryInTransaction(
   input: ManualAppointmentTransactionalDeliveryInput,
 ) {
   return enqueueManualAppointmentTransactionalDelivery(input, transaction);
+}
+
+/** Guarda la confirmación, cancelación o reprogramación junto con su evento. */
+export async function enqueueAppointmentTransactionalDeliveryInTransaction(
+  transaction: SchedulerTransaction,
+  input: {
+    appointmentEventId: string;
+    appointmentId: string;
+    clinicId: string;
+    contactId: string;
+    now: Date;
+    type: "cancellation" | "confirmation" | "reschedule";
+  },
+) {
+  const appointment = await readAppointmentDeliveryContext(transaction, {
+    appointmentId: input.appointmentId,
+    clinicId: input.clinicId,
+  });
+  await setWhatsAppWorkerClinicContext(transaction, input.clinicId);
+  const recipient = await transaction.query.contacts.findFirst({
+    columns: { id: true, name: true, phoneE164: true },
+    where: and(
+      eq(contacts.clinicId, input.clinicId),
+      eq(contacts.id, input.contactId),
+    ),
+  });
+  if (recipient === undefined) {
+    throw new Error("El Contacto no existe para crear su Entrega");
+  }
+  const recipientBusinessScopedUserId =
+    await latestWhatsAppBusinessScopedUserId(
+      transaction,
+      input.clinicId,
+      input.contactId,
+    );
+
+  await insertAppointmentTransactionalDelivery(transaction, {
+    appointment,
+    appointmentId: input.appointmentId,
+    clinicId: input.clinicId,
+    idempotencyKey: `${input.appointmentId}:${input.type}:${input.appointmentEventId}:${input.contactId}`,
+    now: input.now,
+    recipient,
+    recipientBusinessScopedUserId,
+    type: input.type,
+  });
+}
+
+async function insertAppointmentTransactionalDelivery(
+  transaction: SchedulerTransaction,
+  input: {
+    appointment: Awaited<ReturnType<typeof readAppointmentDeliveryContext>>;
+    appointmentId: string;
+    clinicId: string;
+    idempotencyKey: string;
+    now: Date;
+    recipient: { id: string; name: string; phoneE164: string | null };
+    recipientBusinessScopedUserId?: string | null;
+    route?: TransactionalWhatsAppRoute;
+    type: AppointmentTransactionalMessageType;
+  },
+) {
+  await transaction.execute(
+    sql`select set_config('app.whatsapp_outbound_worker', 'true', true)`,
+  );
+  await setWhatsAppWorkerClinicContext(transaction, input.clinicId);
+  const consent = await readWhatsAppConsentSnapshot(transaction, {
+    clinicId: input.clinicId,
+    contactId: input.recipient.id,
+    now: input.now,
+    patientId: input.appointment.patientId,
+  });
+  const clinic = await transaction.query.clinics.findFirst({
+    columns: { name: true },
+    where: eq(clinics.id, input.clinicId),
+  });
+  if (clinic === undefined) throw new Error("La Clínica no existe");
+  const templateKind =
+    input.type === "manual-confirmation" || input.type === "confirmation"
+      ? "confirmation"
+      : input.type === "manual-cancellation" || input.type === "cancellation"
+        ? "cancellation"
+        : "reschedule";
+  const template = await readTemplateSnapshot(
+    transaction,
+    input.clinicId,
+    templateKind,
+    {
+      clinicName: clinic.name,
+      doctorName: input.appointment.doctorName,
+      patientName: input.appointment.patientName,
+      startsAt: input.appointment.startsAt,
+    },
+  );
+  const text = formatTransactionalAppointmentText({
+    clinicName: clinic.name,
+    doctorName: input.appointment.doctorName,
+    kind: templateKind,
+    startsAt: input.appointment.startsAt,
+  });
+  const serviceWindowExpiresAt = await latestServiceWindowExpiry(
+    transaction,
+    input.clinicId,
+    input.recipient.id,
+  );
+  await transaction
+    .insert(transactionalDeliveries)
+    .values({
+      appointmentId: input.appointmentId,
+      clinicId: input.clinicId,
+      consentAcceptedAt: consent.acceptedAt,
+      consentDecision: consent.decision,
+      consentPrivacyVersion: consent.privacyVersion,
+      patientConsentReference: consent.patientReference,
+      consentReference: consent.reference,
+      consentTermsVersion: consent.termsVersion,
+      consentTextReference: consent.textReference,
+      idempotencyKey: input.idempotencyKey,
+      kind: "appointment-message",
+      lastError:
+        consent.decision === "blocked"
+          ? "Consentimiento de WhatsApp no vigente"
+          : null,
+      nextAttemptAt: input.now,
+      payload: {
+        appointmentId: input.appointmentId,
+        doctorName: input.appointment.doctorName,
+        patientName: input.appointment.patientName,
+        recipient: input.recipient,
+        recipientBusinessScopedUserId:
+          input.recipientBusinessScopedUserId ?? null,
+        route: input.route,
+        serviceWindowExpiresAt,
+        template,
+        text,
+        type: input.type,
+      },
+      recipientContactId: input.recipient.id,
+      status: consent.decision === "allowed" ? "pending" : "suppressed",
+      retainUntil: new Date(input.now.valueOf() + RETAIN_MS),
+    })
+    .onConflictDoNothing();
 }
 
 /** Prepara decisiones de Agenda y las inserta de forma idempotente en el outbox. */
@@ -937,6 +1046,7 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
             {
               clinicName: appointment.clinicName,
               doctorName: appointment.doctorName,
+              patientName: appointment.patientName,
               startsAt: appointment.startsAt,
             },
           );
@@ -986,6 +1096,7 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
                 checkpoint,
                 clinicName: appointment.clinicName,
                 doctorName: appointment.doctorName,
+                patientName: appointment.patientName,
                 recipientBusinessScopedUserId,
                 recipient,
                 serviceWindowExpiresAt,
@@ -1122,6 +1233,9 @@ export async function reactivatePendingWhatsAppDeliveries(input: {
   now: Date;
 }) {
   return inAppointmentSchedulerTransaction(async (transaction) => {
+    if (!(await setWhatsAppWorkerClinicContext(transaction, input.clinicId))) {
+      return 0;
+    }
     const channelConsent = await readWhatsAppConsentSnapshot(
       transaction,
       input,
@@ -1458,8 +1572,6 @@ async function recordFailedDelivery(
   await recordAppointmentDeliveryEvent(transaction, delivery, "failed", now);
 }
 
-type AppointmentDeliveryEventOutcome = "failed" | "sent";
-
 async function recordAppointmentDeliveryEvent(
   transaction: SchedulerTransaction,
   delivery: {
@@ -1467,34 +1579,46 @@ async function recordAppointmentDeliveryEvent(
     kind: string;
     payload: unknown;
   },
-  outcome: AppointmentDeliveryEventOutcome,
+  status: WhatsAppDeliveryStatus,
   now: Date,
 ) {
   const source = toAppointmentDeliveryEventSource(delivery);
   if (source === undefined) return;
   const owner = await activeOwner(transaction, source.clinicId);
   if (owner === undefined) return;
-  const type =
+  const type = "appointment-delivery-status";
+  const messageType =
     source.kind === "appointment-reminder"
-      ? outcome === "sent"
-        ? "reminder-sent"
-        : "reminder-delivery-failed"
-      : source.payload.type === "manual-confirmation"
-        ? outcome === "sent"
-          ? "manual-confirmation-sent"
-          : "manual-confirmation-failed"
-        : outcome === "sent"
-          ? "manual-cancellation-sent"
-          : "manual-cancellation-failed";
+      ? "Recordatorio"
+      : source.payload.type === "manual-confirmation" ||
+          source.payload.type === "confirmation"
+        ? "Confirmación"
+        : source.payload.type === "manual-cancellation" ||
+            source.payload.type === "cancellation"
+          ? "Cancelación"
+          : "Reprogramación";
+  const statusLabel =
+    status === "accepted"
+      ? "aceptado"
+      : status === "sent"
+        ? "enviado"
+        : status === "delivered"
+          ? "entregado"
+          : status === "read"
+            ? "leído"
+            : "fallido";
   await transaction.insert(appointmentEvents).values({
     actorClinicUserId: owner.id,
     appointmentId: source.payload.appointmentId,
     clinicId: source.clinicId,
     occurredAt: now,
-    reason:
-      source.kind === "appointment-reminder"
-        ? source.payload.checkpoint
-        : undefined,
+    reason: [
+      messageType,
+      statusLabel,
+      source.kind === "appointment-reminder" ? source.payload.checkpoint : null,
+    ]
+      .filter((part): part is string => part !== null)
+      .join(" · "),
     recipientContactId: source.payload.recipient.id,
     type,
   });
@@ -1507,7 +1631,7 @@ type AppointmentDeliveryEventSource = {
     appointmentId: string;
     checkpoint?: AppointmentReminderCheckpoint;
     recipient: { id: string };
-    type?: ManualAppointmentMessageType;
+    type?: AppointmentTransactionalMessageType;
   };
 };
 
@@ -1532,7 +1656,10 @@ function toAppointmentDeliveryEventSource(input: {
   }
   const type =
     payload.type === "manual-confirmation" ||
-    payload.type === "manual-cancellation"
+    payload.type === "manual-cancellation" ||
+    payload.type === "confirmation" ||
+    payload.type === "cancellation" ||
+    payload.type === "reschedule"
       ? payload.type
       : undefined;
   const checkpoint =
@@ -1837,8 +1964,13 @@ async function latestWhatsAppBusinessScopedUserId(
 async function readTemplateSnapshot(
   transaction: SchedulerTransaction,
   clinicId: string,
-  kind: "cancellation" | "confirmation" | "reminder",
-  values: { clinicName: string; doctorName?: string | null; startsAt: Date },
+  kind: "cancellation" | "confirmation" | "reminder" | "reschedule",
+  values: {
+    clinicName: string;
+    doctorName?: string | null;
+    patientName?: string | null;
+    startsAt: Date;
+  },
 ): Promise<TransactionalWhatsAppTemplate> {
   const template = await transaction.query.whatsappCriticalTemplates.findFirst({
     columns: {
@@ -1887,6 +2019,7 @@ async function dueAppointments(transaction: SchedulerTransaction, now: Date) {
       id: appointments.id,
       origin: appointments.origin,
       patientId: appointments.patientId,
+      patientName: patients.name,
       startsAt: appointments.startsAt,
     })
     .from(appointments)
@@ -1896,6 +2029,13 @@ async function dueAppointments(transaction: SchedulerTransaction, now: Date) {
       and(
         eq(appointments.clinicId, doctors.clinicId),
         eq(appointments.doctorId, doctors.id),
+      ),
+    )
+    .leftJoin(
+      patients,
+      and(
+        eq(appointments.clinicId, patients.clinicId),
+        eq(appointments.patientId, patients.id),
       ),
     )
     .where(
@@ -2080,7 +2220,7 @@ function toDelivery(
       serviceWindowExpiresAt?: string | null;
       template?: TransactionalWhatsAppTemplate;
       text?: string;
-      type: ManualAppointmentMessageType;
+      type: AppointmentTransactionalMessageType;
     };
     return {
       attempts: row.attempts,

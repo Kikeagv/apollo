@@ -13,6 +13,7 @@ import {
 import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import { inSimulatedWhatsAppClinicTransaction } from "~/server/db/clinic-context";
 import { recalculateClinicReadiness } from "~/server/db/clinic-setup-store";
+import { enqueueAppointmentTransactionalDeliveryInTransaction } from "~/server/db/transactional-delivery-store";
 import type { db } from "~/server/db";
 import {
   appointmentEvents,
@@ -104,16 +105,33 @@ export const drizzleAgendaAppointmentRescheduler: AgendaAppointmentRescheduler =
             });
           if (rescheduled === undefined)
             return { kind: "unavailable" as const };
-          await transaction.insert(appointmentEvents).values({
-            actorContactId: input.contactId,
-            appointmentId: rescheduled.id,
-            clinicId: input.clinicId,
-            reason: input.startsAt.toISOString(),
-            type: "rescheduled",
-          });
+          const [rescheduleEvent] = await transaction
+            .insert(appointmentEvents)
+            .values({
+              actorContactId: input.contactId,
+              appointmentId: rescheduled.id,
+              clinicId: input.clinicId,
+              reason: input.startsAt.toISOString(),
+              type: "rescheduled",
+            })
+            .returning({ id: appointmentEvents.id });
+          if (rescheduleEvent === undefined) {
+            throw new Error("No se pudo registrar la reprogramación");
+          }
           await recalculateClinicReadiness(transaction, {
             clinicId: input.clinicId,
           });
+          await enqueueAppointmentTransactionalDeliveryInTransaction(
+            transaction,
+            {
+              appointmentEventId: rescheduleEvent.id,
+              appointmentId: rescheduled.id,
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              now: input.now,
+              type: "reschedule",
+            },
+          );
           return { ...rescheduled, kind: "rescheduled" as const };
         },
       );
@@ -165,15 +183,32 @@ export const drizzleAgendaAppointmentCanceller: AgendaAppointmentCanceller = {
           )
           .returning({ id: appointments.id });
         if (cancelled === undefined) return { kind: "unavailable" as const };
-        await transaction.insert(appointmentEvents).values({
-          actorContactId: input.contactId,
-          appointmentId: cancelled.id,
-          clinicId: input.clinicId,
-          type: "cancelled",
-        });
+        const [cancellationEvent] = await transaction
+          .insert(appointmentEvents)
+          .values({
+            actorContactId: input.contactId,
+            appointmentId: cancelled.id,
+            clinicId: input.clinicId,
+            type: "cancelled",
+          })
+          .returning({ id: appointmentEvents.id });
+        if (cancellationEvent === undefined) {
+          throw new Error("No se pudo registrar la cancelación de la Cita");
+        }
         await recalculateClinicReadiness(transaction, {
           clinicId: input.clinicId,
         });
+        await enqueueAppointmentTransactionalDeliveryInTransaction(
+          transaction,
+          {
+            appointmentEventId: cancellationEvent.id,
+            appointmentId: cancelled.id,
+            clinicId: input.clinicId,
+            contactId: input.contactId,
+            now: input.now,
+            type: "cancellation",
+          },
+        );
         return { ...cancelled, kind: "cancelled" as const };
       },
     );

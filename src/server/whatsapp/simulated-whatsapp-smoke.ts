@@ -104,8 +104,6 @@ export async function runPraxiaWhatsAppSyntheticSmoke(input: {
   let templateKind: string | null = null;
   try {
     templateKind = chooseTransactionalWhatsAppRoute({
-      now: SMOKE_NOW,
-      serviceWindowExpiresAt: null,
       template: {
         category: "UTILITY",
         locale: "es",

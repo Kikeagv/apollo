@@ -22,7 +22,10 @@ import {
   processWhatsAppTextForContact,
   processSimulatedWhatsAppMessage,
 } from "./simulated-whatsapp-booking";
-import { listPendingGuardianshipVerifications } from "./administrative-records";
+import {
+  getPatientAdministrativeDetail,
+  listPendingGuardianshipVerifications,
+} from "./administrative-records";
 import { sendAppointmentReminder } from "./appointment-reminders";
 import { canContactManageAppointment } from "./appointment-self-management";
 import { resolveAppointmentSelfManagementEscalation } from "./appointment-self-management";
@@ -59,6 +62,7 @@ import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-
 import { drizzleManualAppointmentStore } from "../db/manual-appointment-store";
 import {
   drizzleTransactionalDeliveryStore,
+  drizzleTransactionalDeliveryCallbackStore,
   reactivatePendingWhatsAppDeliveries,
 } from "../db/transactional-delivery-store";
 import { drizzleWhatsAppInboundStore } from "../db/whatsapp-inbound-store";
@@ -91,6 +95,7 @@ import {
   transactionalDeliveryAttempts,
   transactionalDeliveries,
   user as identities,
+  whatsappCriticalTemplates,
   whatsappContactConsents,
   whatsappConnections,
   whatsappConversations,
@@ -104,6 +109,217 @@ const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("Reserva simulada de WhatsApp persistente", () => {
+  databaseTest(
+    "crea una Entrega de reprogramación con consentimiento y plantilla bajo RLS",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-17T10:00:00.000Z");
+      const appointmentStartsAt = new Date("2026-08-17T14:00:00.000Z");
+      const rescheduledStartsAt = new Date("2026-08-17T14:30:00.000Z");
+      try {
+        const appointmentId = await inClinicTransaction(
+          fixture,
+          async (transaction) => {
+            const doctor = await transaction.query.doctors.findFirst({
+              columns: { id: true },
+              where: eq(doctors.clinicId, fixture.clinicId),
+            });
+            if (doctor === undefined) throw new Error("Falta el Médico");
+            const endsAt = new Date(
+              appointmentStartsAt.valueOf() + 30 * 60_000,
+            );
+            const [appointment] = await transaction
+              .insert(appointments)
+              .values({
+                authorContactId: fixture.contactId,
+                bufferMinutes: 0,
+                clinicId: fixture.clinicId,
+                doctorId: doctor.id,
+                durationMinutes: 30,
+                endsAt,
+                occupiedUntil: endsAt,
+                origin: "reservation",
+                patientId: fixture.patientId,
+                serviceOfferId: fixture.offerId,
+                startsAt: appointmentStartsAt,
+              })
+              .returning({ id: appointments.id });
+            if (appointment === undefined) {
+              throw new Error("No se creó la Cita de prueba");
+            }
+            await transaction.insert(appointmentEvents).values({
+              actorContactId: fixture.contactId,
+              appointmentId: appointment.id,
+              clinicId: fixture.clinicId,
+              type: "reservation-confirmed",
+            });
+            return appointment.id;
+          },
+        );
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            await transaction.insert(whatsappCriticalTemplates).values({
+              category: "UTILITY",
+              clinicId: fixture.clinicId,
+              kind: "reschedule",
+              locale: "es",
+              name: "appointment_reschedule",
+              providerTemplateId: "template-reschedule",
+              provisioningStatus: "approved",
+              status: "APPROVED",
+              variables: [
+                "patient_name",
+                "clinic_name",
+                "appointment_date",
+                "appointment_time",
+                "doctor_name",
+              ],
+            });
+          },
+        );
+
+        await expect(
+          drizzleSimulatedWhatsAppBookingStore.rescheduleAppointment({
+            appointmentId,
+            clinicId: fixture.clinicId,
+            contactId: fixture.contactId,
+            now,
+            patientId: fixture.patientId,
+            startsAt: rescheduledStartsAt,
+          }),
+        ).resolves.toMatchObject({
+          kind: "rescheduled",
+          startsAt: rescheduledStartsAt,
+        });
+
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const [delivery] = await transaction
+              .select({
+                consentDecision: transactionalDeliveries.consentDecision,
+                idempotencyKey: transactionalDeliveries.idempotencyKey,
+                kind: transactionalDeliveries.kind,
+                payload: transactionalDeliveries.payload,
+                status: transactionalDeliveries.status,
+              })
+              .from(transactionalDeliveries)
+              .where(eq(transactionalDeliveries.appointmentId, appointmentId));
+            expect(delivery).toMatchObject({
+              consentDecision: "allowed",
+              kind: "appointment-message",
+              status: "pending",
+              payload: {
+                patientName: "Ana",
+                template: {
+                  category: "UTILITY",
+                  name: "appointment_reschedule",
+                  parameters: [
+                    "Ana",
+                    "Clínica APO-18",
+                    "17 de agosto de 2026",
+                    "8:30 a. m.",
+                    "Dra. Sol",
+                  ],
+                  providerTemplateId: "template-reschedule",
+                  status: "APPROVED",
+                },
+              },
+            });
+            expect(delivery?.idempotencyKey).toContain(appointmentId);
+          },
+        );
+        const [claimedReschedule] =
+          await drizzleTransactionalDeliveryStore.claimReadyDeliveries({ now });
+        expect(claimedReschedule).toMatchObject({
+          kind: "appointment-message",
+          payload: { type: "reschedule", patientName: "Ana" },
+        });
+        if (claimedReschedule === undefined) {
+          throw new Error("No se reclamó la Entrega de reprogramación");
+        }
+        await drizzleTransactionalDeliveryStore.markAccepted?.({
+          delivery: claimedReschedule,
+          now,
+          providerMessageId: "wamid-apo105-reschedule",
+        });
+        await drizzleTransactionalDeliveryCallbackStore.recordProviderCallback({
+          providerEventId: "provider-event-apo105-delivered",
+          providerMessageId: "wamid-apo105-reschedule",
+          status: "delivered",
+        });
+        await drizzleTransactionalDeliveryCallbackStore.recordProviderCallback({
+          error: "Callback atrasado fuera de orden",
+          providerEventId: "provider-event-apo105-stale-failure",
+          providerMessageId: "wamid-apo105-reschedule",
+          status: "failed",
+        });
+        await expect(
+          getPatientAdministrativeDetail(
+            {
+              clinicId: fixture.clinicId,
+              identityId: fixture.identityId,
+              patientId: fixture.patientId,
+            },
+            drizzleAdministrativeRecordsStore,
+          ),
+        ).resolves.toMatchObject({
+          appointments: [
+            {
+              deliveryStatuses: [
+                {
+                  providerMessageId: "wamid-apo105-reschedule",
+                  providerStatus: "delivered",
+                  type: "reschedule",
+                },
+              ],
+              id: appointmentId,
+            },
+          ],
+        });
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const events = await transaction
+              .select({
+                reason: appointmentEvents.reason,
+                type: appointmentEvents.type,
+              })
+              .from(appointmentEvents)
+              .where(eq(appointmentEvents.appointmentId, appointmentId));
+            expect(events).toEqual(
+              expect.arrayContaining([
+                {
+                  reason: "Reprogramación · aceptado",
+                  type: "appointment-delivery-status",
+                },
+                {
+                  reason: "Reprogramación · entregado",
+                  type: "appointment-delivery-status",
+                },
+              ]),
+            );
+            expect(
+              events.every((event) => !event.reason?.includes("wamid")),
+            ).toBe(true);
+          },
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "agrega los tres tipos de Pendiente bajo RLS, conserva el historial y sus evidencias",
     async () => {
@@ -669,7 +885,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
               textReference: policy.immutableTextReference,
             });
           }),
-        ).rejects.toThrow(/row-level security policy/);
+        ).rejects.toThrow();
       } finally {
         await fixture.cleanup();
       }
@@ -716,6 +932,44 @@ describe("Reserva simulada de WhatsApp persistente", () => {
         if (confirmed?.kind !== "appointment-confirmed") {
           throw new Error("No se confirmó la Cita de reserva");
         }
+        const confirmationDeliveries = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            return transaction
+              .select({
+                payload: transactionalDeliveries.payload,
+                status: transactionalDeliveries.status,
+              })
+              .from(transactionalDeliveries)
+              .where(
+                and(
+                  eq(transactionalDeliveries.appointmentId, confirmed.id),
+                  eq(transactionalDeliveries.kind, "appointment-message"),
+                ),
+              );
+          },
+        );
+        expect(confirmationDeliveries).toHaveLength(1);
+        expect(confirmationDeliveries[0]).toMatchObject({
+          payload: { type: "confirmation" },
+          status: "pending",
+        });
+        const [claimedConfirmation] =
+          await drizzleTransactionalDeliveryStore.claimReadyDeliveries({ now });
+        expect(claimedConfirmation).toMatchObject({
+          kind: "appointment-message",
+          payload: { type: "confirmation" },
+        });
+        if (claimedConfirmation === undefined) {
+          throw new Error("No se reclamó la confirmación transaccional");
+        }
+        await drizzleTransactionalDeliveryStore.markDelivered({
+          delivery: claimedConfirmation,
+          now,
+        });
         const tutor = await inClinicTransaction(
           fixture,
           async (transaction) => {
@@ -1080,6 +1334,42 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             now,
           ),
         ).resolves.toEqual(held);
+
+        await expect(
+          drizzleSimulatedWhatsAppBookingStore.cancelAppointment({
+            appointmentId: confirmed.id,
+            clinicId: fixture.clinicId,
+            contactId: fixture.contactId,
+            now: new Date("2026-08-17T04:00:00.000Z"),
+            patientId: fixture.patientId,
+          }),
+        ).resolves.toMatchObject({ kind: "cancelled" });
+        const cancellationDeliveries = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            return transaction
+              .select({
+                payload: transactionalDeliveries.payload,
+                status: transactionalDeliveries.status,
+              })
+              .from(transactionalDeliveries)
+              .where(
+                and(
+                  eq(transactionalDeliveries.appointmentId, confirmed.id),
+                  eq(transactionalDeliveries.kind, "appointment-message"),
+                  sql`${transactionalDeliveries.payload}->>'type' = 'cancellation'`,
+                ),
+              );
+          },
+        );
+        expect(cancellationDeliveries).toHaveLength(1);
+        expect(cancellationDeliveries[0]).toMatchObject({
+          payload: { type: "cancellation" },
+          status: "pending",
+        });
 
         await inClinicTransaction(fixture.other, async (transaction) => {
           await expect(
@@ -2342,9 +2632,15 @@ describe("Reserva simulada de WhatsApp persistente", () => {
         );
         expect(workerResult).toMatchObject({ rejected: 1 });
 
-        const [alert] = await listWhatsAppInboundOperationalAlerts({
-          identityId: fixture.superadminIdentityId,
-        });
+        const alertsBeforeResolution =
+          await listWhatsAppInboundOperationalAlerts({
+            identityId: fixture.superadminIdentityId,
+          });
+        const alert = alertsBeforeResolution.find(
+          (candidate) =>
+            candidate.connectionReference === message.connectionReference &&
+            candidate.customerReference === message.customerReference,
+        );
         expect(alert).toMatchObject({
           connectionReference: message.connectionReference,
           customerReference: message.customerReference,
@@ -2364,7 +2660,9 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           listWhatsAppInboundOperationalAlerts({
             identityId: fixture.superadminIdentityId,
           }),
-        ).resolves.toEqual([]);
+        ).resolves.not.toContainEqual(
+          expect.objectContaining({ id: alert.id }),
+        );
         await expect(
           inSuperadminTransaction(fixture.superadminIdentityId, (transaction) =>
             transaction

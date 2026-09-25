@@ -2,7 +2,7 @@ import type {
   AppointmentReminderCheckpoint,
   AppointmentReminderRecipient,
 } from "./appointment-reminders";
-import type { ManualAppointmentMessageType } from "./manual-appointments";
+import type { AppointmentTransactionalMessageType } from "./manual-appointments";
 import type { TransactionalWhatsAppRoute } from "~/domain/whatsapp-delivery";
 import type { WhatsAppUsageMetric } from "~/domain/whatsapp-circuit-breaker";
 import {
@@ -77,7 +77,7 @@ export type TransactionalDelivery =
           status?: string | null;
         };
         text?: string;
-        type: ManualAppointmentMessageType;
+        type: AppointmentTransactionalMessageType;
       };
     };
 

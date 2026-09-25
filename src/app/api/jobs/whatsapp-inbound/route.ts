@@ -67,7 +67,14 @@ export async function POST(request: Request) {
           drizzleSimulatedWhatsAppBookingStore,
           input.now,
         );
-        return { text: response.text };
+        return {
+          text:
+            response.kind === "appointment-confirmed" ||
+            response.kind === "appointment-cancelled" ||
+            response.kind === "appointment-rescheduled"
+              ? ""
+              : response.text,
+        };
       },
     },
     createWhatsAppConsentGate(drizzleWhatsAppInboundStore),

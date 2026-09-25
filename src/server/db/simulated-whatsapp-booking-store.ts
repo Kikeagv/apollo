@@ -32,7 +32,10 @@ import {
 } from "~/server/db/agenda-appointment-rescheduler";
 import { readAgendaCapacity } from "~/server/db/agenda-capacity-store";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
-import { reactivatePendingWhatsAppDeliveries } from "~/server/db/transactional-delivery-store";
+import {
+  enqueueAppointmentTransactionalDeliveryInTransaction,
+  reactivatePendingWhatsAppDeliveries,
+} from "~/server/db/transactional-delivery-store";
 import {
   isAsclepioEnabled,
   listAsclepioOfferIds,
@@ -1192,12 +1195,29 @@ export const drizzleSimulatedWhatsAppBookingStore: SimulatedWhatsAppBookingStore
               patientId: appointments.patientId,
             });
           if (appointment?.patientId == null) return undefined;
-          await transaction.insert(appointmentEvents).values({
-            actorContactId: input.contactId,
-            appointmentId: appointment.id,
-            clinicId: input.clinicId,
-            type: "reservation-confirmed",
-          });
+          const [confirmationEvent] = await transaction
+            .insert(appointmentEvents)
+            .values({
+              actorContactId: input.contactId,
+              appointmentId: appointment.id,
+              clinicId: input.clinicId,
+              type: "reservation-confirmed",
+            })
+            .returning({ id: appointmentEvents.id });
+          if (confirmationEvent === undefined) {
+            throw new Error("No se pudo registrar la confirmación de la Cita");
+          }
+          await enqueueAppointmentTransactionalDeliveryInTransaction(
+            transaction,
+            {
+              appointmentEventId: confirmationEvent.id,
+              appointmentId: appointment.id,
+              clinicId: input.clinicId,
+              contactId: input.contactId,
+              now: input.now,
+              type: "confirmation",
+            },
+          );
           await recalculateClinicReadiness(transaction, {
             clinicId: input.clinicId,
           });

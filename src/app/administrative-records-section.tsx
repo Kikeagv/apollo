@@ -44,11 +44,13 @@ import { Separator } from "~/components/ui/separator";
 import type {
   ContactDirectoryEntry,
   ContactPhoneMatch,
+  PatientAppointmentDeliveryStatus,
   PatientAdministrativeDetail,
   PatientDirectoryEntry,
   PatientSearchTarget,
 } from "~/server/application/administrative-records";
 import type { AppointmentEventType } from "~/server/application/manual-appointments";
+import type { WhatsAppDeliveryStatus } from "~/domain/whatsapp-delivery";
 import { joinPatientName } from "~/lib/patient-identity";
 import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
@@ -1088,6 +1090,25 @@ function PatientDetail({
                     ))}
                   </ul>
                 ) : null}
+                {appointment.deliveryStatuses.length ? (
+                  <ul className="text-muted-foreground mt-2 space-y-1 border-t pt-2 text-xs">
+                    {appointment.deliveryStatuses.map((delivery) => (
+                      <li key={delivery.id}>
+                        WhatsApp · {appointmentDeliveryTypeLabel(delivery.type)}
+                        {delivery.providerStatus
+                          ? ` · Estado: ${whatsAppDeliveryStatusLabel(delivery.providerStatus)}`
+                          : ""}
+                        {delivery.recipient
+                          ? ` · ${delivery.recipient.name}`
+                          : ""}
+                        {delivery.providerMessageId
+                          ? ` · Kapso ID ${delivery.providerMessageId}`
+                          : ""}
+                        {` · ${formatClinicDateTime(delivery.createdAt)}`}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -1253,6 +1274,13 @@ function appointmentEventLabel(type: AppointmentEventType) {
     "manual-cancellation-sent": "Cancelación notificada",
     "manual-confirmation-failed": "Falló la notificación de confirmación",
     "manual-confirmation-sent": "Confirmación notificada",
+    "appointment-delivery-status": "Estado de entrega por WhatsApp",
+    "appointment-reschedule-failed": "Falló la notificación de reprogramación",
+    "appointment-reschedule-sent": "Reprogramación notificada",
+    "appointment-confirmation-failed": "Falló la notificación de confirmación",
+    "appointment-confirmation-sent": "Confirmación notificada",
+    "appointment-cancellation-failed": "Falló la notificación de cancelación",
+    "appointment-cancellation-sent": "Cancelación notificada",
     "manual-created": "Cita manual creada",
     "no-show-alerted": "Inasistencia alertada",
     "no-show-auto-cancelled": "Cita cancelada automáticamente",
@@ -1267,4 +1295,32 @@ function appointmentEventLabel(type: AppointmentEventType) {
     "self-management-resolved": "Solicitud de autogestión resuelta",
   };
   return labels[type] ?? "Evento administrativo";
+}
+
+function appointmentDeliveryTypeLabel(
+  type: PatientAppointmentDeliveryStatus["type"],
+) {
+  switch (type) {
+    case "manual-confirmation":
+    case "confirmation":
+      return "confirmación";
+    case "manual-cancellation":
+    case "cancellation":
+      return "cancelación";
+    case "reschedule":
+      return "reprogramación";
+    case "reminder":
+      return "recordatorio";
+  }
+}
+
+function whatsAppDeliveryStatusLabel(status: WhatsAppDeliveryStatus) {
+  const labels: Record<WhatsAppDeliveryStatus, string> = {
+    accepted: "aceptado",
+    delivered: "entregado",
+    failed: "fallido",
+    read: "leído",
+    sent: "enviado",
+  };
+  return labels[status];
 }

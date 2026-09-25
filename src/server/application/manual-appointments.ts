@@ -5,7 +5,7 @@ import type { TransactionalWhatsAppRoute } from "~/domain/whatsapp-delivery";
 export type ManualAppointment = {
   id: string;
   startsAt: Date;
-  transactionalMessage?: ManualAppointmentTransactionalMessage;
+  transactionalMessage?: ManualAppointmentNotification;
 };
 
 /** Vocabulario compartido por el historial de Citas y sus consumidores. */
@@ -16,6 +16,13 @@ export const appointmentEventTypes = [
   "manual-confirmation-failed",
   "manual-cancellation-sent",
   "manual-cancellation-failed",
+  "appointment-delivery-status",
+  "appointment-reschedule-sent",
+  "appointment-reschedule-failed",
+  "appointment-confirmation-sent",
+  "appointment-confirmation-failed",
+  "appointment-cancellation-sent",
+  "appointment-cancellation-failed",
   "reservation-confirmed",
   "rescheduled",
   "self-management-escalated",
@@ -107,6 +114,9 @@ export type PanaceaCalendarInput = {
 export type ManualAppointmentMessageType =
   "manual-confirmation" | "manual-cancellation";
 
+export type AppointmentTransactionalMessageType =
+  ManualAppointmentMessageType | "confirmation" | "cancellation" | "reschedule";
+
 export type ManualAppointmentTransactionalMessage = {
   appointmentId: string;
   clinicId: string;
@@ -114,8 +124,14 @@ export type ManualAppointmentTransactionalMessage = {
   recipient: { id: string; name: string; phoneE164: string | null };
   recipientBusinessScopedUserId?: string | null;
   route?: TransactionalWhatsAppRoute;
-  type: ManualAppointmentMessageType;
+  type: AppointmentTransactionalMessageType;
 };
+
+/** Mensaje que pueden generar las acciones manuales de la Agenda. */
+export type ManualAppointmentNotification = Omit<
+  ManualAppointmentTransactionalMessage,
+  "type"
+> & { type: ManualAppointmentMessageType };
 
 export type ManualAppointmentMessageSender = {
   send(

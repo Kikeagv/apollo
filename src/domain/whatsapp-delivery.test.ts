@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildTransactionalTemplateParameters,
   chooseTransactionalWhatsAppRoute,
+  formatTransactionalAppointmentText,
   reconcileWhatsAppDeliveryStatus,
   retryAtFromKapsoHeaders,
 } from "./whatsapp-delivery";
@@ -17,6 +18,45 @@ describe("decisión de Entrega transaccional de WhatsApp", () => {
         startsAt: new Date("2026-09-10T00:00:00.000Z"),
       }),
     ).toEqual(["Clínica Central", "9 de septiembre de 2026", "6:00 p. m."]);
+  });
+
+  it("prepara las variables canónicas aprobadas para mensajes de Cita", () => {
+    expect(
+      buildTransactionalTemplateParameters(
+        [
+          "patient_name",
+          "clinic_name",
+          "appointment_date",
+          "appointment_time",
+          "doctor_name",
+        ],
+        {
+          clinicName: "Clínica Central",
+          doctorName: "Dra. Ana Pérez",
+          patientName: "Ana López",
+          startsAt: new Date("2026-09-10T00:00:00.000Z"),
+        },
+      ),
+    ).toEqual([
+      "Ana López",
+      "Clínica Central",
+      "9 de septiembre de 2026",
+      "6:00 p. m.",
+      "Dra. Ana Pérez",
+    ]);
+  });
+
+  it("prepara el texto mínimo de una reprogramación", () => {
+    expect(
+      formatTransactionalAppointmentText({
+        clinicName: "Central",
+        doctorName: "Dra. Ana Pérez",
+        kind: "reschedule",
+        startsAt: new Date("2026-09-10T00:00:00.000Z"),
+      }),
+    ).toBe(
+      "Tu cita en la Clínica Central fue reprogramada para el 9 de septiembre de 2026 a las 6:00 p. m. con Dra. Ana Pérez.",
+    );
   });
 
   it("descarta variables que podrían exponer contenido clínico o identificadores", () => {
@@ -56,30 +96,31 @@ describe("decisión de Entrega transaccional de WhatsApp", () => {
     ]);
   });
 
-  it("usa texto dentro de la Ventana de servicio y no intenta plantilla", () => {
+  it("requiere la plantilla Utility aprobada incluso dentro de la Ventana", () => {
     expect(
       chooseTransactionalWhatsAppRoute({
-        now,
-        serviceWindowExpiresAt: new Date("2026-09-09T20:00:00.000Z"),
         template: {
+          category: "UTILITY",
           locale: "es",
           name: "appointment_reminder",
           parameters: ["Ana"],
           providerTemplateId: "template-reminder",
+          status: "APPROVED",
         },
         text: "Tu cita es mañana a las 08:00.",
       }),
     ).toEqual({
-      kind: "text",
-      text: "Tu cita es mañana a las 08:00.",
+      kind: "template",
+      locale: "es",
+      name: "appointment_reminder",
+      parameters: ["Ana"],
+      providerTemplateId: "template-reminder",
     });
   });
 
   it("usa la plantilla Utility aprobada fuera de la Ventana", () => {
     expect(
       chooseTransactionalWhatsAppRoute({
-        now,
-        serviceWindowExpiresAt: new Date("2026-09-09T11:59:59.000Z"),
         template: {
           category: "UTILITY",
           locale: "es",
@@ -102,8 +143,6 @@ describe("decisión de Entrega transaccional de WhatsApp", () => {
   it("acepta el locale exacto de la plantilla sincronizada del WABA", () => {
     expect(
       chooseTransactionalWhatsAppRoute({
-        now,
-        serviceWindowExpiresAt: null,
         template: {
           category: "UTILITY",
           locale: "en_US",
@@ -126,8 +165,6 @@ describe("decisión de Entrega transaccional de WhatsApp", () => {
   it("falla cerrado si fuera de ventana no existe una Utility aprobada", () => {
     expect(() =>
       chooseTransactionalWhatsAppRoute({
-        now,
-        serviceWindowExpiresAt: null,
         template: {
           category: "MARKETING",
           locale: "es",

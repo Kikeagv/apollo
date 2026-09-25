@@ -771,6 +771,27 @@
       "when": 1790044247022,
       "tag": "0114_apo104_customer_scoped_inbound_uniques",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1790044247023,
+      "tag": "0115_apo105_outbound_template_worker_read",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1790044247024,
+      "tag": "0116_apo105_appointment_delivery_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1790044247025,
+      "tag": "0117_apo105_delivery_status_audit",
+      "breakpoints": true
     }
   ]
 }

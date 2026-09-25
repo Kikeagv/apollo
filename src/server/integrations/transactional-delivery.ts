@@ -27,9 +27,9 @@ export function transactionalDeliveryAdapter(
 ): TransactionalDeliverySender {
   const appointmentReminderSender = provider.appointmentReminderSender;
   return {
-    async send(delivery, context = { now: new Date() }) {
+    async send(delivery) {
       if (delivery.kind === "appointment-reminder") {
-        const route = routeForDelivery(delivery.payload, context.now);
+        const route = routeForDelivery(delivery.payload);
         const result = await appointmentReminderSender.send({
           appointmentId: delivery.payload.appointmentId,
           clinicId: delivery.clinicId,
@@ -46,7 +46,7 @@ export function transactionalDeliveryAdapter(
         return result;
       }
       if (delivery.kind === "appointment-message") {
-        const route = routeForDelivery(delivery.payload, context.now);
+        const route = routeForDelivery(delivery.payload);
         const result = await provider.appointmentMessageSender.send({
           appointmentId: delivery.payload.appointmentId,
           clinicId: delivery.clinicId,
@@ -72,52 +72,30 @@ export function transactionalDeliveryAdapter(
   };
 }
 
-function routeForDelivery(
-  payload: {
-    route?: TransactionalWhatsAppRoute;
-    serviceWindowExpiresAt?: Date | null;
-    template?: TransactionalWhatsAppTemplate;
-    text?: string;
-  },
-  now: Date,
-) {
-  if (payload.text === undefined) {
-    const serviceWindowIsOpen =
-      payload.serviceWindowExpiresAt !== undefined &&
-      payload.serviceWindowExpiresAt !== null &&
-      payload.serviceWindowExpiresAt > now;
-
-    if (payload.route?.kind === "template") {
-      validatePersistedTemplateRoute(payload, now);
-      return payload.route;
-    }
-    if (serviceWindowIsOpen) {
-      return payload.route;
-    }
-    throw new WhatsAppUtilityTemplateRequiredError();
+function routeForDelivery(payload: {
+  route?: TransactionalWhatsAppRoute;
+  template?: TransactionalWhatsAppTemplate;
+  text?: string;
+}) {
+  if (payload.route?.kind === "template") {
+    validatePersistedTemplateRoute(payload);
+    return payload.route;
   }
   return chooseTransactionalWhatsAppRoute({
-    now,
-    serviceWindowExpiresAt: payload.serviceWindowExpiresAt ?? null,
     template: payload.template ?? emptyTransactionalWhatsAppTemplate,
-    text: payload.text,
+    text: payload.text ?? "",
   });
 }
 
-function validatePersistedTemplateRoute(
-  payload: {
-    route?: TransactionalWhatsAppRoute;
-    template?: TransactionalWhatsAppTemplate;
-  },
-  now: Date,
-) {
+function validatePersistedTemplateRoute(payload: {
+  route?: TransactionalWhatsAppRoute;
+  template?: TransactionalWhatsAppTemplate;
+}) {
   const route = payload.route;
   if (route?.kind !== "template") {
     throw new WhatsAppUtilityTemplateRequiredError();
   }
   const validated = chooseTransactionalWhatsAppRoute({
-    now,
-    serviceWindowExpiresAt: null,
     template: payload.template ?? emptyTransactionalWhatsAppTemplate,
     text: "",
   });

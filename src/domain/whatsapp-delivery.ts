@@ -34,27 +34,16 @@ export class WhatsAppUtilityTemplateRequiredError extends Error {
   readonly retryable = false;
 
   constructor() {
-    super(
-      "La Entrega transaccional necesita una plantilla Utility aprobada fuera de la Ventana de servicio",
-    );
+    super("La Entrega transaccional necesita una plantilla Utility aprobada");
     this.name = "WhatsAppUtilityTemplateRequiredError";
   }
 }
 
-/** Decide el formato sin permitir mensajes proactivos libres fuera de ventana. */
+/** Exige una plantilla Utility aprobada para cada Entrega transaccional. */
 export function chooseTransactionalWhatsAppRoute(input: {
-  now: Date;
-  serviceWindowExpiresAt: Date | null;
   template: TransactionalWhatsAppTemplate;
   text: string;
 }): TransactionalWhatsAppRoute {
-  if (
-    input.serviceWindowExpiresAt !== null &&
-    input.serviceWindowExpiresAt > input.now
-  ) {
-    return { kind: "text", text: input.text };
-  }
-
   if (
     input.template.category !== "UTILITY" ||
     input.template.locale.trim() === "" ||
@@ -79,7 +68,7 @@ export function chooseTransactionalWhatsAppRoute(input: {
 export function formatTransactionalAppointmentText(input: {
   clinicName: string;
   doctorName?: string | null;
-  kind: "cancellation" | "confirmation" | "reminder";
+  kind: "cancellation" | "confirmation" | "reminder" | "reschedule";
   startsAt: Date;
 }) {
   const startsAt = new Intl.DateTimeFormat("es-SV", {
@@ -96,6 +85,9 @@ export function formatTransactionalAppointmentText(input: {
   if (input.kind === "confirmation") {
     return `La Clínica ${input.clinicName} confirmó tu cita del ${startsAt}${doctorSuffix}.`;
   }
+  if (input.kind === "reschedule") {
+    return `Tu cita en la Clínica ${input.clinicName} fue reprogramada para el ${startsAt}${doctorSuffix}.`;
+  }
   return `Te recordamos tu cita en la Clínica ${input.clinicName} el ${startsAt}${doctorSuffix}.`;
 }
 
@@ -105,6 +97,7 @@ export function buildTransactionalTemplateParameters(
   input: {
     clinicName: string;
     doctorName?: string | null;
+    patientName?: string | null;
     startsAt: Date;
   },
 ) {
@@ -120,8 +113,12 @@ export function buildTransactionalTemplateParameters(
     clinic: input.clinicName,
     clinic_name: input.clinicName,
     date,
+    appointment_date: date,
+    appointment_time: time,
     doctor: input.doctorName ?? "",
     doctor_name: input.doctorName ?? "",
+    patient: input.patientName ?? "",
+    patient_name: input.patientName ?? "",
     time,
   };
   return variables.map(

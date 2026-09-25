@@ -167,9 +167,13 @@ async function sendAppointmentMessage(input: {
     ({
       kind: "text",
       text:
-        input.message.type === "manual-confirmation"
+        input.message.type === "manual-confirmation" ||
+        input.message.type === "confirmation"
           ? "Tu cita ha sido confirmada por la Clínica."
-          : "La Clínica canceló tu cita.",
+          : input.message.type === "manual-cancellation" ||
+              input.message.type === "cancellation"
+            ? "La Clínica canceló tu cita."
+            : "Tu cita fue reprogramada.",
     } satisfies TransactionalWhatsAppRoute);
   return sendKapsoMessage({
     apiKey: input.apiKey,

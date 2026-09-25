@@ -1,4 +1,6 @@
 import type { AppointmentEventType } from "./manual-appointments";
+import type { AppointmentTransactionalMessageType } from "./manual-appointments";
+import type { WhatsAppDeliveryStatus } from "~/domain/whatsapp-delivery";
 
 const MAX_RECORD_NAME_LENGTH = 120;
 
@@ -72,7 +74,17 @@ export type PatientAppointmentEvent = {
   type: AppointmentEventType;
 };
 
+export type PatientAppointmentDeliveryStatus = {
+  createdAt: Date;
+  id: string;
+  providerMessageId: string | null;
+  providerStatus: WhatsAppDeliveryStatus | null;
+  recipient: Contact | null;
+  type: AppointmentTransactionalMessageType | "reminder";
+};
+
 export type PatientAppointmentHistory = {
+  deliveryStatuses: PatientAppointmentDeliveryStatus[];
   doctor: { id: string; name: string };
   endsAt: Date;
   events: PatientAppointmentEvent[];
