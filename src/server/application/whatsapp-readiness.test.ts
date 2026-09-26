@@ -296,6 +296,29 @@ function fakeReconciliationProvider(
 }
 
 describe("caso de uso de readiness técnico de WhatsApp", () => {
+  it("no presenta salud antigua como bloqueo confirmado", async () => {
+    const store = fakeStore(
+      record({
+        numberHealth: "unhealthy",
+        numberHealthCheckedAt: new Date(0),
+      }),
+    );
+
+    const result = await getWhatsAppReadiness(
+      {
+        access: "superadmin",
+        actorIdentityId: "admin-1",
+        clinicId: "clinic-1",
+      },
+      store.store,
+    );
+
+    expect(result.numberHealth).toBe("unknown");
+    expect(
+      result.readiness.gates.find((gate) => gate.code === "number"),
+    ).toMatchObject({ status: "pending" });
+  });
+
   it("lee el estado dentro del acceso solicitado y recalcula los gates", async () => {
     const fake = fakeStore(
       record({

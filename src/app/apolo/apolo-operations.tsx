@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   createAdministrativeOperationKey,
@@ -21,6 +21,10 @@ import {
   isValidE164PhoneNumber,
   type WhatsAppOnboardingMode,
 } from "~/domain/whatsapp-preflight";
+import {
+  evaluateWhatsAppCircuitReactivationEvidence,
+  whatsappCircuitReactivationEvidenceMaxAgeMs,
+} from "~/domain/whatsapp-circuit-breaker";
 import { whatsappSyntheticSmokeStepLabels } from "~/domain/whatsapp-smoke";
 import { formatDateTime } from "~/app/format-date";
 import {
@@ -45,6 +49,9 @@ export function ApoloOperations() {
   const [clinicId, setClinicId] = useState("");
   const [smokeTestPhone, setSmokeTestPhone] = useState("");
   const [activationRefreshToken, setActivationRefreshToken] = useState(0);
+  const [reactivationEvidenceNow, setReactivationEvidenceNow] = useState(
+    () => new Date(),
+  );
   const refreshActivationContract = () =>
     setActivationRefreshToken((value) => value + 1);
   const clinics = api.apolo.listCommercialClinics.useQuery();
@@ -79,6 +86,31 @@ export function ApoloOperations() {
         query.state.data?.latestSmoke?.status === "pending" ? 2_000 : false,
     },
   );
+  const latestSmoke = whatsappOperations.data?.latestSmoke ?? null;
+  const operationConnection = whatsappOperations.data?.connection ?? null;
+  useEffect(() => {
+    if (latestSmoke?.finishedAt === null || latestSmoke === null) return;
+    const remainingMs =
+      latestSmoke.finishedAt.valueOf() +
+      whatsappCircuitReactivationEvidenceMaxAgeMs -
+      Date.now() +
+      1;
+    if (remainingMs <= 0) {
+      setReactivationEvidenceNow(new Date());
+      return;
+    }
+    const timeout = setTimeout(
+      () => setReactivationEvidenceNow(new Date()),
+      remainingMs,
+    );
+    return () => clearTimeout(timeout);
+  }, [latestSmoke]);
+  const reactivationEvidence = evaluateWhatsAppCircuitReactivationEvidence({
+    connectionGenerationId: operationConnection?.provisioningEventId ?? null,
+    connectionProvider: operationConnection?.provider ?? "kapso",
+    now: reactivationEvidenceNow,
+    smoke: latestSmoke,
+  });
   const [clinicName, setClinicName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -195,6 +227,7 @@ export function ApoloOperations() {
     onSuccess: () => {
       void whatsappOperations.refetch();
       void readiness.refetch();
+      void circuitBreaker.refetch();
       refreshActivationContract();
     },
   });
@@ -560,9 +593,37 @@ export function ApoloOperations() {
               />
             </dl>
             <p className="text-sm text-slate-300">
-              {circuitBreaker.data.reason} · Siguiente acción:{" "}
-              {circuitBreaker.data.nextAction}
+              Motivo del corte: {circuitBreaker.data.reason}
             </p>
+            <dl className="grid gap-3 rounded-lg border border-slate-700 p-3 text-sm sm:grid-cols-3">
+              <DiagnosticValue
+                label="Responsable del corte"
+                value={
+                  circuitBreaker.data.openedBy === null
+                    ? "Sin actor registrado"
+                    : circuitBreaker.data.openedBy.actorKind === "superadmin"
+                      ? (circuitBreaker.data.openedBy.displayName ??
+                        circuitBreaker.data.openedBy.actorIdentityId ??
+                        "Superadmin")
+                      : circuitBreaker.data.openedBy.actorKind === "system"
+                        ? "Sistema automático"
+                        : "Worker de WhatsApp"
+                }
+              />
+              <DiagnosticValue
+                label="Evidencia E2E más reciente"
+                value={
+                  latestSmoke === null
+                    ? (circuitBreaker.data.lastSyntheticEvidence ??
+                      "Todavía no hay evidencia E2E")
+                    : `${latestSmoke.status === "passed" ? "Aprobada" : latestSmoke.status === "pending" ? "Pendiente" : "Fallida"} · ${formatDateTime(latestSmoke.finishedAt)} · ${latestSmoke.evidence ?? (latestSmoke.blockers.map(({ message }) => message).join("; ") || "sin resumen")}`
+                }
+              />
+              <DiagnosticValue
+                label="Siguiente acción"
+                value={circuitBreaker.data.nextAction}
+              />
+            </dl>
             <div className="grid gap-3 text-sm sm:grid-cols-3">
               <MetricValue
                 label="Crédito Kapso"
@@ -650,8 +711,10 @@ export function ApoloOperations() {
             {circuitBreaker.data.status === "open" ? (
               <div className="space-y-2 rounded-lg border border-amber-500/50 bg-amber-950/30 p-3 text-sm">
                 <p>
-                  La reactivación ejecutará una prueba sintética contra el
-                  webhook y cerrará el circuito solo si la evidencia es válida.
+                  Ejecute y complete el smoke E2E en el panel de Operación de
+                  WhatsApp. La reactivación usará el último roundtrip persistido
+                  y cerrará el circuito solo si sigue vigente y corresponde a
+                  esta Conexión.
                 </p>
                 <label className="flex items-center gap-2">
                   <input
@@ -676,6 +739,7 @@ export function ApoloOperations() {
                   disabled={
                     !causeFixed ||
                     !manualConfirmation ||
+                    !reactivationEvidence.valid ||
                     reactivateCircuitBreaker.isPending
                   }
                   onClick={() =>
@@ -687,8 +751,13 @@ export function ApoloOperations() {
                   }
                   type="button"
                 >
-                  Ejecutar prueba y reactivar
+                  Reactivar con evidencia E2E
                 </button>
+                {!reactivationEvidence.valid ? (
+                  <p className="text-xs text-amber-100" role="status">
+                    {reactivationEvidence.reason}
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {reactivateCircuitBreaker.error ? (
@@ -1398,8 +1467,7 @@ export function ApoloOperations() {
                     ? "Ejecutando…"
                     : whatsappOperations.data.latestSmoke?.status === "pending"
                       ? "Smoke en curso"
-                      : whatsappOperations.data.connection?.provider ===
-                          "kapso"
+                      : whatsappOperations.data.connection?.provider === "kapso"
                         ? "Ejecutar smoke de transporte"
                         : "Ejecutar smoke sintético"}
                 </button>
@@ -1416,7 +1484,7 @@ export function ApoloOperations() {
                           ? "esperando roundtrip"
                           : "fallido"}
                     </strong>{" "}
-                    · Contacto de prueba controlado: {" "}
+                    · Contacto de prueba controlado:{" "}
                     {whatsappOperations.data.latestSmoke.controlledTestContact
                       ? "sí"
                       : "no"}{" "}
@@ -2338,7 +2406,9 @@ function DiagnosticValue({ label, value }: { label: string; value: string }) {
       <dt className="text-xs tracking-wide text-slate-400 uppercase">
         {label}
       </dt>
-      <dd className="mt-1 font-medium text-slate-100">{value}</dd>
+      <dd className="mt-1 font-medium break-words whitespace-normal text-slate-100">
+        {value}
+      </dd>
     </div>
   );
 }

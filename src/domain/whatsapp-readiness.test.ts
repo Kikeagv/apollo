@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  currentWhatsAppNumberHealth,
   evaluateWhatsAppReadiness,
   getWhatsAppReadinessGeneration,
   isSameWhatsAppReadinessGeneration,
@@ -71,6 +72,15 @@ function readyInput(
 }
 
 describe("readiness técnico de la Conexión de WhatsApp", () => {
+  it("trata salud sin timestamp como desconocida", () => {
+    expect(
+      currentWhatsAppNumberHealth({
+        health: "unhealthy",
+        healthCheckedAt: null,
+      }),
+    ).toBe("unknown");
+  });
+
   it("considera el número, WABA, proyecto y evento como una sola generación", () => {
     const first = getWhatsAppReadinessGeneration({
       businessAccountId: "waba-1",

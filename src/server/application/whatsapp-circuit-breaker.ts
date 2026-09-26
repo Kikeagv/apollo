@@ -1,10 +1,14 @@
 import {
   canReactivateWhatsAppCircuit,
   defaultWhatsAppCircuitBreakerState,
+  evaluateWhatsAppCircuitReactivationEvidence,
+  sanitizeWhatsAppOperationalText,
   type WhatsAppCircuitBreakerCause,
   type WhatsAppCircuitBreakerState,
   type WhatsAppUsageMetric,
+  type WhatsAppCircuitReactivationSmoke,
 } from "~/domain/whatsapp-circuit-breaker";
+import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 
 export class WhatsAppOperationalMetricPersistenceError extends Error {
   readonly retryable = true;
@@ -64,6 +68,8 @@ export type WhatsAppCircuitBreakerStore = {
       readinessRevision: number;
     };
     expectedSyntheticTestAt?: Date | null;
+    expectedSmokeRunId: string;
+    expectedSmokeFinishedAt: Date;
   }): Promise<WhatsAppCircuitBreakerState>;
   recordMetric(input: {
     clinicId: string;
@@ -85,14 +91,6 @@ export type WhatsAppCircuitBreakerStore = {
     from?: Date;
     to?: Date;
   }): Promise<WhatsAppOperationalMetrics>;
-};
-
-export type WhatsAppCircuitBreakerSyntheticTestProvider = {
-  runSyntheticTest(input: {
-    clinicId: string;
-    phoneNumberId: string;
-    projectWebhookId: string;
-  }): Promise<{ evidence: string; passed: boolean }>;
 };
 
 export type WhatsAppOperationalMetrics = {
@@ -185,6 +183,8 @@ export async function reactivateWhatsAppCircuitBreaker(
     actorIdentityId: string;
     causeFixed: boolean;
     clinicId: string;
+    connectionProvider: WhatsAppProviderId;
+    e2eEvidence: WhatsAppCircuitReactivationSmoke | null;
     manualConfirmation: boolean;
     now?: Date;
     phoneNumberId: string;
@@ -196,7 +196,6 @@ export async function reactivateWhatsAppCircuitBreaker(
     };
   },
   dependencies: {
-    provider: WhatsAppCircuitBreakerSyntheticTestProvider;
     store: WhatsAppCircuitBreakerStore;
   },
 ) {
@@ -216,31 +215,22 @@ export async function reactivateWhatsAppCircuitBreaker(
     throw new Error("La reactivación requiere confirmación manual");
   }
 
-  let test: { evidence: string; passed: boolean };
-  try {
-    test = await dependencies.provider.runSyntheticTest({
-      clinicId: input.clinicId,
-      phoneNumberId: input.phoneNumberId,
-      projectWebhookId: input.projectWebhookId,
-    });
-  } catch (error) {
-    await dependencies.store.recordSyntheticTest({
-      actorIdentityId: input.actorIdentityId,
-      clinicId: input.clinicId,
-      evidence:
-        error instanceof Error ? error.message : "Prueba sintética fallida",
-      now,
-      passed: false,
-      expectedRevision: state.revision,
-    });
-    throw error;
-  }
+  const evidenceEvaluation = evaluateWhatsAppCircuitReactivationEvidence({
+    connectionGenerationId: input.connectionEvidence.provisioningEventId,
+    connectionProvider: input.connectionProvider,
+    now,
+    smoke: input.e2eEvidence,
+  });
+  const evidence = sanitizeWhatsAppOperationalText(
+    input.e2eEvidence?.evidence ?? evidenceEvaluation.reason,
+  );
+  const passed = evidenceEvaluation.valid;
   const testedState = await dependencies.store.recordSyntheticTest({
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
-    evidence: test.evidence,
+    evidence,
     now,
-    passed: test.passed,
+    passed,
     expectedRevision: state.revision,
   });
   if (
@@ -248,10 +238,13 @@ export async function reactivateWhatsAppCircuitBreaker(
       causeFixed: input.causeFixed,
       manualConfirmation: input.manualConfirmation,
       state: testedState,
-      syntheticTestPassed: test.passed,
+      syntheticTestPassed: passed,
     })
   ) {
-    throw new Error("La prueba sintética no permite reactivar la Conexión");
+    throw new Error(evidenceEvaluation.reason);
+  }
+  if (input.e2eEvidence?.finishedAt === null || input.e2eEvidence === null) {
+    throw new Error("La prueba E2E perdió su evidencia antes de reactivar");
   }
   return dependencies.store.reactivate({
     actorIdentityId: input.actorIdentityId,
@@ -266,6 +259,8 @@ export async function reactivateWhatsAppCircuitBreaker(
     },
     expectedRevision: testedState.revision,
     expectedSyntheticTestAt: testedState.lastSyntheticTestAt,
+    expectedSmokeRunId: input.e2eEvidence.id,
+    expectedSmokeFinishedAt: input.e2eEvidence.finishedAt,
   });
 }
 

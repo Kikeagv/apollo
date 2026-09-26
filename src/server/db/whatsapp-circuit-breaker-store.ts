@@ -1,8 +1,9 @@
-import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 
 import {
   defaultWhatsAppCircuitBreakerState,
   evaluateWhatsAppBillingHealth,
+  evaluateWhatsAppCircuitReactivationEvidence,
   sanitizeWhatsAppOperationalText,
   shouldOpenWhatsAppCircuit,
   whatsappCircuitBreakerFailurePolicy,
@@ -37,9 +38,12 @@ import {
   whatsappConnections,
   whatsappInboundReplies,
   whatsappReadiness,
+  whatsappSmokeRuns,
   whatsappUsageMetrics,
+  user as identities,
 } from "~/server/db/schema";
 import { publicWhatsAppConnectionMetadata } from "~/domain/whatsapp-connection";
+import { smokeResultFromRow } from "~/server/db/whatsapp-smoke-run-store";
 
 const RETAIN_MS = 365 * 24 * 60 * 60_000;
 
@@ -60,7 +64,17 @@ export const drizzleWhatsAppCircuitBreakerStore: WhatsAppCircuitBreakerStore = {
         if (!active && input.access === "worker") {
           return defaultWhatsAppCircuitBreakerState(input.clinicId);
         }
-        return readState(transaction, input.clinicId);
+        if (input.access === "superadmin") {
+          await setSuperadminClinicContext(transaction, input.clinicId);
+        }
+        const state = await readState(transaction, input.clinicId);
+        if (input.access !== "superadmin" || state.status !== "open") {
+          return state;
+        }
+        return {
+          ...state,
+          openedBy: await readCircuitOpeningActor(transaction, input.clinicId),
+        };
       },
     );
   },
@@ -268,6 +282,7 @@ export const drizzleWhatsAppCircuitBreakerStore: WhatsAppCircuitBreakerStore = {
           .select({
             metadata: whatsappConnections.metadata,
             phoneNumberId: whatsappConnections.phoneNumberId,
+            provider: whatsappConnections.provider,
             status: whatsappConnections.status,
             updatedAt: whatsappConnections.updatedAt,
           })
@@ -304,6 +319,41 @@ export const drizzleWhatsAppCircuitBreakerStore: WhatsAppCircuitBreakerStore = {
             "La Conexión cambió mientras se validaba la reactivación; vuelva a ejecutar la prueba sintética",
           );
         }
+        const [smokeRun] = await transaction
+          .select()
+          .from(whatsappSmokeRuns)
+          .where(eq(whatsappSmokeRuns.clinicId, input.clinicId))
+          .orderBy(desc(whatsappSmokeRuns.startedAt))
+          .limit(1)
+          .for("update");
+        if (smokeRun === undefined) {
+          throw new Error("La prueba E2E ya no está disponible para reactivar");
+        }
+        const smokeEvidence = {
+          ...smokeResultFromRow(smokeRun),
+          finishedAt: smokeRun.finishedAt,
+          id: smokeRun.id,
+          provisioningEventId: smokeRun.provisioningEventId,
+          startedAt: smokeRun.startedAt,
+        };
+        const smokeValidation = evaluateWhatsAppCircuitReactivationEvidence({
+          connectionGenerationId:
+            connection.metadata.provisioningEventId ?? null,
+          connectionProvider: connection.provider,
+          now: input.now,
+          smoke: smokeEvidence,
+        });
+        if (
+          smokeRun.id !== input.expectedSmokeRunId ||
+          smokeRun.finishedAt?.valueOf() !==
+            input.expectedSmokeFinishedAt.valueOf() ||
+          !smokeValidation.valid
+        ) {
+          throw new Error(
+            "La evidencia E2E cambió o dejó de ser válida mientras se reactivaba: " +
+              smokeValidation.reason,
+          );
+        }
         const next = {
           ...current,
           cause: null,
@@ -311,6 +361,7 @@ export const drizzleWhatsAppCircuitBreakerStore: WhatsAppCircuitBreakerStore = {
           failureWindowStartedAt: null,
           lastReactivatedAt: input.now,
           lastReactivatedByIdentityId: input.actorIdentityId,
+          openedBy: null,
           lastTransitionAt: input.now,
           nextAction: "La Conexión opera normalmente",
           openedAt: null,
@@ -687,6 +738,33 @@ async function readState(
     : toState(row);
 }
 
+async function readCircuitOpeningActor(
+  transaction: ClinicTransaction,
+  clinicId: string,
+) {
+  const [audit] = await transaction
+    .select({
+      actorIdentityId: whatsappCircuitBreakerAudits.actorIdentityId,
+      actorKind: whatsappCircuitBreakerAudits.actorKind,
+      displayName: identities.name,
+    })
+    .from(whatsappCircuitBreakerAudits)
+    .leftJoin(
+      identities,
+      eq(identities.id, whatsappCircuitBreakerAudits.actorIdentityId),
+    )
+    .where(
+      and(
+        eq(whatsappCircuitBreakerAudits.clinicId, clinicId),
+        eq(whatsappCircuitBreakerAudits.action, "opened"),
+      ),
+    )
+    .orderBy(desc(whatsappCircuitBreakerAudits.occurredAt))
+    .limit(1);
+  if (audit === undefined) return null;
+  return audit;
+}
+
 async function upsertState(
   transaction: ClinicTransaction,
   state: WhatsAppCircuitBreakerState,
@@ -876,6 +954,7 @@ function toState(
     lastSyntheticEvidence: row.lastSyntheticEvidence,
     lastSyntheticTestAt: row.lastSyntheticTestAt,
     lastSyntheticTestStatus: row.lastSyntheticTestStatus,
+    openedBy: null,
     lastTransitionAt: row.lastTransitionAt,
     nextAction: row.nextAction,
     openedAt: row.openedAt,

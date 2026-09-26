@@ -66,6 +66,21 @@ export type WhatsAppE2EEvidenceScope =
 /** La salud remota deja de ser evidencia suficiente después de este intervalo. */
 export const whatsappNumberHealthMaxAgeMs = 5 * 60_000;
 
+/** Una lectura antigua no demuestra que el número siga bloqueado. */
+export function currentWhatsAppNumberHealth(input: {
+  health: WhatsAppNumberHealth;
+  healthCheckedAt: Date | null;
+  now?: Date;
+}): WhatsAppNumberHealth {
+  if (input.healthCheckedAt === null) return "unknown";
+  if (input.now === undefined) return input.health;
+  const age = input.now.valueOf() - input.healthCheckedAt.valueOf();
+  if (age < 0 || age > whatsappNumberHealthMaxAgeMs) {
+    return "unknown";
+  }
+  return input.health;
+}
+
 const appointmentTemplateVariables = [
   "patient_name",
   "clinic_name",
@@ -411,15 +426,20 @@ function evaluateNumber(input: WhatsAppReadinessInput): WhatsAppReadinessGate {
       "Reconectar WhatsApp desde Configuración",
     );
   }
-  if (input.number.health === "unknown") {
+  const health = currentWhatsAppNumberHealth({
+    health: input.number.health,
+    healthCheckedAt: input.number.healthCheckedAt,
+    now: input.now,
+  });
+  if (health === "unknown") {
     return gate(
       "number",
       "pending",
       "No se pudo verificar la salud operativa del número en Kapso",
-      "Reintentar la comprobación de salud del número",
+      "Revalidar la salud del número en Kapso",
     );
   }
-  if (input.number.health === "degraded") {
+  if (health === "degraded") {
     return gate(
       "number",
       "failed",
@@ -427,26 +447,12 @@ function evaluateNumber(input: WhatsAppReadinessInput): WhatsAppReadinessGate {
       "Revisar la salud del número y reintentar readiness",
     );
   }
-  if (input.number.health === "unhealthy" || input.number.health === "error") {
+  if (health === "unhealthy" || health === "error") {
     return gate(
       "number",
       "blocked",
-      `Kapso no permite mensajería porque la salud del número es ${input.number.health}`,
+      `Kapso no permite mensajería porque la salud del número es ${health}`,
       "Resolver el bloqueo de salud en Kapso antes de reactivar la Conexión",
-    );
-  }
-  if (
-    input.number.health === "healthy" &&
-    (input.number.healthCheckedAt === null ||
-      (input.now !== undefined &&
-        input.now.valueOf() - input.number.healthCheckedAt.valueOf() >
-          whatsappNumberHealthMaxAgeMs))
-  ) {
-    return gate(
-      "number",
-      "pending",
-      "La evidencia de salud del número expiró",
-      "Revalidar la salud del número en Kapso",
     );
   }
   return gate("number", "ready", "Número y WABA asociados", "");

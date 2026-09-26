@@ -1,4 +1,5 @@
 import {
+  currentWhatsAppNumberHealth,
   evaluateWhatsAppReadiness,
   getWhatsAppReadinessGeneration,
   isSameWhatsAppReadinessGeneration,
@@ -1433,8 +1434,14 @@ function withDerivedState(
   allowConnectionRecovery = false,
   touchConnection = false,
 ): WhatsAppReadinessRecord {
+  const numberHealth = currentWhatsAppNumberHealth({
+    health: state.numberHealth,
+    healthCheckedAt: state.numberHealthCheckedAt,
+    now,
+  });
+  const currentState = { ...state, numberHealth };
   const readiness = evaluateWhatsAppReadiness(
-    toEvaluationInput(state, allowConnectionRecovery, now),
+    toEvaluationInput(currentState, allowConnectionRecovery, now),
   );
   const templatesGate = readiness.gates.find(
     (gate) => gate.code === "templates",
@@ -1442,29 +1449,29 @@ function withDerivedState(
   const billingGate = readiness.gates.find((gate) => gate.code === "billing");
   const webhookGate = readiness.gates.find((gate) => gate.code === "webhooks");
   const connection =
-    state.connection === null
+    currentState.connection === null
       ? null
       : {
-          ...state.connection,
-          lastTestAt: state.e2e.lastTestAt,
+          ...currentState.connection,
+          lastTestAt: currentState.e2e.lastTestAt,
           metadata: {
-            ...state.connection.metadata,
+            ...currentState.connection.metadata,
             billingStatus: billingGate?.status ?? null,
-            health: state.numberHealth,
+            health: currentState.numberHealth,
             nextAction: readiness.nextAction,
             statusReason: readiness.statusReason,
             templatesStatus: templatesGate?.status ?? null,
             webhookStatus: webhookGate?.status ?? null,
           },
           status: connectionStatusForReadiness(
-            state.connection.status,
+            currentState.connection.status,
             readiness.status,
           ),
-          updatedAt: touchConnection ? now : state.connection.updatedAt,
+          updatedAt: touchConnection ? now : currentState.connection.updatedAt,
         };
 
   return {
-    ...state,
+    ...currentState,
     connection,
     nextAction: readiness.nextAction,
     statusReason: readiness.statusReason,
@@ -1525,19 +1532,27 @@ function toSnapshot(
   state: WhatsAppReadinessRecord,
   now = new Date(),
 ): WhatsAppReadinessSnapshot {
+  const numberHealth = currentWhatsAppNumberHealth({
+    health: state.numberHealth,
+    healthCheckedAt: state.numberHealthCheckedAt,
+    now,
+  });
+  const currentState = { ...state, numberHealth };
   return {
-    ...state,
+    ...currentState,
     billingHealth: evaluateWhatsAppBillingHealth({
-      creditCents: state.billing.creditCents,
-      creditLimitCents: state.billing.creditLimitCents ?? null,
-      criticalAutonomyDays: state.billing.criticalAutonomyDays,
-      criticalBalancePercent: state.billing.criticalBalancePercent,
+      creditCents: currentState.billing.creditCents,
+      creditLimitCents: currentState.billing.creditLimitCents ?? null,
+      criticalAutonomyDays: currentState.billing.criticalAutonomyDays,
+      criticalBalancePercent: currentState.billing.criticalBalancePercent,
       estimatedDailyConsumptionCents:
-        state.billing.estimatedDailyConsumptionCents ?? 0,
-      warningAutonomyDays: state.billing.warningAutonomyDays,
-      warningBalancePercent: state.billing.warningBalancePercent,
+        currentState.billing.estimatedDailyConsumptionCents ?? 0,
+      warningAutonomyDays: currentState.billing.warningAutonomyDays,
+      warningBalancePercent: currentState.billing.warningBalancePercent,
     }),
-    readiness: evaluateWhatsAppReadiness(toEvaluationInput(state, false, now)),
+    readiness: evaluateWhatsAppReadiness(
+      toEvaluationInput(currentState, false, now),
+    ),
   };
 }
 

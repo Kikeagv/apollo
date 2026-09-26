@@ -4,8 +4,14 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
+import {
+  buildWhatsAppConsentPolicy,
+  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+  WHATSAPP_CONSENT_TEXTUAL_RESPONSE,
+} from "~/domain/whatsapp-consent";
 import { WHATSAPP_BILLING_RESERVATION_LEASE_MS } from "./whatsapp-billing-capacity";
 import { drizzleWhatsAppBillingCapacityStore } from "../db/whatsapp-billing-capacity-store";
+import { drizzleTransactionalDeliveryStore } from "../db/transactional-delivery-store";
 import { reactivateWhatsAppCircuitBreaker } from "./whatsapp-circuit-breaker";
 import { db } from "../db";
 import {
@@ -19,8 +25,14 @@ import {
 } from "../db/whatsapp-circuit-breaker-store";
 import {
   apoloSuperadmins,
+  appointments,
   clinicUsers,
   clinics,
+  contactPatientLinks,
+  contacts,
+  doctors,
+  patients,
+  transactionalDeliveries,
   user as identities,
   whatsappBilling,
   whatsappBillingReservations,
@@ -28,7 +40,10 @@ import {
   whatsappCircuitBreakerAudits,
   whatsappCircuitBreakers,
   whatsappConnections,
+  whatsappContactConsents,
+  whatsappIdentities,
   whatsappReadiness,
+  whatsappSmokeRuns,
 } from "../db/schema";
 
 const databaseTest =
@@ -36,10 +51,10 @@ const databaseTest =
 
 describe("circuit breaker de WhatsApp persistente", () => {
   databaseTest(
-    "aísla Clínicas, serializa fallos, persiste métricas idempotentes y exige reactivación sintética",
+    "aísla Clínicas, serializa fallos y reanuda la outbox con evidencia E2E",
     async () => {
       const fixture = await createFixture();
-      const initial = new Date("2026-09-12T12:00:00.000Z");
+      const initial = new Date();
 
       try {
         const failures = await Promise.all(
@@ -64,6 +79,11 @@ describe("circuit breaker de WhatsApp persistente", () => {
         ).resolves.toMatchObject({
           cause: "provider-error",
           failureCount: 3,
+          openedBy: {
+            actorIdentityId: null,
+            actorKind: "worker",
+            displayName: null,
+          },
           status: "open",
         });
         await expect(
@@ -73,6 +93,15 @@ describe("circuit breaker de WhatsApp persistente", () => {
             clinicId: fixture.otherClinicId,
           }),
         ).resolves.toMatchObject({ status: "closed" });
+        const claimsWhilePrimaryCircuitIsOpen =
+          await drizzleTransactionalDeliveryStore.claimReadyDeliveries({
+            now: new Date(initial.valueOf() + 3_000),
+          });
+        const claimsWhileOpenIds = claimsWhilePrimaryCircuitIsOpen.map(
+          ({ id }) => id,
+        );
+        expect(claimsWhileOpenIds).toContain(fixture.otherDeliveryId);
+        expect(claimsWhileOpenIds).not.toContain(fixture.primaryDeliveryId);
 
         await expect(
           inSuperadminTransaction(
@@ -238,18 +267,28 @@ describe("circuit breaker de WhatsApp persistente", () => {
             actorIdentityId: fixture.superadminIdentityId,
             causeFixed: true,
             clinicId: fixture.primaryClinicId,
+            connectionProvider: "simulated",
+            e2eEvidence: {
+              controlledTestContact: false,
+              evidence: "Roundtrip sintético del proveedor simulado",
+              finishedAt: fixture.smokeFinishedAt,
+              id: fixture.smokeRunId,
+              provisioningEventId: null,
+              providerTransportVerified: false,
+              realPatientsEnabled: false,
+              requireRealRoundtrip: false,
+              startedAt: fixture.smokeStartedAt,
+              status: "passed",
+              syntheticContact: true,
+              steps: [],
+            },
             manualConfirmation: true,
-            now: new Date(initial.valueOf() + 4_000),
+            now: new Date(),
             phoneNumberId: currentConnectionEvidence.phoneNumberId,
             projectWebhookId: currentConnectionEvidence.projectWebhookId,
             connectionEvidence: currentConnectionEvidence,
           },
           {
-            provider: {
-              async runSyntheticTest() {
-                return { evidence: "roundtrip sintético OK", passed: true };
-              },
-            },
             store: drizzleWhatsAppCircuitBreakerStore,
           },
         );
@@ -257,6 +296,18 @@ describe("circuit breaker de WhatsApp persistente", () => {
           lastSyntheticTestStatus: "passed",
           status: "closed",
         });
+        const resumedDeliveries =
+          await drizzleTransactionalDeliveryStore.claimReadyDeliveries({
+            now: new Date(),
+          });
+        expect(resumedDeliveries.map(({ id }) => id)).toEqual([
+          fixture.primaryDeliveryId,
+        ]);
+        await expect(
+          drizzleTransactionalDeliveryStore.claimReadyDeliveries({
+            now: new Date(),
+          }),
+        ).resolves.toEqual([]);
 
         const persisted = await inSuperadminTransaction(
           fixture.superadminIdentityId,
@@ -594,7 +645,7 @@ async function createFixture() {
         sql`select set_config('app.subscription_status', 'active', true)`,
       );
       const connectionNow = new Date();
-      const provisioningEventId = randomUUID();
+      const provisioningEventId = null;
       const phoneNumberId = `phone-${clinic.id}`;
       const projectId = `project-${clinic.id}`;
       const projectWebhookId = `project-webhook-${clinic.id}`;
@@ -602,8 +653,8 @@ async function createFixture() {
       await transaction.insert(whatsappConnections).values({
         ...createSimulatedWhatsAppConnection(clinic.id, connectionNow),
         businessAccountId: `business-account-${clinic.id}`,
-        connectionType: "coexistence",
-        customer: `kapso:${clinic.id}`,
+        connectionType: "simulated",
+        customer: `simulated:${clinic.id}`,
         metadata: {
           billingStatus: "ready",
           businessAccountId: `business-account-${clinic.id}`,
@@ -611,13 +662,13 @@ async function createFixture() {
           nextAction: "Conexión lista",
           projectId,
           provisioningEventId,
-          source: "kapso",
+          source: "simulated",
           statusReason: "Fixture de integración listo",
           templatesStatus: "ready",
           webhookStatus: "ready",
         },
         phoneNumberId,
-        provider: "kapso",
+        provider: "simulated",
         status: "ready",
         updatedAt: connectionNow,
       });
@@ -650,13 +701,166 @@ async function createFixture() {
         templatesSyncStatus: "ready",
         updatedAt: connectionNow,
       });
-      await transaction.insert(clinicUsers).values({
+      const smokeRunId = randomUUID();
+      await transaction.insert(whatsappSmokeRuns).values({
+        actorIdentityId: superadminIdentityId,
         clinicId: clinic.id,
-        identityId: ownerIdentityId,
-        role: "owner",
+        evidence: "Roundtrip sintético de integración",
+        finishedAt: connectionNow,
+        id: smokeRunId,
+        provisioningEventId: null,
+        providerTransportVerified: false,
+        realPatientsEnabled: false,
+        requiresRealRoundtrip: false,
+        startedAt: connectionNow,
+        status: "passed",
+        steps: [],
+        syntheticContact: true,
       });
+      const [clinicUser] = await transaction
+        .insert(clinicUsers)
+        .values({
+          clinicId: clinic.id,
+          identityId: ownerIdentityId,
+          role: "owner",
+        })
+        .returning({ id: clinicUsers.id });
+      if (clinicUser === undefined) {
+        throw new Error("No se creó el Usuario de Clínica");
+      }
+      const [doctor] = await transaction
+        .insert(doctors)
+        .values({ clinicId: clinic.id, clinicUserId: clinicUser.id })
+        .returning({ id: doctors.id });
+      const [patient] = await transaction
+        .insert(patients)
+        .values({
+          birthDate: "1980-01-01",
+          clinicId: clinic.id,
+          name: "Paciente sintético",
+        })
+        .returning({ id: patients.id });
+      const [contact] = await transaction
+        .insert(contacts)
+        .values({
+          clinicId: clinic.id,
+          name: "Contacto sintético",
+          phoneE164: "+50370000001",
+        })
+        .returning({ id: contacts.id });
+      if (
+        doctor === undefined ||
+        patient === undefined ||
+        contact === undefined
+      ) {
+        throw new Error("Faltan registros para la Entrega sintética");
+      }
+      const [whatsappIdentity] = await transaction
+        .insert(whatsappIdentities)
+        .values({
+          clinicId: clinic.id,
+          contactId: contact.id,
+          phoneE164: "+50370000001",
+          phoneNumberId,
+          status: "active",
+        })
+        .returning({ id: whatsappIdentities.id });
+      if (whatsappIdentity === undefined) {
+        throw new Error("No se creó la Identidad de WhatsApp sintética");
+      }
+      await transaction.insert(contactPatientLinks).values({
+        clinicId: clinic.id,
+        contactId: contact.id,
+        patientId: patient.id,
+        relationship: "contact",
+      });
+      const terms = await transaction.query.clinicTermsContract.findFirst({
+        columns: { currentVersion: true },
+        where: (table, operators) => operators.eq(table.id, true),
+      });
+      if (terms === undefined) throw new Error("Faltan Términos de Clínica");
+      const consentPolicy = buildWhatsAppConsentPolicy(terms.currentVersion);
+      await transaction.insert(whatsappContactConsents).values([
+        {
+          acceptedAt: connectionNow,
+          acceptedRole: "contact",
+          clinicId: clinic.id,
+          contactId: contact.id,
+          declaration: WHATSAPP_CONSENT_TEXTUAL_RESPONSE,
+          identityId: whatsappIdentity.id,
+          interactionId: `apo-107-channel-${clinic.id}`,
+          patientId: null,
+          phoneE164: "+50370000001",
+          privacyVersion: consentPolicy.privacyVersion,
+          provider: "kapso",
+          scope: "channel",
+          status: "accepted",
+          termsVersion: consentPolicy.termsVersion,
+          textReference: consentPolicy.immutableTextReference,
+        },
+        {
+          acceptedAt: connectionNow,
+          acceptedRole: "adult-patient",
+          clinicId: clinic.id,
+          contactId: contact.id,
+          declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+          identityId: whatsappIdentity.id,
+          interactionId: `apo-107-patient-${clinic.id}`,
+          patientId: patient.id,
+          phoneE164: "+50370000001",
+          privacyVersion: consentPolicy.privacyVersion,
+          provider: "kapso",
+          scope: "patient",
+          status: "accepted",
+          termsVersion: consentPolicy.termsVersion,
+          textReference: consentPolicy.immutableTextReference,
+        },
+      ]);
+      const [appointment] = await transaction
+        .insert(appointments)
+        .values({
+          clinicId: clinic.id,
+          doctorId: doctor.id,
+          endsAt: new Date(connectionNow.valueOf() + 86_400_000 + 30 * 60_000),
+          patientId: patient.id,
+          startsAt: new Date(connectionNow.valueOf() + 86_400_000),
+        })
+        .returning({ id: appointments.id });
+      if (appointment === undefined) {
+        throw new Error("No se creó la Cita de la Entrega sintética");
+      }
+      const [delivery] = await transaction
+        .insert(transactionalDeliveries)
+        .values({
+          appointmentId: appointment.id,
+          clinicId: clinic.id,
+          idempotencyKey: `apo-107-delivery-${clinic.id}`,
+          kind: "appointment-reminder",
+          nextAttemptAt: connectionNow,
+          payload: {
+            appointmentId: appointment.id,
+            checkpoint: "24h",
+            recipient: {
+              id: contact.id,
+              name: "Contacto sintético",
+              phoneE164: "+50370000001",
+            },
+          },
+          recipientContactId: contact.id,
+          retainUntil: new Date(
+            connectionNow.valueOf() + 365 * 24 * 60 * 60_000,
+          ),
+        })
+        .returning({ id: transactionalDeliveries.id });
+      if (delivery === undefined) {
+        throw new Error("No se creó la Entrega sintética");
+      }
       return {
         clinicId: clinic.id,
+        deliveryId: delivery.id,
+        smokeRunId,
+        smokeFinishedAt: connectionNow,
+        smokeStartedAt: connectionNow,
         connectionEvidence: {
           connectionUpdatedAt: connectionNow,
           phoneNumberId,
@@ -676,15 +880,37 @@ async function createFixture() {
   return {
     primaryClinicId: primary.clinicId,
     primaryConnectionEvidence: primary.connectionEvidence,
+    smokeRunId: primary.smokeRunId,
+    smokeFinishedAt: primary.smokeFinishedAt,
+    smokeStartedAt: primary.smokeStartedAt,
+    primaryDeliveryId: primary.deliveryId,
+    otherDeliveryId: other.deliveryId,
     otherClinicId: other.clinicId,
     superadminIdentityId,
     async cleanup() {
       await inSuperadminTransaction(
         superadminIdentityId,
         async (transaction) => {
-          await transaction.execute(
-            sql`select set_config('app.clinic_id', ${primary.clinicId}, true)`,
-          );
+          for (const clinicId of [primary.clinicId, other.clinicId]) {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${clinicId}, true)`,
+            );
+            await transaction
+              .delete(transactionalDeliveries)
+              .where(eq(transactionalDeliveries.clinicId, clinicId));
+            await transaction
+              .delete(appointments)
+              .where(eq(appointments.clinicId, clinicId));
+            await transaction
+              .delete(whatsappContactConsents)
+              .where(eq(whatsappContactConsents.clinicId, clinicId));
+            await transaction
+              .delete(whatsappIdentities)
+              .where(eq(whatsappIdentities.clinicId, clinicId));
+            await transaction
+              .delete(contactPatientLinks)
+              .where(eq(contactPatientLinks.clinicId, clinicId));
+          }
           await transaction
             .delete(clinics)
             .where(inArray(clinics.id, [primary.clinicId, other.clinicId]));

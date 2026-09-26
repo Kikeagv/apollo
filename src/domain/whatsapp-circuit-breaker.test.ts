@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   canReactivateWhatsAppCircuit,
   countWhatsAppQuotaMessages,
+  evaluateWhatsAppCircuitReactivationEvidence,
   evaluateWhatsAppBillingHealth,
   reconcileWhatsAppQuotaConsumption,
   sanitizeWhatsAppOperationalText,
@@ -26,6 +27,7 @@ function closedState(
     lastSyntheticEvidence: null,
     lastSyntheticTestAt: null,
     lastSyntheticTestStatus: null,
+    openedBy: null,
     lastTransitionAt: now,
     nextAction: "La Conexión opera normalmente",
     openedAt: null,
@@ -196,5 +198,90 @@ describe("circuit breaker de WhatsApp", () => {
         syntheticTestPassed: true,
       }),
     ).toBe(true);
+  });
+
+  it("rechaza un preflight que no conserva el roundtrip E2E del proveedor", () => {
+    const result = evaluateWhatsAppCircuitReactivationEvidence({
+      connectionGenerationId: "generation-1",
+      connectionProvider: "kapso",
+      now,
+      smoke: {
+        controlledTestContact: true,
+        evidence: "Kapso confirmó el webhook",
+        finishedAt: now,
+        id: "smoke-1",
+        provisioningEventId: "generation-1",
+        providerTransportVerified: false,
+        realPatientsEnabled: false,
+        requireRealRoundtrip: true,
+        startedAt: now,
+        status: "passed",
+        syntheticContact: false,
+        steps: [],
+      },
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/roundtrip/i);
+  });
+
+  it("solo acepta evidencia E2E reciente de la generación actual", () => {
+    const roundtripSources = [
+      ["real-reception", "provider"],
+      ["real-processing", "application"],
+      ["real-response", "provider"],
+      ["real-delivery", "provider"],
+    ] as const;
+    const smoke = {
+      controlledTestContact: true,
+      evidence: "Roundtrip verificado",
+      finishedAt: now,
+      id: "smoke-1",
+      provisioningEventId: "generation-1",
+      providerTransportVerified: true,
+      realPatientsEnabled: false,
+      requireRealRoundtrip: true,
+      startedAt: new Date(now.valueOf() - 30_000),
+      status: "passed" as const,
+      syntheticContact: false,
+      steps: roundtripSources.map(([code, source]) => ({
+        code,
+        evidence: `evidence:${code}`,
+        eventId: `event:${code}`,
+        message: null,
+        observedAt: now,
+        passed: true,
+        source,
+        status: "passed" as const,
+      })),
+    };
+
+    expect(
+      evaluateWhatsAppCircuitReactivationEvidence({
+        connectionGenerationId: "generation-1",
+        connectionProvider: "kapso",
+        now,
+        smoke,
+      }).valid,
+    ).toBe(true);
+    const differentGeneration = evaluateWhatsAppCircuitReactivationEvidence({
+      connectionGenerationId: "generation-2",
+      connectionProvider: "kapso",
+      now,
+      smoke,
+    });
+    expect(differentGeneration.valid).toBe(false);
+    expect(differentGeneration.reason).toMatch(/generación/i);
+    const expired = evaluateWhatsAppCircuitReactivationEvidence({
+      connectionGenerationId: "generation-1",
+      connectionProvider: "kapso",
+      now,
+      smoke: {
+        ...smoke,
+        finishedAt: new Date(now.valueOf() - 5 * 60_000 - 1),
+      },
+    });
+    expect(expired.valid).toBe(false);
+    expect(expired.reason).toMatch(/expiró/i);
   });
 });

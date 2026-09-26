@@ -1,3 +1,9 @@
+import type {
+  WhatsAppSyntheticSmokeResult,
+  WhatsAppSyntheticSmokeStep,
+} from "./whatsapp-smoke";
+import type { WhatsAppProviderId } from "./whatsapp-runtime";
+
 export const whatsappCircuitBreakerCauses = [
   "webhook-paused",
   "high-failure-rate",
@@ -26,6 +32,11 @@ export type WhatsAppCircuitBreakerState = {
   lastSyntheticEvidence: string | null;
   lastSyntheticTestAt: Date | null;
   lastSyntheticTestStatus: "passed" | "failed" | null;
+  openedBy: {
+    actorIdentityId: string | null;
+    actorKind: "superadmin" | "system" | "worker";
+    displayName: string | null;
+  } | null;
   lastTransitionAt: Date;
   nextAction: string;
   openedAt: Date | null;
@@ -217,6 +228,119 @@ export function canReactivateWhatsAppCircuit(input: {
   );
 }
 
+export type WhatsAppCircuitReactivationSmoke = Pick<
+  WhatsAppSyntheticSmokeResult,
+  | "controlledTestContact"
+  | "evidence"
+  | "providerTransportVerified"
+  | "realPatientsEnabled"
+  | "requireRealRoundtrip"
+  | "status"
+  | "steps"
+  | "syntheticContact"
+> & {
+  finishedAt: Date | null;
+  id: string;
+  provisioningEventId: string | null;
+  startedAt: Date;
+};
+
+export const whatsappCircuitReactivationEvidenceMaxAgeMs = 5 * 60_000;
+
+/** Solo acepta el smoke completo, vigente y ligado a la generación actual. */
+export function evaluateWhatsAppCircuitReactivationEvidence(input: {
+  connectionGenerationId: string | null;
+  connectionProvider: WhatsAppProviderId;
+  now: Date;
+  smoke: WhatsAppCircuitReactivationSmoke | null;
+}): { reason: string; valid: boolean } {
+  const smoke = input.smoke;
+  if (smoke?.status !== "passed" || smoke.finishedAt === null) {
+    return {
+      reason:
+        "Ejecute y complete una prueba E2E antes de reactivar la Conexión",
+      valid: false,
+    };
+  }
+  if (sanitizeWhatsAppOperationalText(smoke.evidence ?? "") === "") {
+    return {
+      reason: "La prueba E2E aprobada no conserva evidencia verificable",
+      valid: false,
+    };
+  }
+  if (smoke.realPatientsEnabled) {
+    return {
+      reason: "La prueba E2E no puede habilitar Pacientes reales",
+      valid: false,
+    };
+  }
+  const evidenceAge = input.now.valueOf() - smoke.finishedAt.valueOf();
+  if (
+    evidenceAge < 0 ||
+    evidenceAge > whatsappCircuitReactivationEvidenceMaxAgeMs ||
+    smoke.finishedAt.valueOf() < smoke.startedAt.valueOf()
+  ) {
+    return {
+      reason: "La evidencia E2E expiró; ejecute una prueba nueva",
+      valid: false,
+    };
+  }
+  if (
+    input.connectionGenerationId !== smoke.provisioningEventId ||
+    (input.connectionProvider === "kapso" &&
+      input.connectionGenerationId === null)
+  ) {
+    return {
+      reason:
+        "La prueba E2E no corresponde a la generación actual de la Conexión",
+      valid: false,
+    };
+  }
+  if (input.connectionProvider === "kapso") {
+    if (
+      smoke.requireRealRoundtrip !== true ||
+      smoke.controlledTestContact !== true ||
+      smoke.syntheticContact ||
+      smoke.providerTransportVerified !== true ||
+      !hasVerifiedCircuitReactivationRoundtrip(smoke.steps)
+    ) {
+      return {
+        reason:
+          "La prueba E2E no conserva el roundtrip real verificado del proveedor",
+        valid: false,
+      };
+    }
+  } else if (!smoke.syntheticContact) {
+    return {
+      reason: "La prueba E2E requiere un Contacto sintético",
+      valid: false,
+    };
+  }
+  return { reason: "Evidencia E2E vigente y válida", valid: true };
+}
+
+function hasVerifiedCircuitReactivationRoundtrip(
+  steps: WhatsAppSyntheticSmokeStep[],
+) {
+  const roundtripSources = {
+    "real-reception": "provider",
+    "real-processing": "application",
+    "real-response": "provider",
+    "real-delivery": "provider",
+  } as const;
+  return Object.entries(roundtripSources).every(([code, source]) => {
+    const step = steps.find((candidate) => candidate.code === code);
+    return (
+      step?.status === "passed" &&
+      step.passed &&
+      step.source === source &&
+      step.evidence !== null &&
+      step.eventId !== null &&
+      step.observedAt !== null
+    );
+  });
+}
+
 export function defaultWhatsAppCircuitBreakerState(
   clinicId: string,
   now = new Date(),
@@ -232,6 +356,7 @@ export function defaultWhatsAppCircuitBreakerState(
     lastSyntheticEvidence: null,
     lastSyntheticTestAt: null,
     lastSyntheticTestStatus: null,
+    openedBy: null,
     lastTransitionAt: now,
     nextAction: "La Conexión opera normalmente",
     openedAt: null,

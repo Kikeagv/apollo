@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   defaultWhatsAppCircuitBreakerState,
   type WhatsAppCircuitBreakerState,
+  type WhatsAppCircuitReactivationSmoke,
 } from "~/domain/whatsapp-circuit-breaker";
 
 import {
@@ -14,6 +15,41 @@ import {
 } from "./whatsapp-circuit-breaker";
 
 const now = new Date("2026-09-12T12:00:00.000Z");
+
+function validKapsoSmokeEvidence(
+  overrides: Partial<WhatsAppCircuitReactivationSmoke> = {},
+): WhatsAppCircuitReactivationSmoke {
+  const roundtripCodes = [
+    ["real-reception", "provider"],
+    ["real-processing", "application"],
+    ["real-response", "provider"],
+    ["real-delivery", "provider"],
+  ] as const;
+  return {
+    controlledTestContact: true,
+    evidence: "Roundtrip de Kapso verificado",
+    finishedAt: now,
+    id: "smoke-run-1",
+    provisioningEventId: "generation-1",
+    providerTransportVerified: true,
+    realPatientsEnabled: false,
+    requireRealRoundtrip: true,
+    startedAt: new Date(now.valueOf() - 30_000),
+    status: "passed",
+    syntheticContact: false,
+    steps: roundtripCodes.map(([code, source]) => ({
+      code,
+      evidence: `evidence:${code}`,
+      eventId: `event:${code}`,
+      message: null,
+      observedAt: now,
+      passed: true,
+      source,
+      status: "passed" as const,
+    })),
+    ...overrides,
+  };
+}
 
 function fakeStore() {
   const states = new Map<string, WhatsAppCircuitBreakerState>();
@@ -74,6 +110,7 @@ function fakeStore() {
         lastSyntheticTestStatus: input.passed
           ? ("passed" as const)
           : ("failed" as const),
+        revision: current.revision + 1,
       };
       states.set(input.clinicId, next);
       return next;
@@ -174,7 +211,7 @@ describe("operar el circuit breaker de WhatsApp", () => {
     expect(fake.reads).toEqual(["clinic-1", "clinic-2"]);
   });
 
-  it("no reactiva sin confirmar la causa y ejecuta la prueba sintética antes de cerrar", async () => {
+  it("no reactiva sin confirmar la causa y exige el roundtrip antes de cerrar", async () => {
     const fake = fakeStore();
     await openWhatsAppCircuitBreaker(
       {
@@ -186,17 +223,14 @@ describe("operar el circuit breaker de WhatsApp", () => {
       },
       fake.store,
     );
-    const runSyntheticTest = vi.fn().mockResolvedValue({
-      evidence: "roundtrip sintético OK",
-      passed: true,
-    });
-
     await expect(
       reactivateWhatsAppCircuitBreaker(
         {
           actorIdentityId: "superadmin-1",
           causeFixed: false,
           clinicId: "clinic-1",
+          connectionProvider: "simulated",
+          e2eEvidence: null,
           manualConfirmation: true,
           now,
           phoneNumberId: "phone-1",
@@ -207,19 +241,30 @@ describe("operar el circuit breaker de WhatsApp", () => {
             readinessRevision: 0,
           },
         },
-        {
-          provider: { runSyntheticTest },
-          store: fake.store,
-        },
+        { store: fake.store },
       ),
     ).rejects.toThrow("causa");
-    expect(runSyntheticTest).not.toHaveBeenCalled();
 
     const result = await reactivateWhatsAppCircuitBreaker(
       {
         actorIdentityId: "superadmin-1",
         causeFixed: true,
         clinicId: "clinic-1",
+        connectionProvider: "simulated",
+        e2eEvidence: {
+          controlledTestContact: false,
+          evidence: "Roundtrip sintético OK",
+          finishedAt: now,
+          id: "smoke-run-1",
+          provisioningEventId: null,
+          providerTransportVerified: false,
+          realPatientsEnabled: false,
+          requireRealRoundtrip: false,
+          startedAt: now,
+          status: "passed",
+          syntheticContact: true,
+          steps: [],
+        },
         manualConfirmation: true,
         now,
         phoneNumberId: "phone-1",
@@ -230,18 +275,88 @@ describe("operar el circuit breaker de WhatsApp", () => {
           readinessRevision: 0,
         },
       },
-      {
-        provider: { runSyntheticTest },
-        store: fake.store,
-      },
+      { store: fake.store },
     );
 
-    expect(runSyntheticTest).toHaveBeenCalledWith({
-      clinicId: "clinic-1",
-      phoneNumberId: "phone-1",
-      projectWebhookId: "webhook-1",
-    });
     expect(result.status).toBe("closed");
     expect(result.lastSyntheticTestStatus).toBe("passed");
+  });
+
+  it("conserva el circuito abierto cuando la prueba aprobada no trae evidencia", async () => {
+    const fake = fakeStore();
+    await openWhatsAppCircuitBreaker(
+      {
+        actorIdentityId: "superadmin-1",
+        cause: "provider-error",
+        clinicId: "clinic-1",
+        now,
+        reason: "Kapso respondió 503",
+      },
+      fake.store,
+    );
+
+    await expect(
+      reactivateWhatsAppCircuitBreaker(
+        {
+          actorIdentityId: "superadmin-1",
+          causeFixed: true,
+          clinicId: "clinic-1",
+          connectionProvider: "kapso",
+          e2eEvidence: validKapsoSmokeEvidence({ evidence: "   " }),
+          manualConfirmation: true,
+          now,
+          phoneNumberId: "phone-1",
+          projectWebhookId: "webhook-1",
+          connectionEvidence: {
+            connectionUpdatedAt: now,
+            provisioningEventId: "generation-1",
+            readinessRevision: 1,
+          },
+        },
+        { store: fake.store },
+      ),
+    ).rejects.toThrow(/evidencia/i);
+
+    expect(fake.states.get("clinic-1")?.status).toBe("open");
+    expect(fake.states.get("clinic-1")?.lastSyntheticTestStatus).toBe("failed");
+  });
+
+  it("reactiva con un roundtrip persistido y no vuelve a ejecutar solo el preflight", async () => {
+    const fake = fakeStore();
+    await openWhatsAppCircuitBreaker(
+      {
+        actorIdentityId: "superadmin-1",
+        cause: "provider-error",
+        clinicId: "clinic-1",
+        now,
+        reason: "Kapso respondió 503",
+      },
+      fake.store,
+    );
+    const e2eEvidence = validKapsoSmokeEvidence();
+
+    const result = await reactivateWhatsAppCircuitBreaker(
+      {
+        actorIdentityId: "superadmin-1",
+        causeFixed: true,
+        clinicId: "clinic-1",
+        connectionEvidence: {
+          connectionUpdatedAt: now,
+          provisioningEventId: "generation-1",
+          readinessRevision: 1,
+        },
+        connectionProvider: "kapso",
+        e2eEvidence,
+        manualConfirmation: true,
+        now,
+        phoneNumberId: "phone-1",
+        projectWebhookId: "webhook-1",
+      },
+      { store: fake.store },
+    );
+
+    expect(result.status).toBe("closed");
+    expect(result.lastSyntheticTestStatus).toBe("passed");
+    expect(result.lastSyntheticEvidence).toContain("Roundtrip de Kapso");
   });
 });

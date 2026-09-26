@@ -592,10 +592,16 @@ export const apoloRouter = {
         latestReadiness.provisioningEventId ??
         latestConnection.metadata.provisioningEventId ??
         null;
+      const operations = await drizzleWhatsAppOperationsStore.read({
+        actorIdentityId,
+        clinicId: input.clinicId,
+      });
       return reactivateWhatsAppCircuitBreaker(
         {
           ...input,
           actorIdentityId,
+          connectionProvider: latestConnection.provider,
+          e2eEvidence: operations.latestSmoke,
           now: new Date(),
           phoneNumberId: latestConnection.phoneNumberId,
           projectWebhookId: latestReadiness.projectWebhook.remoteId,
@@ -605,31 +611,7 @@ export const apoloRouter = {
             readinessRevision: latestReadiness.revision ?? 0,
           },
         },
-        {
-          provider: {
-            runSyntheticTest: async (testInput) => {
-              try {
-                const evidence = await kapsoReadinessProvider.runE2ETest({
-                  phoneNumberId: testInput.phoneNumberId,
-                  projectWebhookId: testInput.projectWebhookId,
-                });
-                return {
-                  evidence: evidence.evidence,
-                  passed: evidence.evidenceScope === "message-roundtrip",
-                };
-              } catch (error) {
-                return {
-                  evidence:
-                    error instanceof Error
-                      ? error.message
-                      : "Prueba sintética fallida",
-                  passed: false,
-                };
-              }
-            },
-          },
-          store: drizzleWhatsAppCircuitBreakerStore,
-        },
+        { store: drizzleWhatsAppCircuitBreakerStore },
       );
     }),
 
