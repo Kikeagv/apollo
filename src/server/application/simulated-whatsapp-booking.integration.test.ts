@@ -4,6 +4,10 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
+  appointmentEventTypes,
+  appointmentOutboundEventTypes,
+} from "~/domain/appointment-events";
+import {
   buildWhatsAppConsentPolicy,
   WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
   WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
@@ -46,6 +50,7 @@ import {
   inSimulatedWhatsAppClinicTransaction,
   inSuperadminTransaction,
   inWhatsAppInboundWorkerTransaction,
+  inWhatsAppOutboundWorkerTransaction,
 } from "../db/clinic-context";
 import {
   drizzleAppointmentSelfManagementStore,
@@ -312,6 +317,65 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             expect(
               events.every((event) => !event.reason?.includes("wamid")),
             ).toBe(true);
+          },
+        );
+        const rlsContractReason = "APO-105 RLS contract";
+        await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+          await transaction.insert(appointmentEvents).values(
+            appointmentOutboundEventTypes.map((type) => ({
+              appointmentId,
+              actorContactId: fixture.contactId,
+              clinicId: fixture.clinicId,
+              occurredAt: now,
+              reason: rlsContractReason,
+              type,
+            })),
+          );
+        });
+        const outboundTypeSet = new Set<string>(appointmentOutboundEventTypes);
+        const nonOutboundEventTypes = appointmentEventTypes.filter(
+          (type) => !outboundTypeSet.has(type),
+        );
+        for (const type of nonOutboundEventTypes) {
+          let rejectedEventInsert: unknown;
+          try {
+            await inWhatsAppOutboundWorkerTransaction(async (transaction) =>
+              transaction.insert(appointmentEvents).values({
+                appointmentId,
+                actorContactId: fixture.contactId,
+                clinicId: fixture.clinicId,
+                occurredAt: now,
+                reason: rlsContractReason,
+                type,
+              }),
+            );
+          } catch (error) {
+            rejectedEventInsert = error;
+          }
+          const rejectedError = rejectedEventInsert as
+            (Error & { cause?: Error }) | undefined;
+          expect(
+            `${rejectedError?.message ?? ""} ${rejectedError?.cause?.message ?? ""}`,
+          ).toMatch(/row-level security/i);
+        }
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const events = await transaction
+              .select({ type: appointmentEvents.type })
+              .from(appointmentEvents)
+              .where(
+                and(
+                  eq(appointmentEvents.appointmentId, appointmentId),
+                  eq(appointmentEvents.reason, rlsContractReason),
+                ),
+              );
+            expect(events.map(({ type }) => type).sort()).toEqual(
+              [...appointmentOutboundEventTypes].sort(),
+            );
           },
         );
       } finally {

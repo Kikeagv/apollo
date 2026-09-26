@@ -1,42 +1,13 @@
 import type { WhatsAppProvider } from "./whatsapp-provider";
 import type { WhatsAppSendResult } from "./whatsapp-provider";
 import type { TransactionalWhatsAppRoute } from "~/domain/whatsapp-delivery";
+import type { AppointmentEventType } from "~/domain/appointment-events";
 
 export type ManualAppointment = {
   id: string;
   startsAt: Date;
   transactionalMessage?: ManualAppointmentNotification;
 };
-
-/** Vocabulario compartido por el historial de Citas y sus consumidores. */
-export const appointmentEventTypes = [
-  "manual-created",
-  "cancelled",
-  "manual-confirmation-sent",
-  "manual-confirmation-failed",
-  "manual-cancellation-sent",
-  "manual-cancellation-failed",
-  "appointment-delivery-status",
-  "appointment-reschedule-sent",
-  "appointment-reschedule-failed",
-  "appointment-confirmation-sent",
-  "appointment-confirmation-failed",
-  "appointment-cancellation-sent",
-  "appointment-cancellation-failed",
-  "reservation-confirmed",
-  "rescheduled",
-  "self-management-escalated",
-  "self-management-resolved",
-  "reminder-claimed",
-  "reminder-sent",
-  "reminder-failed",
-  "reminder-delivered",
-  "reminder-delivery-failed",
-  "no-show-alerted",
-  "no-show-auto-cancelled",
-] as const;
-
-export type AppointmentEventType = (typeof appointmentEventTypes)[number];
 
 export type ManualAppointmentFormData = {
   offers: {

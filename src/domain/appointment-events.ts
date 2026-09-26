@@ -1,0 +1,45 @@
+export const appointmentEventTypes = [
+  "manual-created",
+  "cancelled",
+  "manual-confirmation-sent",
+  "manual-confirmation-failed",
+  "manual-cancellation-sent",
+  "manual-cancellation-failed",
+  "appointment-delivery-status",
+  "appointment-reschedule-sent",
+  "appointment-reschedule-failed",
+  "appointment-confirmation-sent",
+  "appointment-confirmation-failed",
+  "appointment-cancellation-sent",
+  "appointment-cancellation-failed",
+  "reservation-confirmed",
+  "rescheduled",
+  "self-management-escalated",
+  "self-management-resolved",
+  "reminder-claimed",
+  "reminder-sent",
+  "reminder-failed",
+  "reminder-delivered",
+  "reminder-delivery-failed",
+  "no-show-alerted",
+  "no-show-auto-cancelled",
+] as const;
+
+export type AppointmentEventType = (typeof appointmentEventTypes)[number];
+
+/** Tipos de Evento que el worker saliente puede anexar mediante RLS. */
+export const appointmentOutboundEventTypes = [
+  "appointment-cancellation-failed",
+  "appointment-cancellation-sent",
+  "appointment-confirmation-failed",
+  "appointment-confirmation-sent",
+  "appointment-delivery-status",
+  "appointment-reschedule-failed",
+  "appointment-reschedule-sent",
+  "manual-confirmation-failed",
+  "manual-confirmation-sent",
+  "manual-cancellation-failed",
+  "manual-cancellation-sent",
+  "reminder-delivery-failed",
+  "reminder-sent",
+] as const satisfies readonly AppointmentEventType[];

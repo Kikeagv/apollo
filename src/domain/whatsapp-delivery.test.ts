@@ -6,11 +6,23 @@ import {
   formatTransactionalAppointmentText,
   reconcileWhatsAppDeliveryStatus,
   retryAtFromKapsoHeaders,
+  whatsappDeliveryStatuses,
+  whatsAppDeliveryStatusLabel,
 } from "./whatsapp-delivery";
 
 const now = new Date("2026-09-09T12:00:00.000Z");
 
 describe("decisión de Entrega transaccional de WhatsApp", () => {
+  it("traduce los estados de Entrega en una etiqueta canónica", () => {
+    expect(whatsappDeliveryStatuses.map(whatsAppDeliveryStatusLabel)).toEqual([
+      "aceptado",
+      "enviado",
+      "entregado",
+      "leído",
+      "fallido",
+    ]);
+  });
+
   it("congela fecha y hora administrativas con el locale de la Clínica", () => {
     expect(
       buildTransactionalTemplateParameters(["clinic_name", "date", "time"], {

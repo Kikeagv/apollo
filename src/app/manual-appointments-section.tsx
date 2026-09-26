@@ -67,7 +67,6 @@ import {
 } from "~/components/ui/sheet";
 import type {
   AgendaAppointment,
-  AppointmentEventType,
   CalendarBlock,
   CalendarEntry,
 } from "~/server/application/manual-appointments";
@@ -75,6 +74,7 @@ import type { ContactPhoneMatch } from "~/server/application/administrative-reco
 import { joinPatientName } from "~/lib/patient-identity";
 import { api } from "~/trpc/react";
 import { AvailabilityBlockDialog } from "./availability-block-dialog";
+import { appointmentEventLabel } from "./appointment-event-presentation";
 import { formValue } from "./form-values";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 import { RecordField } from "./record-field";
@@ -1728,45 +1728,6 @@ function AppointmentDetail({
       </AlertDialog>
     </aside>
   );
-}
-
-function appointmentEventLabel(type: AppointmentEventType) {
-  switch (type) {
-    case "manual-created":
-      return "Cita manual creada";
-    case "cancelled":
-      return "Cita cancelada";
-    case "reservation-confirmed":
-      return "Reserva confirmada";
-    case "rescheduled":
-      return "Cita reprogramada automáticamente";
-    case "self-management-escalated":
-      return "Solicitud de autogestión escalada a una persona";
-    case "self-management-resolved":
-      return "Solicitud de autogestión resuelta por una persona";
-    case "manual-confirmation-sent":
-      return "Confirmación por WhatsApp enviada";
-    case "manual-confirmation-failed":
-      return "No se pudo enviar la confirmación por WhatsApp";
-    case "manual-cancellation-sent":
-      return "Aviso de cancelación por WhatsApp enviado";
-    case "manual-cancellation-failed":
-      return "No se pudo enviar el aviso de cancelación por WhatsApp";
-    case "appointment-delivery-status":
-      return "Estado de entrega por WhatsApp";
-    case "appointment-reschedule-sent":
-      return "Aviso de reprogramación por WhatsApp enviado";
-    case "appointment-reschedule-failed":
-      return "No se pudo enviar el aviso de reprogramación por WhatsApp";
-    case "appointment-confirmation-sent":
-      return "Confirmación por WhatsApp enviada";
-    case "appointment-confirmation-failed":
-      return "No se pudo enviar la confirmación por WhatsApp";
-    case "appointment-cancellation-sent":
-      return "Aviso de cancelación por WhatsApp enviado";
-    case "appointment-cancellation-failed":
-      return "No se pudo enviar el aviso de cancelación por WhatsApp";
-  }
 }
 
 function Detail({ label, value }: { label: string; value: string }) {

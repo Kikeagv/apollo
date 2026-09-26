@@ -17,7 +17,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { AppointmentEventType } from "~/server/application/manual-appointments";
+import type { AppointmentEventType } from "~/domain/appointment-events";
 import type { ConversationEscalationTrigger } from "~/server/application/conversation-escalations";
 import type {
   BookingConversation,

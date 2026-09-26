@@ -10,6 +10,18 @@ export const whatsappDeliveryStatuses = [
 
 export type WhatsAppDeliveryStatus = (typeof whatsappDeliveryStatuses)[number];
 
+const whatsAppDeliveryStatusLabels: Record<WhatsAppDeliveryStatus, string> = {
+  accepted: "aceptado",
+  delivered: "entregado",
+  failed: "fallido",
+  read: "leído",
+  sent: "enviado",
+};
+
+export function whatsAppDeliveryStatusLabel(status: WhatsAppDeliveryStatus) {
+  return whatsAppDeliveryStatusLabels[status];
+}
+
 export type TransactionalWhatsAppRoute =
   | { kind: "text"; text: string }
   | { buttonLabel: string; kind: "interactive"; text: string }

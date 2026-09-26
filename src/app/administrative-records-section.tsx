@@ -49,11 +49,11 @@ import type {
   PatientDirectoryEntry,
   PatientSearchTarget,
 } from "~/server/application/administrative-records";
-import type { AppointmentEventType } from "~/server/application/manual-appointments";
-import type { WhatsAppDeliveryStatus } from "~/domain/whatsapp-delivery";
+import { whatsAppDeliveryStatusLabel } from "~/domain/whatsapp-delivery";
 import { joinPatientName } from "~/lib/patient-identity";
 import { api } from "~/trpc/react";
 import { formValue } from "./form-values";
+import { appointmentEventLabel } from "./appointment-event-presentation";
 import { PanaceaQueryError, PanaceaQueryLoading } from "./panacea-query-state";
 import { RecordField } from "./record-field";
 
@@ -1267,36 +1267,6 @@ function formatClinicDateTime(value: Date | string) {
   }).format(new Date(value));
 }
 
-function appointmentEventLabel(type: AppointmentEventType) {
-  const labels: Record<AppointmentEventType, string> = {
-    cancelled: "Cita cancelada",
-    "manual-cancellation-failed": "Falló la notificación de cancelación",
-    "manual-cancellation-sent": "Cancelación notificada",
-    "manual-confirmation-failed": "Falló la notificación de confirmación",
-    "manual-confirmation-sent": "Confirmación notificada",
-    "appointment-delivery-status": "Estado de entrega por WhatsApp",
-    "appointment-reschedule-failed": "Falló la notificación de reprogramación",
-    "appointment-reschedule-sent": "Reprogramación notificada",
-    "appointment-confirmation-failed": "Falló la notificación de confirmación",
-    "appointment-confirmation-sent": "Confirmación notificada",
-    "appointment-cancellation-failed": "Falló la notificación de cancelación",
-    "appointment-cancellation-sent": "Cancelación notificada",
-    "manual-created": "Cita manual creada",
-    "no-show-alerted": "Inasistencia alertada",
-    "no-show-auto-cancelled": "Cita cancelada automáticamente",
-    "reminder-delivered": "Recordatorio entregado",
-    "reminder-delivery-failed": "Falló la entrega del recordatorio",
-    "reminder-failed": "Falló el recordatorio",
-    "reminder-sent": "Recordatorio enviado",
-    "reservation-confirmed": "Reserva confirmada",
-    "reminder-claimed": "Recordatorio tomado",
-    rescheduled: "Cita reprogramada",
-    "self-management-escalated": "Escalada a atención humana",
-    "self-management-resolved": "Solicitud de autogestión resuelta",
-  };
-  return labels[type] ?? "Evento administrativo";
-}
-
 function appointmentDeliveryTypeLabel(
   type: PatientAppointmentDeliveryStatus["type"],
 ) {
@@ -1312,15 +1282,4 @@ function appointmentDeliveryTypeLabel(
     case "reminder":
       return "recordatorio";
   }
-}
-
-function whatsAppDeliveryStatusLabel(status: WhatsAppDeliveryStatus) {
-  const labels: Record<WhatsAppDeliveryStatus, string> = {
-    accepted: "aceptado",
-    delivered: "entregado",
-    failed: "fallido",
-    read: "leído",
-    sent: "enviado",
-  };
-  return labels[status];
 }

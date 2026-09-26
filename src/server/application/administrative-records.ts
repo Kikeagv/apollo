@@ -1,6 +1,6 @@
-import type { AppointmentEventType } from "./manual-appointments";
 import type { AppointmentTransactionalMessageType } from "./manual-appointments";
 import type { WhatsAppDeliveryStatus } from "~/domain/whatsapp-delivery";
+import type { AppointmentEventType } from "~/domain/appointment-events";
 
 const MAX_RECORD_NAME_LENGTH = 120;
 

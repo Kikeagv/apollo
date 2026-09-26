@@ -33,6 +33,7 @@ import {
   buildTransactionalTemplateParameters,
   formatTransactionalAppointmentText,
   reconcileWhatsAppDeliveryStatus,
+  whatsAppDeliveryStatusLabel,
   type TransactionalWhatsAppRoute,
   type TransactionalWhatsAppTemplate,
   type WhatsAppDeliveryStatus,
@@ -1597,16 +1598,7 @@ async function recordAppointmentDeliveryEvent(
             source.payload.type === "cancellation"
           ? "Cancelación"
           : "Reprogramación";
-  const statusLabel =
-    status === "accepted"
-      ? "aceptado"
-      : status === "sent"
-        ? "enviado"
-        : status === "delivered"
-          ? "entregado"
-          : status === "read"
-            ? "leído"
-            : "fallido";
+  const statusLabel = whatsAppDeliveryStatusLabel(status);
   await transaction.insert(appointmentEvents).values({
     actorClinicUserId: owner.id,
     appointmentId: source.payload.appointmentId,
