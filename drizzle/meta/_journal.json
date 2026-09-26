@@ -799,6 +799,13 @@
       "when": 1790380800000,
       "tag": "0118_apo106_real_whatsapp_smoke_roundtrip",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1790462876644,
+      "tag": "0119_apo108_controlled_whatsapp_offboarding",
+      "breakpoints": true
     }
   ]
 }

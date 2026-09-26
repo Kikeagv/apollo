@@ -731,6 +731,8 @@ export const whatsappOffboardingRuns = createTable(
     configurationExport: jsonb("configuration_export")
       .$type<Record<string, unknown>>()
       .notNull(),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -753,6 +755,10 @@ export const whatsappOffboardingRuns = createTable(
     check(
       "whatsapp_offboarding_run_completion",
       sql`${table.status} = 'running' OR ${table.completedAt} IS NOT NULL`,
+    ),
+    check(
+      "whatsapp_offboarding_run_lease",
+      sql`(${table.status} = 'running' AND ${table.leaseToken} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL) OR (${table.status} <> 'running' AND ${table.leaseToken} IS NULL AND ${table.leaseExpiresAt} IS NULL)`,
     ),
   ],
 );

@@ -103,6 +103,10 @@ function makeStore(initial = makeSnapshot()) {
     string,
     "completed" | "failed" | "running"
   >();
+  const offboardingLeaseByRunId = new Map<
+    string,
+    { expiresAt: Date; token: string }
+  >();
   const store: WhatsAppOperationsStore = {
     async read() {
       return snapshot;
@@ -190,33 +194,54 @@ function makeStore(initial = makeSnapshot()) {
         );
       }
       const runId = existingRunIdForGeneration ?? input.runId;
-      const previous = offboardingGenerationByRunId.has(runId)
-        ? (snapshot.offboarding?.steps ?? [])
-        : snapshot.offboarding?.provisioningEventId === currentGeneration
+      const previous =
+        offboardingSteps.get(runId) ??
+        (snapshot.offboarding?.provisioningEventId === currentGeneration
           ? (snapshot.offboarding?.steps ?? [])
-          : [];
-      const alreadyRunning = offboardingStatusByRunId.get(runId) === "running";
+          : []);
+      const alreadyCompleted =
+        offboardingStatusByRunId.get(runId) === "completed";
+      const currentLease = offboardingLeaseByRunId.get(runId);
+      const alreadyRunning =
+        offboardingStatusByRunId.get(runId) === "running" &&
+        currentLease !== undefined &&
+        currentLease.expiresAt > input.now;
       const alreadyDisconnected =
         snapshot.connection?.status === "disconnected";
       const alreadyTrafficOff = snapshot.trafficStatus === "offboarded";
-      snapshot = {
-        ...snapshot,
-        trafficStatus: "offboarded",
-        connection: snapshot.connection && {
-          ...snapshot.connection,
-          status: "disconnected",
-          updatedAt: input.now,
-        },
-        setupLinks: [],
-      };
+      if (!alreadyRunning && !alreadyCompleted) {
+        offboardingLeaseByRunId.set(runId, {
+          expiresAt: new Date(input.now.valueOf() + 120_000),
+          token: input.leaseToken,
+        });
+        offboardingStatusByRunId.set(runId, "running");
+      }
+      if (!offboardingGenerationByRunId.has(runId)) {
+        offboardingSteps.set(runId, []);
+      }
+      if (!alreadyCompleted) {
+        snapshot = {
+          ...snapshot,
+          trafficStatus: "offboarded",
+          connection: snapshot.connection && {
+            ...snapshot.connection,
+            status: "disconnected",
+            updatedAt: input.now,
+          },
+          setupLinks: [],
+        };
+      }
       offboardingGenerationByRunId.set(runId, currentGeneration);
       offboardingRunIdByGeneration.set(generationKey, runId);
-      offboardingStatusByRunId.set(runId, "running");
-      offboardingSteps.set(runId, []);
       return {
+        alreadyCompleted,
         alreadyRunning,
         alreadyDisconnected,
         alreadyTrafficOff,
+        cancelledPendingDeliveries: 0,
+        leaseToken: alreadyRunning
+          ? (currentLease?.token ?? input.leaseToken)
+          : input.leaseToken,
         phoneNumberId: initial.connection?.phoneNumberId ?? null,
         phoneNumberWebhookId: initial.connection?.phoneNumberWebhookId ?? null,
         previousSteps: previous,
@@ -234,13 +259,27 @@ function makeStore(initial = makeSnapshot()) {
       const steps = offboardingSteps.get(input.runId) ?? [];
       steps.push(input.step);
       offboardingSteps.set(input.runId, steps);
+      offboardingLeaseByRunId.set(input.runId, {
+        expiresAt: new Date(input.now.valueOf() + 120_000),
+        token: input.leaseToken,
+      });
     },
     async markSetupLinkRevoked(input) {
-      void input;
+      offboardingLeaseByRunId.set(input.runId, {
+        expiresAt: new Date(input.now.valueOf() + 120_000),
+        token: input.leaseToken,
+      });
+      snapshot = {
+        ...snapshot,
+        setupLinks: snapshot.setupLinks.filter(
+          (link) => link.id !== input.setupLinkId,
+        ),
+      };
     },
     async finishOffboarding(input) {
       const steps = offboardingSteps.get(input.runId) ?? [];
       offboardingStatusByRunId.set(input.runId, input.status);
+      offboardingLeaseByRunId.delete(input.runId);
       snapshot = {
         ...snapshot,
         offboarding: {
@@ -677,6 +716,7 @@ describe("operaciones finales de WhatsApp", () => {
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
+        manualConfirmation: true,
         now,
       },
       dependencies,
@@ -686,6 +726,7 @@ describe("operaciones finales de WhatsApp", () => {
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
+        manualConfirmation: true,
         now,
       },
       dependencies,
@@ -706,50 +747,69 @@ describe("operaciones finales de WhatsApp", () => {
     expect(first.assetsPreserved).toBe(true);
   });
 
-  it("rechaza un segundo offboarding mientras la generación sigue en curso", async () => {
+  it("no repite pasos completados al reanudar un offboarding interrumpido", async () => {
     const { store } = makeStore();
-    let releaseFirstWebhook!: () => void;
-    const firstWebhook = new Promise<{ evidence: string }>((resolve) => {
-      releaseFirstWebhook = () =>
-        resolve({ evidence: "Kapso webhook active=false" });
+    const startOffboarding = store.startOffboarding.bind(store);
+    store.startOffboarding = async (input) => ({
+      ...(await startOffboarding(input)),
+      alreadyRunning: false,
+      alreadyCompleted: false,
+      cancelledPendingDeliveries: 2,
+      previousSteps: [
+        {
+          code: "stop-sends",
+          effect: "changed",
+          evidence: "Conexión desconectada; 2 Entregas pendientes canceladas",
+          message: "Envíos detenidos; 2 Entregas pendientes canceladas",
+          status: "succeeded",
+        },
+        {
+          code: "disconnect-connection",
+          effect: "changed",
+          evidence: "status=disconnected",
+          message: "Conexión marcada como disconnected",
+          status: "succeeded",
+        },
+        {
+          code: "disable-project-webhook",
+          effect: "changed",
+          evidence: "Kapso webhook project active=false",
+          message: "Webhook de Praxia desactivado",
+          status: "succeeded",
+        },
+      ],
+      setupLinks: makeSnapshot().setupLinks,
     });
-    const disableWebhook = vi
-      .fn()
-      .mockImplementationOnce(() => firstWebhook)
-      .mockResolvedValue({
-        alreadyDisabled: false,
-        evidence: "Kapso webhook active=false",
-      });
+    const disableWebhook = vi.fn().mockResolvedValue({
+      alreadyDisabled: false,
+      evidence: "Kapso webhook active=false",
+    });
+    const revokeSetupLink = vi.fn().mockResolvedValue({});
     const dependencies = {
       provider: { disableWebhook },
-      setupLinkProvider: { revokeSetupLink: vi.fn() },
+      setupLinkProvider: { revokeSetupLink },
       store,
     };
-
-    const first = offboardWhatsAppConnection(
-      {
-        actorIdentityId: "superadmin-92",
-        clinicId: makeSnapshot().clinicId,
-        now,
-      },
-      dependencies,
-    );
-    await vi.waitFor(() => expect(disableWebhook).toHaveBeenCalledTimes(1));
 
     await expect(
       offboardWhatsAppConnection(
         {
           actorIdentityId: "superadmin-92",
           clinicId: makeSnapshot().clinicId,
+          manualConfirmation: true,
           now,
         },
         dependencies,
       ),
-    ).rejects.toThrow("ya está en progreso");
+    ).resolves.toMatchObject({
+      cancelledPendingDeliveries: 2,
+      status: "completed",
+    });
     expect(disableWebhook).toHaveBeenCalledTimes(1);
-
-    releaseFirstWebhook();
-    await expect(first).resolves.toMatchObject({ status: "completed" });
+    expect(disableWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "phone-number" }),
+    );
+    expect(revokeSetupLink).toHaveBeenCalledTimes(1);
   });
 
   it("rechaza reutilizar un runId de offboarding después de reconectar otra generación", async () => {
@@ -765,6 +825,7 @@ describe("operaciones finales de WhatsApp", () => {
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
+        manualConfirmation: true,
         now,
         runId,
       },
@@ -784,6 +845,7 @@ describe("operaciones finales de WhatsApp", () => {
         {
           actorIdentityId: "superadmin-92",
           clinicId: makeSnapshot().clinicId,
+          manualConfirmation: true,
           now,
           runId,
         },
@@ -851,6 +913,7 @@ describe("operaciones finales de WhatsApp", () => {
         {
           actorIdentityId: "superadmin-92",
           clinicId: makeSnapshot().clinicId,
+          manualConfirmation: true,
           now,
         },
         {
@@ -860,5 +923,27 @@ describe("operaciones finales de WhatsApp", () => {
         },
       ),
     ).rejects.toThrow("no autorizó retirar");
+  });
+
+  it("requires explicit confirmation before stopping WhatsApp operations", async () => {
+    const { store } = makeStore();
+    const startOffboarding = vi.spyOn(store, "startOffboarding");
+
+    await expect(
+      offboardWhatsAppConnection(
+        {
+          actorIdentityId: "superadmin-92",
+          clinicId: makeSnapshot().clinicId,
+          manualConfirmation: false,
+          now,
+        },
+        {
+          provider: { disableWebhook: vi.fn() },
+          setupLinkProvider: { revokeSetupLink: vi.fn() },
+          store,
+        },
+      ),
+    ).rejects.toThrow("confirmación explícita");
+    expect(startOffboarding).not.toHaveBeenCalled();
   });
 });

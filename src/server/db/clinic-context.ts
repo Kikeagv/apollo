@@ -370,7 +370,7 @@ export async function setWhatsAppWorkerClinicContext(
   return clinic.subscriptionStatus === "active";
 }
 
-/** Serializa las transiciones del circuito con las reservas de capacidad. */
+/** Serializa cambios de conexión, reservas de capacidad y nuevas Entregas. */
 export async function lockWhatsAppCircuit(
   transaction: ClinicTransaction,
   clinicId: string,

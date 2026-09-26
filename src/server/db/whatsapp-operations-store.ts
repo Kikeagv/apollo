@@ -1,13 +1,26 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
 import {
   expireWhatsAppSyntheticSmoke,
   sanitizeWhatsAppSyntheticSmokeResult,
 } from "~/domain/whatsapp-smoke";
+import { whatsappOffboardingDeliverySuppressionReason } from "~/domain/whatsapp-offboarding";
 import { evaluateWhatsAppReadiness } from "~/domain/whatsapp-readiness";
 import {
   inSuperadminTransaction,
+  inSuperadminRlsTransaction,
   lockWhatsAppCircuit,
   inClinicTransaction,
   type ClinicTransaction,
@@ -30,6 +43,7 @@ import {
   whatsappCircuitBreakers,
   whatsappConnections,
   whatsappCriticalTemplates,
+  transactionalDeliveries,
   whatsappOffboardingRuns,
   whatsappOffboardingStepAudits,
   whatsappOnboardingAuditEvents,
@@ -46,6 +60,7 @@ import {
 } from "~/server/db/whatsapp-smoke-run-store";
 
 const OFFBOARDING_REASON = "Offboarding explícito de la Conexión de WhatsApp";
+const OFFBOARDING_RUN_LEASE_MS = 2 * 60_000;
 
 export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
   async read(input) {
@@ -397,11 +412,14 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
   },
 
   async startOffboarding(input) {
-    return inSuperadminTransaction(
+    return inSuperadminRlsTransaction(
       input.actorIdentityId,
       async (transaction) => {
         await lockWhatsAppCircuit(transaction, input.clinicId);
         await setClinicContext(transaction, input.clinicId);
+        await transaction.execute(
+          sql`select set_config('app.whatsapp_offboarding', 'true', true)`,
+        );
         const snapshot = await readSnapshot(transaction, input.clinicId);
         if (snapshot.offboardingAuthorization === null) {
           throw new Error("La Clínica no autorizó retirar la Conexión");
@@ -438,31 +456,36 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
           input.clinicId,
           currentGeneration,
         );
-        const configurationExport = buildAllowedConfiguration(snapshot);
-        if (existingRun === undefined) {
-          await transaction.insert(whatsappOffboardingRuns).values({
-            actorIdentityId: input.actorIdentityId,
-            clinicId: input.clinicId,
-            configurationExport,
-            id: effectiveRunId,
-            provisioningEventId: currentGeneration,
-            startedAt: input.now,
-            status: "running",
-          });
-        }
+        const configurationExport =
+          existingRun?.configurationExport ??
+          buildAllowedConfiguration(snapshot);
         const previousSteps =
           existingRun !== undefined
             ? await readOffboardingSteps(transaction, effectiveRunId)
             : snapshot.offboarding?.provisioningEventId === currentGeneration
               ? (snapshot.offboarding.steps ?? [])
               : [];
-        const alreadyRunning = existingRun?.status === "running";
-        if (alreadyRunning) {
+        const alreadyCompleted = existingRun?.status === "completed";
+        const alreadyRunning =
+          existingRun?.status === "running" &&
+          existingRun.leaseExpiresAt !== null &&
+          existingRun.leaseExpiresAt > input.now;
+        const cancelledPendingDeliveries =
+          existingRun === undefined
+            ? 0
+            : await countOffboardingSuppressedDeliveries(transaction, {
+                clinicId: input.clinicId,
+                startedAt: existingRun.startedAt,
+              });
+        if (alreadyCompleted || alreadyRunning) {
           return {
             allowedConfiguration: configurationExport,
+            alreadyCompleted,
             alreadyDisconnected: snapshot.connection?.status === "disconnected",
             alreadyRunning,
             alreadyTrafficOff: snapshot.trafficStatus === "offboarded",
+            cancelledPendingDeliveries,
+            leaseToken: existingRun?.leaseToken ?? input.leaseToken,
             phoneNumberId: snapshot.connection?.phoneNumberId ?? null,
             phoneNumberWebhookId:
               snapshot.connection?.phoneNumberWebhookId ?? null,
@@ -474,6 +497,49 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
             setupLinks: snapshot.setupLinks,
           } satisfies WhatsAppOffboardingStart;
         }
+
+        if (existingRun === undefined) {
+          await transaction.insert(whatsappOffboardingRuns).values({
+            actorIdentityId: input.actorIdentityId,
+            clinicId: input.clinicId,
+            configurationExport,
+            id: effectiveRunId,
+            leaseExpiresAt: new Date(
+              input.now.valueOf() + OFFBOARDING_RUN_LEASE_MS,
+            ),
+            leaseToken: input.leaseToken,
+            provisioningEventId: currentGeneration,
+            startedAt: input.now,
+            status: "running",
+          });
+        } else {
+          await transaction
+            .update(whatsappOffboardingRuns)
+            .set({
+              completedAt: null,
+              leaseExpiresAt: new Date(
+                input.now.valueOf() + OFFBOARDING_RUN_LEASE_MS,
+              ),
+              leaseToken: input.leaseToken,
+              status: "running",
+            })
+            .where(
+              and(
+                eq(whatsappOffboardingRuns.clinicId, input.clinicId),
+                eq(whatsappOffboardingRuns.id, effectiveRunId),
+              ),
+            );
+        }
+
+        await openWhatsAppCircuitInTransaction(transaction, {
+          actorIdentityId: input.actorIdentityId,
+          actorKind: "superadmin",
+          cause: "webhook-paused",
+          clinicId: input.clinicId,
+          now: input.now,
+          reason: OFFBOARDING_REASON,
+        });
+
         if (snapshot.connection !== null) {
           const persistedConnection =
             await transaction.query.whatsappConnections.findFirst({
@@ -497,17 +563,58 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
             })
             .where(eq(whatsappConnections.clinicId, input.clinicId));
         }
-        await insertApoloAudit(transaction, {
-          action: "whatsapp-offboarding-started",
-          actorIdentityId: input.actorIdentityId,
-          clinicId: input.clinicId,
-          occurredAt: input.now,
-        });
+
+        await transaction
+          .update(transactionalDeliveries)
+          .set({
+            lastError: whatsappOffboardingDeliverySuppressionReason,
+            leaseExpiresAt: null,
+            status: "suppressed",
+            updatedAt: input.now,
+          })
+          .where(
+            and(
+              eq(transactionalDeliveries.clinicId, input.clinicId),
+              inArray(transactionalDeliveries.kind, [
+                "appointment-message",
+                "appointment-reminder",
+              ]),
+              or(
+                eq(transactionalDeliveries.status, "pending"),
+                and(
+                  eq(transactionalDeliveries.status, "processing"),
+                  or(
+                    isNull(transactionalDeliveries.leaseExpiresAt),
+                    lte(transactionalDeliveries.leaseExpiresAt, input.now),
+                  ),
+                ),
+              ),
+            ),
+          );
+        const suppressedCount = await countOffboardingSuppressedDeliveries(
+          transaction,
+          {
+            clinicId: input.clinicId,
+            startedAt: existingRun?.startedAt ?? input.now,
+          },
+        );
+
+        if (existingRun === undefined) {
+          await insertApoloAudit(transaction, {
+            action: "whatsapp-offboarding-started",
+            actorIdentityId: input.actorIdentityId,
+            clinicId: input.clinicId,
+            occurredAt: input.now,
+          });
+        }
         return {
           allowedConfiguration: configurationExport,
-          alreadyRunning,
+          alreadyCompleted: false,
+          alreadyRunning: false,
           alreadyDisconnected: snapshot.connection?.status === "disconnected",
           alreadyTrafficOff: snapshot.trafficStatus === "offboarded",
+          cancelledPendingDeliveries: suppressedCount,
+          leaseToken: input.leaseToken,
           phoneNumberId: snapshot.connection?.phoneNumberId ?? null,
           phoneNumberWebhookId:
             snapshot.connection?.phoneNumberWebhookId ?? null,
@@ -529,6 +636,7 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
       input.actorIdentityId,
       async (transaction) => {
         await setClinicContext(transaction, input.clinicId);
+        await renewOffboardingRunLease(transaction, input);
         await transaction.insert(whatsappOffboardingStepAudits).values({
           actorIdentityId: input.actorIdentityId,
           clinicId: input.clinicId,
@@ -548,6 +656,7 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
       input.actorIdentityId,
       async (transaction) => {
         await setClinicContext(transaction, input.clinicId);
+        await renewOffboardingRunLease(transaction, input);
         await transaction
           .update(whatsappSetupLinks)
           .set({
@@ -572,19 +681,29 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
       input.actorIdentityId,
       async (transaction) => {
         await setClinicContext(transaction, input.clinicId);
-        await transaction
+        const [finished] = await transaction
           .update(whatsappOffboardingRuns)
           .set({
             completedAt: input.now,
             configurationExport: input.configurationExport,
+            leaseExpiresAt: null,
+            leaseToken: null,
             status: input.status,
           })
           .where(
             and(
               eq(whatsappOffboardingRuns.clinicId, input.clinicId),
               eq(whatsappOffboardingRuns.id, input.runId),
+              eq(whatsappOffboardingRuns.leaseToken, input.leaseToken),
+              eq(whatsappOffboardingRuns.status, "running"),
             ),
+          )
+          .returning({ id: whatsappOffboardingRuns.id });
+        if (finished === undefined) {
+          throw new Error(
+            "La concesión del offboarding venció antes del cierre",
           );
+        }
         await insertApoloAudit(transaction, {
           action:
             input.status === "completed"
@@ -921,6 +1040,54 @@ function buildAllowedConfiguration(snapshot: WhatsAppOperationsSnapshot) {
     },
     setupLinks: { activeCount: snapshot.setupLinks.length },
   } satisfies Record<string, unknown>;
+}
+
+async function countOffboardingSuppressedDeliveries(
+  transaction: ClinicTransaction,
+  input: { clinicId: string; startedAt: Date },
+) {
+  const [result] = await transaction
+    .select({ count: count() })
+    .from(transactionalDeliveries)
+    .where(
+      and(
+        eq(transactionalDeliveries.clinicId, input.clinicId),
+        inArray(transactionalDeliveries.kind, [
+          "appointment-message",
+          "appointment-reminder",
+        ]),
+        eq(transactionalDeliveries.status, "suppressed"),
+        eq(
+          transactionalDeliveries.lastError,
+          whatsappOffboardingDeliverySuppressionReason,
+        ),
+        gte(transactionalDeliveries.updatedAt, input.startedAt),
+      ),
+    );
+  return result?.count ?? 0;
+}
+
+async function renewOffboardingRunLease(
+  transaction: ClinicTransaction,
+  input: { clinicId: string; leaseToken: string; runId: string },
+) {
+  const [renewed] = await transaction
+    .update(whatsappOffboardingRuns)
+    .set({
+      leaseExpiresAt: sql`now() + ${OFFBOARDING_RUN_LEASE_MS} * interval '1 millisecond'`,
+    })
+    .where(
+      and(
+        eq(whatsappOffboardingRuns.clinicId, input.clinicId),
+        eq(whatsappOffboardingRuns.id, input.runId),
+        eq(whatsappOffboardingRuns.leaseToken, input.leaseToken),
+        eq(whatsappOffboardingRuns.status, "running"),
+      ),
+    )
+    .returning({ id: whatsappOffboardingRuns.id });
+  if (renewed === undefined) {
+    throw new Error("La concesión del offboarding venció; vuelve a intentarlo");
+  }
 }
 
 /**

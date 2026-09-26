@@ -125,7 +125,7 @@ describe("migraciones de PostgreSQL", () => {
             ]),
           );
           const deliveryPolicies = await migrated<
-            Array<{ command: "ALL" | "SELECT"; name: string }>
+            Array<{ command: "ALL" | "SELECT" | "UPDATE"; name: string }>
           >`
             select cmd as command, policyname as name
             from pg_policies
@@ -146,6 +146,10 @@ describe("migraciones de PostgreSQL", () => {
               {
                 command: "ALL",
                 name: "transactional_delivery_outbound_worker_access",
+              },
+              {
+                command: "UPDATE",
+                name: "transactional_delivery_whatsapp_offboarding_update",
               },
             ]),
           );

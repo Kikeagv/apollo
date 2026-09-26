@@ -21,6 +21,7 @@ import {
   appointmentReminderCheckpoints,
   type AppointmentReminderCheckpoint,
 } from "~/server/application/appointment-reminders";
+import { whatsappOffboardingDeliverySuppressionReason } from "~/domain/whatsapp-offboarding";
 import {
   retryAt,
   type TransactionalDeliveryCallbackObservation,
@@ -57,6 +58,7 @@ import {
   inWhatsAppDeliveryStatusWorkerTransaction,
   inWhatsAppWebhookIngressTransaction,
   inWhatsAppOutboundWorkerTransaction,
+  lockWhatsAppCircuit,
   setWhatsAppWorkerClinicContext,
 } from "~/server/db/clinic-context";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
@@ -102,6 +104,28 @@ export function shouldSuppressWhatsAppReminder(input: {
       input.kind === "appointment-message") &&
     (input.recipientContactId === null || !input.hasCurrentConsent)
   );
+}
+
+export function shouldSuppressOffboardedWhatsAppDelivery(input: {
+  connectionOffboarded: boolean;
+  kind: TransactionalDelivery["kind"];
+}) {
+  return (
+    input.connectionOffboarded &&
+    (input.kind === "appointment-message" ||
+      input.kind === "appointment-reminder")
+  );
+}
+
+async function isWhatsAppConnectionOffboarded(
+  transaction: SchedulerTransaction,
+  clinicId: string,
+) {
+  const connection = await transaction.query.whatsappConnections.findFirst({
+    columns: { realTrafficStatus: true },
+    where: eq(whatsappConnections.clinicId, clinicId),
+  });
+  return connection?.realTrafficStatus === "offboarded";
 }
 
 /** Persistencia del outbox y sus concesiones, siempre bajo RLS del worker. */
@@ -954,6 +978,15 @@ async function insertAppointmentTransactionalDelivery(
     sql`select set_config('app.whatsapp_outbound_worker', 'true', true)`,
   );
   await setWhatsAppWorkerClinicContext(transaction, input.clinicId);
+  await lockWhatsAppCircuit(transaction, input.clinicId);
+  const connectionOffboarded = await isWhatsAppConnectionOffboarded(
+    transaction,
+    input.clinicId,
+  );
+  const suppressForOffboarding = shouldSuppressOffboardedWhatsAppDelivery({
+    connectionOffboarded,
+    kind: "appointment-message",
+  });
   const consent = await readWhatsAppConsentSnapshot(transaction, {
     clinicId: input.clinicId,
     contactId: input.recipient.id,
@@ -1007,8 +1040,9 @@ async function insertAppointmentTransactionalDelivery(
       consentTextReference: consent.textReference,
       idempotencyKey: input.idempotencyKey,
       kind: "appointment-message",
-      lastError:
-        consent.decision === "blocked"
+      lastError: suppressForOffboarding
+        ? whatsappOffboardingDeliverySuppressionReason
+        : consent.decision === "blocked"
           ? "Consentimiento de WhatsApp no vigente"
           : null,
       nextAttemptAt: input.now,
@@ -1026,7 +1060,10 @@ async function insertAppointmentTransactionalDelivery(
         type: input.type,
       },
       recipientContactId: input.recipient.id,
-      status: consent.decision === "allowed" ? "pending" : "suppressed",
+      status:
+        suppressForOffboarding || consent.decision === "blocked"
+          ? "suppressed"
+          : "pending",
       retainUntil: new Date(input.now.valueOf() + RETAIN_MS),
     })
     .onConflictDoNothing();
@@ -1036,10 +1073,23 @@ async function insertAppointmentTransactionalDelivery(
 export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
   return inAppointmentSchedulerTransaction(async (transaction) => {
     let reminders = 0;
-    for (const appointment of await dueAppointments(transaction, input.now)) {
+    const appointments = await dueAppointments(transaction, input.now);
+    const clinicIds = [
+      ...new Set(appointments.map(({ clinicId }) => clinicId)),
+    ];
+    for (const clinicId of clinicIds.sort((left, right) =>
+      left.localeCompare(right),
+    )) {
+      await lockWhatsAppCircuit(transaction, clinicId);
+    }
+    for (const appointment of appointments) {
       if (appointment.patientId === null) continue;
       await transaction.execute(
         sql`select set_config('app.clinic_id', ${appointment.clinicId}, true)`,
+      );
+      const connectionOffboarded = await isWhatsAppConnectionOffboarded(
+        transaction,
+        appointment.clinicId,
       );
       for (const checkpoint of appointmentReminderCheckpoints) {
         const dueNow = isCheckpointDue(
@@ -1087,6 +1137,11 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
               appointment.clinicId,
               recipient.id,
             );
+          const suppressForOffboarding =
+            shouldSuppressOffboardedWhatsAppDelivery({
+              connectionOffboarded,
+              kind: "appointment-reminder",
+            });
           const [inserted] = await transaction
             .insert(transactionalDeliveries)
             .values({
@@ -1098,7 +1153,10 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
                 appointment.startsAt.valueOf() -
                   Number.parseInt(checkpoint, 10) * HOUR_MS,
               ),
-              status: consent.decision === "allowed" ? "pending" : "suppressed",
+              status:
+                suppressForOffboarding || consent.decision === "blocked"
+                  ? "suppressed"
+                  : "pending",
               consentAcceptedAt: consent.acceptedAt,
               consentDecision: consent.decision,
               consentPrivacyVersion: consent.privacyVersion,
@@ -1106,8 +1164,9 @@ export async function enqueueDueTransactionalDeliveries(input: { now: Date }) {
               consentReference: consent.reference,
               consentTermsVersion: consent.termsVersion,
               consentTextReference: consent.textReference,
-              lastError:
-                consent.decision === "blocked"
+              lastError: suppressForOffboarding
+                ? whatsappOffboardingDeliverySuppressionReason
+                : consent.decision === "blocked"
                   ? "Consentimiento de WhatsApp no vigente"
                   : null,
               payload: {

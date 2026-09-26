@@ -1363,8 +1363,9 @@ export function ApoloOperations() {
           <p className="mt-1 text-sm text-slate-300">
             El smoke de Kapso usa un Contacto existente sin vínculo a Paciente.
             El roundtrip vence en cinco minutos, registra pasos por Clínica y no
-            habilita Pacientes reales. El número, WABA y las plantillas Meta se
-            conservan durante el offboarding.
+            habilita Pacientes reales. Retirar la Conexión suprime las Entregas
+            de WhatsApp pendientes; un envío ya iniciado podría terminar. El
+            número, WABA, plantillas e historial administrativo se conservan.
           </p>
         </div>
         {!clinicId ? (
@@ -1724,9 +1725,12 @@ export function ApoloOperations() {
             <div className="rounded-lg border border-rose-500/70 bg-rose-950/20 p-4">
               <h3 className="font-semibold">Offboarding de la Conexión</h3>
               <p className="mt-1 text-sm text-slate-300">
-                Detiene envíos, desconecta y desactiva webhooks/setup links de
-                Praxia. No elimina el número, WABA ni plantillas de la Clínica.
-                Cada paso queda auditado y los fallos pueden reintentarse.
+                Detiene nuevos envíos, cancela las Entregas pendientes
+                elegibles, desconecta y desactiva los webhooks de Kapso. Revoca
+                los enlaces de configuración de Praxia y exporta la
+                configuración permitida. No elimina el número, WABA, plantillas
+                ni historial administrativo. Cada paso queda auditado y los
+                fallos pueden reintentarse.
               </p>
               <p className="mt-2 text-sm text-slate-300">
                 Autorización de la Clínica:{" "}
@@ -1751,7 +1755,12 @@ export function ApoloOperations() {
                   whatsappOperations.data.offboardingAuthorization === null ||
                   offboardConnection.isPending
                 }
-                onClick={() => offboardConnection.mutate({ clinicId })}
+                onClick={() =>
+                  offboardConnection.mutate({
+                    clinicId,
+                    manualConfirmation: true,
+                  })
+                }
                 type="button"
               >
                 {offboardConnection.isPending
@@ -1789,6 +1798,19 @@ export function ApoloOperations() {
                       )}
                     </pre>
                   </details>
+                  <button
+                    className="rounded border border-slate-500 px-3 py-2 text-sm"
+                    onClick={() =>
+                      downloadWhatsAppConfigurationExport(
+                        clinicId,
+                        whatsappOperations.data.offboarding
+                          ?.configurationExport ?? {},
+                      )
+                    }
+                    type="button"
+                  >
+                    Descargar exportación permitida
+                  </button>
                 </div>
               ) : null}
               {offboardConnection.error ? (
@@ -2390,6 +2412,21 @@ function whatsappTrafficStatusLabel(
 
 function formatCents(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+function downloadWhatsAppConfigurationExport(
+  clinicId: string,
+  configuration: Record<string, unknown>,
+) {
+  const file = new Blob([JSON.stringify(configuration, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `configuracion-whatsapp-${clinicId}.json`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 function billingHealthLabel(level: "normal" | "warning" | "critical") {

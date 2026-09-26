@@ -7,6 +7,9 @@ export const whatsappOffboardingStepCodes = [
   "export-configuration",
 ] as const;
 
+export const whatsappOffboardingDeliverySuppressionReason =
+  "Conexión de WhatsApp retirada de Praxia";
+
 export type WhatsAppOffboardingStepCode =
   (typeof whatsappOffboardingStepCodes)[number];
 

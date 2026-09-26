@@ -93,9 +93,12 @@ export type WhatsAppOperationsSnapshot = {
 
 export type WhatsAppOffboardingStart = {
   allowedConfiguration: Record<string, unknown>;
+  alreadyCompleted: boolean;
   alreadyRunning: boolean;
   alreadyDisconnected: boolean;
   alreadyTrafficOff: boolean;
+  cancelledPendingDeliveries: number;
+  leaseToken: string;
   phoneNumberId: string | null;
   phoneNumberWebhookId: string | null;
   previousSteps: WhatsAppOperationsOffboardingStep[];
@@ -154,25 +157,31 @@ export type WhatsAppOperationsStore = {
   startOffboarding(input: {
     actorIdentityId: string;
     clinicId: string;
+    leaseToken: string;
     now: Date;
     runId: string;
   }): Promise<WhatsAppOffboardingStart>;
   recordOffboardingStep(input: {
     actorIdentityId: string;
     clinicId: string;
+    leaseToken: string;
+    now: Date;
     runId: string;
     step: WhatsAppOperationsOffboardingStep;
   }): Promise<void>;
   markSetupLinkRevoked(input: {
     actorIdentityId: string;
     clinicId: string;
+    leaseToken: string;
     now: Date;
+    runId: string;
     setupLinkId: string;
   }): Promise<void>;
   finishOffboarding(input: {
     actorIdentityId: string;
     clinicId: string;
     configurationExport: Record<string, unknown>;
+    leaseToken: string;
     now: Date;
     runId: string;
     status: "completed" | "failed";
@@ -506,6 +515,7 @@ export async function offboardWhatsAppConnection(
   input: {
     actorIdentityId: string;
     clinicId: string;
+    manualConfirmation: boolean;
     now?: Date;
     runId?: string;
   },
@@ -515,16 +525,33 @@ export async function offboardWhatsAppConnection(
     store: WhatsAppOperationsStore;
   },
 ) {
+  if (!input.manualConfirmation) {
+    throw new Error("Retirar la Conexión requiere confirmación explícita");
+  }
   const now = input.now ?? new Date();
   const requestedRunId = input.runId ?? randomUUID();
+  const leaseToken = randomUUID();
   const start = await dependencies.store.startOffboarding({
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
+    leaseToken,
     now,
     runId: requestedRunId,
   });
   if (start.alreadyRunning) {
-    throw new Error("El offboarding de esta generación ya está en progreso");
+    throw new Error(
+      "El offboarding de esta generación sigue en progreso; vuelve a intentarlo cuando venza su concesión",
+    );
+  }
+  if (start.alreadyCompleted) {
+    return {
+      assetsPreserved: true as const,
+      cancelledPendingDeliveries: start.cancelledPendingDeliveries,
+      configurationExport: start.allowedConfiguration,
+      runId: start.runId,
+      status: "completed" as const,
+      steps: start.previousSteps,
+    };
   }
   const runId = start.runId;
   const steps: WhatsAppOperationsOffboardingStep[] = [];
@@ -535,10 +562,21 @@ export async function offboardWhatsAppConnection(
   const record = async (
     step: WhatsAppOperationsOffboardingStep,
   ): Promise<void> => {
+    const previousStep = previous.get(step.code);
+    if (previousStep?.status === "succeeded") {
+      steps.push({
+        ...step,
+        effect: "already-complete",
+        evidence: previousStep.evidence,
+      });
+      return;
+    }
     steps.push(step);
     await dependencies.store.recordOffboardingStep({
       actorIdentityId: input.actorIdentityId,
       clinicId: input.clinicId,
+      leaseToken: start.leaseToken,
+      now,
       runId,
       step,
     });
@@ -547,8 +585,8 @@ export async function offboardWhatsAppConnection(
   await record({
     code: "stop-sends",
     effect: start.alreadyTrafficOff ? "already-complete" : "changed",
-    evidence: "La Conexión quedó fuera de la cola de salida",
-    message: "Envíos detenidos",
+    evidence: `Conexión fuera de la cola de salida; ${start.cancelledPendingDeliveries} Entregas pendientes canceladas`,
+    message: `Envíos detenidos; ${start.cancelledPendingDeliveries} Entregas pendientes canceladas`,
     status: "succeeded",
   });
   await record({
@@ -578,7 +616,15 @@ export async function offboardWhatsAppConnection(
     provider: dependencies.provider,
   });
 
-  if (start.setupLinks.length === 0) {
+  if (previous.get("revoke-setup-links")?.status === "succeeded") {
+    await record({
+      code: "revoke-setup-links",
+      effect: "already-complete",
+      evidence: "Los setup links ya fueron revocados",
+      message: "Setup links de Praxia revocados",
+      status: "succeeded",
+    });
+  } else if (start.setupLinks.length === 0) {
     await record({
       code: "revoke-setup-links",
       effect: "already-complete",
@@ -597,7 +643,9 @@ export async function offboardWhatsAppConnection(
         await dependencies.store.markSetupLinkRevoked({
           actorIdentityId: input.actorIdentityId,
           clinicId: input.clinicId,
+          leaseToken: start.leaseToken,
           now,
+          runId,
           setupLinkId: setupLink.id,
         });
       } catch (error) {
@@ -641,12 +689,14 @@ export async function offboardWhatsAppConnection(
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
     configurationExport: start.allowedConfiguration,
+    leaseToken: start.leaseToken,
     now,
     runId,
     status,
   });
   return {
     assetsPreserved: true as const,
+    cancelledPendingDeliveries: start.cancelledPendingDeliveries,
     configurationExport: start.allowedConfiguration,
     runId,
     status,

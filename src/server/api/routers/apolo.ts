@@ -390,6 +390,7 @@ export const apoloRouter = {
     .input(
       z.object({
         clinicId: z.string().uuid(),
+        manualConfirmation: z.literal(true),
         runId: z.string().uuid().optional(),
       }),
     )
