@@ -62,8 +62,12 @@ function makeSnapshot(
       steps: whatsappSyntheticSmokeStepCodes.map((code) => ({
         code,
         evidence: `synthetic:${code}`,
+        eventId: null,
         message: null,
+        observedAt: null,
         passed: true,
+        source: null,
+        status: "passed",
       })),
       syntheticContact: true,
     },
@@ -130,6 +134,9 @@ function makeStore(initial = makeSnapshot()) {
         },
       };
       return snapshot;
+    },
+    async resolveSyntheticSmokeContact() {
+      return { id: "controlled-contact-92", maskedPhone: "+••••••0092" };
     },
     async authorizeOffboarding(input) {
       snapshot = {
@@ -312,6 +319,7 @@ describe("operaciones finales de WhatsApp", () => {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
         now,
+        testContactPhoneE164: "+50370000092",
       },
       { idGenerator: () => "smoke-failed-92", runner, store },
     );
@@ -343,19 +351,18 @@ describe("operaciones finales de WhatsApp", () => {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
         now,
+        testContactPhoneE164: "+50370000092",
       },
       { idGenerator: () => "smoke-passed-92", runner, store },
     );
-    expect(passed.status).toBe("failed");
-    expect(passed.blockers.map((blocker) => blocker.code)).toContain(
-      "provider-transport-unverified",
-    );
+    expect(passed.status).toBe("pending");
+    expect(passed.providerTransportVerified).toBe(false);
     expect(
       passed.steps.find((step) => step.code === "guardian-pending")?.passed,
     ).toBe(true);
   });
 
-  it("no habilita un smoke Kapso basado solo en contratos locales", async () => {
+  it("mantiene pendiente un smoke Kapso basado solo en contratos locales", async () => {
     const { store } = makeStore();
     const runner = {
       run: vi.fn().mockResolvedValue({
@@ -376,15 +383,128 @@ describe("operaciones finales de WhatsApp", () => {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
         now,
+        testContactPhoneE164: "+50370000092",
       },
       { idGenerator: () => "smoke-local-only-92", runner, store },
     );
 
+    expect(result.status).toBe("pending");
+    expect(result.providerTransportVerified).toBe(false);
+  });
+
+  it("no interpreta evidencia local como preflight del webhook Kapso", async () => {
+    const { store } = makeStore();
+    const runner = {
+      run: vi.fn().mockResolvedValue({
+        evidence: "Solo contratos locales",
+        realPatientsEnabled: false,
+        steps: Object.fromEntries(
+          whatsappSyntheticSmokeStepCodes
+            .filter((code) => code !== "webhook-preflight")
+            .map((code) => [code, { evidence: `local:${code}`, passed: true }]),
+        ),
+        syntheticContact: true,
+      }),
+    };
+
+    const result = await runWhatsAppSyntheticSmoke(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: makeSnapshot().clinicId,
+        now,
+        testContactPhoneE164: "+50370000092",
+      },
+      { runner, store },
+    );
+
     expect(result.status).toBe("failed");
-    expect(result.blockers).toContainEqual({
-      code: "provider-transport-unverified",
-      message:
-        "Kapso solo confirmó el webhook de prueba; el transporte externo completo todavía no está verificado",
+    expect(result.blockers.map((blocker) => blocker.code)).toContain(
+      "webhook-preflight",
+    );
+  });
+
+  it("requiere un Contacto de prueba registrado para ejecutar el roundtrip Kapso", async () => {
+    const { store } = makeStore();
+    const runner = { run: vi.fn() };
+
+    await expect(
+      runWhatsAppSyntheticSmoke(
+        {
+          actorIdentityId: "superadmin-92",
+          clinicId: makeSnapshot().clinicId,
+          now,
+        },
+        { runner, store },
+      ),
+    ).rejects.toThrow(/E\.164 de un Contacto de prueba/i);
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it("inicia un E2E real pendiente con Contacto controlado y timeout por Clínica", async () => {
+    const { smokeRuns, store } = makeStore();
+    const runner = {
+      run: vi.fn().mockResolvedValue({
+        evidence: "Preflight del webhook de proyecto confirmado",
+        providerTransportVerified: false,
+        realPatientsEnabled: false,
+        steps: Object.fromEntries(
+          whatsappSyntheticSmokeStepCodes.map((code) => [
+            code,
+            {
+              evidence: `provider:${code}`,
+              eventId: `event:${code}`,
+              observedAt: now,
+              passed: true,
+              source: "provider",
+              status: "passed",
+            },
+          ]),
+        ),
+        syntheticContact: true,
+      }),
+    };
+
+    const result = await runWhatsAppSyntheticSmoke(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: makeSnapshot().clinicId,
+        now,
+        testContactPhoneE164: "+50370000092",
+      },
+      {
+        idGenerator: () => "a268e988-cddc-47c8-8b7a-a40da1060016",
+        runner,
+        store,
+      },
+    );
+
+    expect(result).toMatchObject({
+      id: "a268e988-cddc-47c8-8b7a-a40da1060016",
+      providerTransportVerified: false,
+      realPatientsEnabled: false,
+      requireRealRoundtrip: true,
+      status: "pending",
+      testContactId: "controlled-contact-92",
+      testContactMaskedPhone: "+••••••0092",
+      timeoutAt: new Date(now.valueOf() + 5 * 60_000),
+    });
+    expect(result.finishedAt).toBeNull();
+    expect(
+      result.steps.find((step) => step.code === "real-reception"),
+    ).toMatchObject({ status: "pending", passed: false });
+    expect(runner.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        syntheticContactId: "synthetic-smoke:controlled-contact-92",
+      }),
+    );
+    expect(smokeRuns).toHaveLength(1);
+    expect(smokeRuns[0]).toMatchObject({
+      runId: "a268e988-cddc-47c8-8b7a-a40da1060016",
+      result: {
+        status: "pending",
+        realPatientsEnabled: false,
+        testContactId: "controlled-contact-92",
+      },
     });
   });
 
@@ -432,6 +552,7 @@ describe("operaciones finales de WhatsApp", () => {
         actorIdentityId: "superadmin-92",
         clinicId: initial.clinicId,
         now,
+        testContactPhoneE164: "+50370000092",
       },
       { runner, store },
     );
@@ -473,6 +594,7 @@ describe("operaciones finales de WhatsApp", () => {
         actorIdentityId: "superadmin-92",
         clinicId: snapshot.clinicId,
         now,
+        testContactPhoneE164: "+50370000092",
       },
       { runner, store },
     );

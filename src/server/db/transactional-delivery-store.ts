@@ -60,6 +60,7 @@ import {
   setWhatsAppWorkerClinicContext,
 } from "~/server/db/clinic-context";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
+import { recordSmokeReplyOutcome } from "~/server/db/whatsapp-smoke-run-store";
 import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
 import type { db } from "~/server/db";
 import {
@@ -483,6 +484,7 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
   {
     async recordProviderCallback(input) {
       await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+        const callbackNow = new Date();
         const delivery = await findDeliveryForCallback(transaction, input);
         if (delivery !== undefined) {
           const currentStatus = whatsappStatusFromDelivery(delivery.status);
@@ -490,7 +492,6 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
             currentStatus,
             input.status,
           );
-          const callbackNow = new Date();
           await transaction
             .update(transactionalDeliveries)
             .set({
@@ -571,6 +572,24 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
               status: reconciledStatus,
             })
             .where(eq(whatsappInboundReplies.id, reply.id));
+          if (
+            reconciledStatus === "delivered" ||
+            reconciledStatus === "read" ||
+            reconciledStatus === "failed"
+          ) {
+            await recordSmokeReplyOutcome(transaction, {
+              clinicId: reply.clinicId,
+              idempotencyKey: reply.idempotencyKey,
+              now: callbackNow,
+              outcome:
+                reconciledStatus === "failed"
+                  ? "delivery-failed"
+                  : reconciledStatus,
+              providerEventId: input.providerEventId,
+              providerMessageId:
+                input.providerMessageId ?? reply.providerMessageId,
+            });
+          }
           return replyCallbackMetricObservation(
             reply,
             input,
@@ -1899,6 +1918,7 @@ async function findReplyForCallback(
       buttonLabel: whatsappInboundReplies.buttonLabel,
       clinicId: whatsappInboundReplies.clinicId,
       id: whatsappInboundReplies.id,
+      idempotencyKey: whatsappInboundReplies.idempotencyKey,
       lastProviderEventId: whatsappInboundReplies.lastProviderEventId,
       providerMessageId: whatsappInboundReplies.providerMessageId,
       sentAt: whatsappInboundReplies.sentAt,

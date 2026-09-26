@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import {
   hasWhatsAppIdentityChanged,
@@ -26,6 +37,12 @@ import {
   inWhatsAppWebhookIngressTransaction,
   lockWhatsAppCircuit,
 } from "~/server/db/clinic-context";
+import { recordWhatsAppSyntheticSmokeStep } from "~/domain/whatsapp-smoke";
+import {
+  persistSmokeResult,
+  recordSmokeReplyOutcome,
+  smokeResultFromRow,
+} from "~/server/db/whatsapp-smoke-run-store";
 import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
 import type { db } from "~/server/db";
 import {
@@ -40,6 +57,8 @@ import {
   whatsappInboundMessages,
   whatsappInboundAlerts,
   whatsappInboundReplies,
+  contactPatientLinks,
+  whatsappSmokeRuns,
 } from "~/server/db/schema";
 import type {
   WhatsAppInboundEvent,
@@ -566,6 +585,75 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
     });
   },
 
+  async recordSyntheticSmokeInbound(input) {
+    return inWhatsAppInboundWorkerTransaction(async (transaction) => {
+      await transaction.execute(
+        sql`select set_config('app.clinic_id', ${input.clinicId}, true)`,
+      );
+      const [run] = await transaction
+        .select()
+        .from(whatsappSmokeRuns)
+        .where(
+          and(
+            eq(whatsappSmokeRuns.clinicId, input.clinicId),
+            eq(whatsappSmokeRuns.id, input.runId),
+            eq(whatsappSmokeRuns.testContactId, input.contactId),
+            eq(whatsappSmokeRuns.status, "pending"),
+            eq(whatsappSmokeRuns.requiresRealRoundtrip, true),
+            eq(whatsappSmokeRuns.realPatientsEnabled, false),
+            gt(whatsappSmokeRuns.timeoutAt, input.now),
+          ),
+        )
+        .for("update");
+      if (run === undefined) return false;
+      const connection = await transaction.query.whatsappConnections.findFirst({
+        columns: { metadata: true, provider: true },
+        where: eq(whatsappConnections.clinicId, input.clinicId),
+      });
+      if (
+        connection?.provider !== "kapso" ||
+        (connection.metadata.provisioningEventId ?? null) !==
+          run.provisioningEventId
+      ) {
+        return false;
+      }
+      const patientLink = await transaction.query.contactPatientLinks.findFirst(
+        {
+          columns: { id: true },
+          where: and(
+            eq(contactPatientLinks.clinicId, input.clinicId),
+            eq(contactPatientLinks.contactId, input.contactId),
+          ),
+        },
+      );
+      if (patientLink !== undefined) return false;
+
+      let result = smokeResultFromRow(run);
+      result = recordWhatsAppSyntheticSmokeStep(result, {
+        code: "real-reception",
+        eventId: input.eventId,
+        evidence: "Webhook firmado recibió el mensaje del Contacto de prueba",
+        observedAt: input.now,
+        source: "provider",
+        status: "passed",
+      });
+      result = recordWhatsAppSyntheticSmokeStep(result, {
+        code: "real-processing",
+        eventId: input.eventId,
+        evidence: "Worker inbound reconoció el desafío del smoke",
+        observedAt: input.now,
+        source: "application",
+        status: "passed",
+      });
+      return persistSmokeResult(transaction, {
+        clinicId: input.clinicId,
+        finishedAt: input.now,
+        result,
+        runId: run.id,
+      });
+    });
+  },
+
   async markAwaitingConsent({
     consentReference,
     eventId,
@@ -750,6 +838,13 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           idempotencyKey: whatsappInboundReplies.idempotencyKey,
         });
       if (accepted === undefined) return;
+      await recordSmokeReplyOutcome(transaction, {
+        clinicId: accepted.clinicId,
+        idempotencyKey: accepted.idempotencyKey,
+        now,
+        outcome: "accepted",
+        providerMessageId,
+      });
       const escalationId = escalationIdFromNotificationKey(
         accepted.idempotencyKey,
       );
@@ -781,7 +876,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
 
   async markFailedReply({ id, leaseToken, now, reason }) {
     await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
-      await transaction
+      const [failed] = await transaction
         .update(whatsappInboundReplies)
         .set({
           lastError: reason.slice(0, 1_000),
@@ -796,7 +891,18 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
             eq(whatsappInboundReplies.leaseToken, leaseToken),
             eq(whatsappInboundReplies.status, "processing"),
           ),
-        );
+        )
+        .returning({
+          clinicId: whatsappInboundReplies.clinicId,
+          idempotencyKey: whatsappInboundReplies.idempotencyKey,
+        });
+      if (failed === undefined) return;
+      await recordSmokeReplyOutcome(transaction, {
+        clinicId: failed.clinicId,
+        idempotencyKey: failed.idempotencyKey,
+        now,
+        outcome: "rejected",
+      });
     });
   },
 

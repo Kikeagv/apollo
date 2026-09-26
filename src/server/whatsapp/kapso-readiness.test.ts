@@ -700,7 +700,14 @@ describe("adaptador de readiness de Kapso", () => {
     expect(result?.syntheticContact).toBe(true);
     expect(result?.providerTransportVerified).toBe(false);
     expect(result?.realPatientsEnabled).toBe(false);
-    expect(result?.steps).toEqual({});
+    const preflight = result?.steps["webhook-preflight"];
+    expect(preflight?.evidence).toContain(
+      "event_type=whatsapp.phone_number.created",
+    );
+    expect(preflight?.passed).toBe(true);
+    expect(preflight?.source).toBe("provider");
+    expect(preflight?.status).toBe("passed");
+    expect(result?.steps["real-delivery"]).toBeUndefined();
     expect(result?.evidence).toContain("success=true");
     const requestInit = fetchImpl.mock.calls[0]?.[1];
     expect(fetchImpl).toHaveBeenCalledWith(

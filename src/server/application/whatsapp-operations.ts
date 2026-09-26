@@ -8,6 +8,7 @@ import {
   type WhatsAppSyntheticSmokeStepCode,
   type WhatsAppSyntheticSmokeStepInput,
 } from "~/domain/whatsapp-smoke";
+import { isValidE164PhoneNumber } from "~/domain/whatsapp-preflight";
 import {
   evaluateWhatsAppRealTraffic,
   type WhatsAppRealTrafficEvaluation,
@@ -42,7 +43,7 @@ export type WhatsAppOperationsConnection = {
 };
 
 export type WhatsAppOperationsSmokeRun = WhatsAppSyntheticSmokeResult & {
-  finishedAt: Date;
+  finishedAt: Date | null;
   id: string;
   provisioningEventId: string | null;
   startedAt: Date;
@@ -120,12 +121,17 @@ export type WhatsAppOperationsStore = {
   saveSyntheticSmokeRun(input: {
     actorIdentityId: string;
     clinicId: string;
-    finishedAt: Date;
+    finishedAt: Date | null;
     provisioningEventId: string | null;
     result: WhatsAppSyntheticSmokeResult;
     runId: string;
     startedAt: Date;
   }): Promise<WhatsAppOperationsSnapshot>;
+  resolveSyntheticSmokeContact(input: {
+    actorIdentityId: string;
+    clinicId: string;
+    phoneE164: string;
+  }): Promise<{ id: string; maskedPhone: string }>;
   authorizeOffboarding(input: {
     actorIdentityId: string;
     clinicId: string;
@@ -273,7 +279,12 @@ export async function authorizeWhatsAppOffboarding(
 }
 
 export async function runWhatsAppSyntheticSmoke(
-  input: { actorIdentityId: string; clinicId: string; now?: Date },
+  input: {
+    actorIdentityId: string;
+    clinicId: string;
+    now?: Date;
+    testContactPhoneE164?: string;
+  },
   dependencies: {
     idGenerator?: () => string;
     runner: WhatsAppSyntheticSmokeRunner;
@@ -283,6 +294,20 @@ export async function runWhatsAppSyntheticSmoke(
   const startedAt = input.now ?? new Date();
   const runId = dependencies.idGenerator?.() ?? randomUUID();
   const snapshot = await dependencies.store.read(input);
+  const isKapso = snapshot.connection?.provider === "kapso";
+  const canStartKapsoSmoke =
+    isKapso &&
+    snapshot.trafficStatus !== "offboarded" &&
+    snapshot.connection?.status !== "disconnected" &&
+    snapshot.connection?.phoneNumberId !== null &&
+    snapshot.connection?.projectWebhookId !== null;
+  const testContact = canStartKapsoSmoke
+    ? await resolveSmokeTestContact(input, dependencies.store)
+    : null;
+  const timeoutAt = isKapso ? new Date(startedAt.valueOf() + 5 * 60_000) : null;
+  const syntheticContactId = testContact
+    ? `synthetic-smoke:${testContact.id}`
+    : `synthetic-smoke:${input.clinicId}`;
   const praxiaResult = await runPraxiaWhatsAppSyntheticSmoke({
     clinicId: input.clinicId,
     phoneNumberId:
@@ -295,7 +320,7 @@ export async function runWhatsAppSyntheticSmoke(
       (snapshot.connection?.provider === "simulated"
         ? `simulated-project:${input.clinicId}`
         : ""),
-    syntheticContactId: `synthetic-smoke:${input.clinicId}`,
+    syntheticContactId,
   });
   let rawResult: Awaited<ReturnType<WhatsAppSyntheticSmokeRunner["run"]>> =
     mergeSmokeRunnerResults(praxiaResult, {
@@ -326,14 +351,50 @@ export async function runWhatsAppSyntheticSmoke(
         clinicId: input.clinicId,
         phoneNumberId,
         projectWebhookId,
-        syntheticContactId: `synthetic-smoke:${input.clinicId}`,
+        syntheticContactId,
       });
       rawResult = mergeSmokeRunnerResults(praxiaResult, rawResult);
     } catch (error) {
       providerError = toErrorMessage(error);
     }
   }
-  const result = evaluateWhatsAppSyntheticSmoke(rawResult);
+  if (isKapso) {
+    const preflight = rawResult.steps["webhook-preflight"];
+    if (providerError !== null || preflight === undefined) {
+      rawResult = {
+        ...rawResult,
+        steps: {
+          ...rawResult.steps,
+          "webhook-preflight": {
+            evidence: null,
+            message: providerError ?? "Kapso no confirmó el preflight",
+            passed: false,
+            source: "provider" as const,
+            status: "failed" as const,
+          },
+        },
+      };
+    }
+    rawResult = {
+      ...rawResult,
+      steps: {
+        ...rawResult.steps,
+        "real-reception": { passed: false, status: "pending" },
+        "real-processing": { passed: false, status: "pending" },
+        "real-response": { passed: false, status: "pending" },
+        "real-delivery": { passed: false, status: "pending" },
+      },
+      syntheticContact: false,
+    };
+  }
+  const result = evaluateWhatsAppSyntheticSmoke({
+    ...rawResult,
+    requireRealRoundtrip: isKapso,
+    runId,
+    testContactId: testContact?.id ?? null,
+    testContactMaskedPhone: testContact?.maskedPhone ?? null,
+    timeoutAt,
+  });
   const completedSnapshot = await dependencies.store.read(input);
   const startedGeneration = snapshot.connection?.provisioningEventId ?? null;
   const completedGeneration =
@@ -352,20 +413,9 @@ export async function runWhatsAppSyntheticSmoke(
     result.status = "failed";
     result.blockers.unshift({ code: "runner", message: providerError });
   }
-  if (
-    snapshot.connection?.provider === "kapso" &&
-    providerError === null &&
-    rawResult.providerTransportVerified !== true
-  ) {
-    result.status = "failed";
-    result.blockers.unshift({
-      code: "provider-transport-unverified",
-      message:
-        "Kapso solo confirmó el webhook de prueba; el transporte externo completo todavía no está verificado",
-    });
-  }
   const safeResult = sanitizeWhatsAppSyntheticSmokeResult(result);
-  const finishedAt = new Date();
+  const completedAt = new Date();
+  const finishedAt = safeResult.status === "pending" ? null : completedAt;
   await dependencies.store.saveSyntheticSmokeRun({
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
@@ -376,6 +426,27 @@ export async function runWhatsAppSyntheticSmoke(
     startedAt,
   });
   return { ...safeResult, finishedAt, id: runId, startedAt };
+}
+
+async function resolveSmokeTestContact(
+  input: {
+    actorIdentityId: string;
+    clinicId: string;
+    testContactPhoneE164?: string;
+  },
+  store: WhatsAppOperationsStore,
+) {
+  const phoneE164 = input.testContactPhoneE164?.trim();
+  if (phoneE164 === undefined || !isValidE164PhoneNumber(phoneE164)) {
+    throw new Error(
+      "Indique el teléfono E.164 de un Contacto de prueba sin vínculo a Paciente",
+    );
+  }
+  return store.resolveSyntheticSmokeContact({
+    actorIdentityId: input.actorIdentityId,
+    clinicId: input.clinicId,
+    phoneE164,
+  });
 }
 
 export async function enableWhatsAppRealTraffic(
@@ -671,6 +742,7 @@ function evaluateTraffic(
     connectionStatus: snapshot.connection?.status ?? null,
     gates: snapshot.gates,
     smoke: snapshot.latestSmoke ?? {
+      controlledTestContact: false,
       providerTransportVerified: false,
       realPatientsEnabled: false,
       provisioningEventId: null,

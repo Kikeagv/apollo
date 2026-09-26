@@ -656,7 +656,14 @@ export const whatsappSmokeRuns = createTable(
     providerTransportVerified: boolean("provider_transport_verified")
       .default(false)
       .notNull(),
-    status: text("status").$type<"failed" | "passed">().notNull(),
+    requiresRealRoundtrip: boolean("requires_real_roundtrip")
+      .default(false)
+      .notNull(),
+    testContactId: uuid("test_contact_id"),
+    testContactMaskedPhone: text("test_contact_masked_phone"),
+    timeoutAt: timestamp("timeout_at", { withTimezone: true }),
+    timedOutAt: timestamp("timed_out_at", { withTimezone: true }),
+    status: text("status").$type<"failed" | "passed" | "pending">().notNull(),
     syntheticContact: boolean("synthetic_contact").notNull(),
     realPatientsEnabled: boolean("real_patients_enabled").notNull(),
     steps: jsonb("steps").$type<WhatsAppSyntheticSmokeStep[]>().notNull(),
@@ -666,19 +673,39 @@ export const whatsappSmokeRuns = createTable(
       .notNull(),
     evidence: text("evidence"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
-    finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
   (table) => [
+    foreignKey({
+      columns: [table.clinicId, table.testContactId],
+      foreignColumns: [contacts.clinicId, contacts.id],
+      name: "whatsapp_smoke_run_test_contact_fk",
+    }).onDelete("restrict"),
+    check(
+      "whatsapp_smoke_run_status",
+      sql`${table.status} IN ('failed', 'passed', 'pending')`,
+    ),
     index("whatsapp_smoke_run_clinic_finished_idx").on(
       table.clinicId,
       table.finishedAt,
     ),
+    uniqueIndex("whatsapp_smoke_run_one_pending_per_clinic")
+      .on(table.clinicId)
+      .where(sql`${table.status} = 'pending'`),
     check(
       "whatsapp_smoke_run_result_safety",
-      sql`${table.status} = 'failed' OR (${table.syntheticContact} = true AND ${table.realPatientsEnabled} = false)`,
+      sql`${table.status} = 'failed' OR (${table.realPatientsEnabled} = false AND (${table.syntheticContact} = true OR (${table.requiresRealRoundtrip} = true AND ${table.testContactId} IS NOT NULL)))`,
+    ),
+    check(
+      "whatsapp_smoke_run_roundtrip_result_safety",
+      sql`NOT ${table.requiresRealRoundtrip} OR ${table.status} <> 'passed' OR (${table.providerTransportVerified} = true AND ${table.testContactId} IS NOT NULL AND ${table.testContactMaskedPhone} IS NOT NULL AND ${table.realPatientsEnabled} = false)`,
+    ),
+    check(
+      "whatsapp_smoke_run_completion",
+      sql`(${table.status} = 'pending' AND ${table.finishedAt} IS NULL AND ${table.timeoutAt} IS NOT NULL) OR (${table.status} <> 'pending' AND ${table.finishedAt} IS NOT NULL)`,
     ),
   ],
 );

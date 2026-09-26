@@ -53,6 +53,7 @@ export function evaluateWhatsAppRealTraffic(input: {
   /** Requiere la habilitación manual cuando se evalúa un guard de envío. */
   requireEnabled?: boolean;
   smoke: {
+    controlledTestContact?: boolean;
     providerTransportVerified?: boolean;
     provisioningEventId?: string | null;
     realPatientsEnabled: boolean;
@@ -102,7 +103,8 @@ export function evaluateWhatsAppRealTraffic(input: {
   }
   if (
     input.smoke.status !== "passed" ||
-    !input.smoke.syntheticContact ||
+    (!input.smoke.syntheticContact &&
+      input.smoke.controlledTestContact !== true) ||
     input.smoke.realPatientsEnabled
   ) {
     blockers.push({

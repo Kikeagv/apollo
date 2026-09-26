@@ -320,7 +320,15 @@ export function createKapsoReadinessProvider(
         // externo requerido por APO-92. Por eso no puede habilitar tráfico real.
         providerTransportVerified: false,
         realPatientsEnabled: false,
-        steps: {},
+        steps: {
+          "webhook-preflight": {
+            evidence: `Kapso confirmó el test del webhook de proyecto; event_type=${kapsoProjectWebhookEvents[0]}`,
+            observedAt: testedAt,
+            passed: true,
+            source: "provider",
+            status: "passed",
+          },
+        },
         syntheticContact: input.syntheticContactId.startsWith("synthetic-"),
       };
     },

@@ -611,10 +611,26 @@ export function createSimulatedWhatsAppSyntheticSmokeRunner(): WhatsAppSynthetic
         evidence: "Smoke sintético local ejecutado",
         providerTransportVerified: false,
         realPatientsEnabled: praxia.realPatientsEnabled,
-        steps: praxia.steps,
+        steps: {
+          ...praxia.steps,
+          "webhook-preflight": skippedSmokeStep(),
+          "real-reception": skippedSmokeStep(),
+          "real-processing": skippedSmokeStep(),
+          "real-response": skippedSmokeStep(),
+          "real-delivery": skippedSmokeStep(),
+        },
         syntheticContact: praxia.syntheticContact,
       };
     },
+  };
+}
+
+function skippedSmokeStep() {
+  return {
+    evidence: null,
+    message: "No aplica al runner simulado local",
+    passed: false,
+    status: "skipped" as const,
   };
 }
 

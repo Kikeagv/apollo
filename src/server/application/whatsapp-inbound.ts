@@ -126,6 +126,13 @@ export type WhatsAppInboundStore = {
     mode?: "historical" | "live";
     message: WhatsAppInboundEvent;
   }): Promise<WhatsAppInboundResolution>;
+  recordSyntheticSmokeInbound?(input: {
+    clinicId: string;
+    contactId: string;
+    eventId: string;
+    now: Date;
+    runId: string;
+  }): Promise<boolean>;
   scheduleRetry(input: {
     eventId: string;
     leaseToken: string;
@@ -449,6 +456,45 @@ async function processInboundEvent(input: {
     return "ignored";
   }
 
+  if (handling === "assistant" && hasWhatsAppSmokeChallengePrefix(event.text)) {
+    const runId = parseWhatsAppSmokeChallenge(event.text);
+    const recorded =
+      runId !== null &&
+      input.store.recordSyntheticSmokeInbound !== undefined &&
+      (await input.store.recordSyntheticSmokeInbound({
+        clinicId: resolved.clinicId,
+        contactId: resolved.contactId,
+        eventId: event.id,
+        now,
+        runId,
+      }));
+    if (!recorded) {
+      await store.markIgnored({
+        eventId: event.eventId,
+        leaseToken,
+        processedAt: now,
+        reason:
+          "El código de prueba de WhatsApp no corresponde a un smoke activo",
+      });
+      return "ignored";
+    }
+    await input.replySender.send({
+      clinicId: resolved.clinicId,
+      idempotencyKey: `whatsapp-smoke:${runId}:reply`,
+      recipientBusinessScopedUserId: resolved.recipientBusinessScopedUserId,
+      recipientPhoneE164: resolved.recipientPhoneE164,
+      serviceWindowExpiresAt,
+      text: "Prueba de transporte completada. Este Contacto no se registró como Paciente.",
+    });
+    await store.markProcessed({
+      consentReference: null,
+      eventId: event.eventId,
+      leaseToken,
+      processedAt: now,
+    });
+    return "processed";
+  }
+
   if (handling !== "history-sync") {
     await store.suppressPendingReminderDeliveries?.({
       clinicId: resolved.clinicId,
@@ -704,6 +750,16 @@ function notInboundReason(event: WhatsAppInboundEvent) {
   return event.direction === "outbound"
     ? "El evento Kapso es saliente"
     : "El evento Kapso no confirma una entrada del contacto";
+}
+
+function hasWhatsAppSmokeChallengePrefix(text: string | null) {
+  return text !== null && /^PRUEBA WHATSAPP(?:\s|$)/i.test(text.trim());
+}
+
+function parseWhatsAppSmokeChallenge(text: string | null) {
+  if (text === null) return null;
+  const match = /^PRUEBA WHATSAPP ([0-9a-f-]{36})$/i.exec(text.trim());
+  return match?.[1] ?? null;
 }
 
 function requireLeaseToken(event: WhatsAppInboundEvent) {

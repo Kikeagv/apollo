@@ -1,7 +1,10 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
-import { sanitizeWhatsAppSyntheticSmokeResult } from "~/domain/whatsapp-smoke";
+import {
+  expireWhatsAppSyntheticSmoke,
+  sanitizeWhatsAppSyntheticSmokeResult,
+} from "~/domain/whatsapp-smoke";
 import { evaluateWhatsAppReadiness } from "~/domain/whatsapp-readiness";
 import {
   inSuperadminTransaction,
@@ -21,6 +24,8 @@ import { evaluateWhatsAppOperationsTraffic } from "~/server/application/whatsapp
 import {
   apoloAuditEvents,
   clinics,
+  contactPatientLinks,
+  contacts,
   whatsappBilling,
   whatsappCircuitBreakers,
   whatsappConnections,
@@ -35,13 +40,94 @@ import {
   whatsappTrafficGateEvidences,
 } from "~/server/db/schema";
 import { publicWhatsAppConnectionMetadata } from "~/domain/whatsapp-connection";
+import {
+  persistSmokeResult,
+  smokeResultFromRow,
+} from "~/server/db/whatsapp-smoke-run-store";
 
 const OFFBOARDING_REASON = "Offboarding explícito de la Conexión de WhatsApp";
 
 export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
   async read(input) {
-    return inSuperadminTransaction(input.actorIdentityId, (transaction) =>
-      readSnapshot(transaction, input.clinicId),
+    return inSuperadminTransaction(
+      input.actorIdentityId,
+      async (transaction) => {
+        const snapshot = await readSnapshot(transaction, input.clinicId);
+        const smoke = snapshot.latestSmoke;
+        const now = new Date();
+        if (
+          smoke?.status !== "pending" ||
+          smoke.timeoutAt === null ||
+          smoke.timeoutAt === undefined ||
+          smoke.timeoutAt > now
+        ) {
+          return snapshot;
+        }
+        const [run] = await transaction
+          .select()
+          .from(whatsappSmokeRuns)
+          .where(
+            and(
+              eq(whatsappSmokeRuns.clinicId, input.clinicId),
+              eq(whatsappSmokeRuns.id, smoke.id),
+              eq(whatsappSmokeRuns.status, "pending"),
+            ),
+          )
+          .for("update");
+        if (run === undefined) return readSnapshot(transaction, input.clinicId);
+        const expired = expireWhatsAppSyntheticSmoke(
+          smokeResultFromRow(run),
+          now,
+        );
+        await persistSmokeResult(transaction, {
+          clinicId: input.clinicId,
+          finishedAt: now,
+          result: expired,
+          runId: smoke.id,
+        });
+        await insertApoloAudit(transaction, {
+          action: "whatsapp-synthetic-smoke-failed",
+          actorIdentityId: input.actorIdentityId,
+          clinicId: input.clinicId,
+          occurredAt: now,
+        });
+        return readSnapshot(transaction, input.clinicId);
+      },
+    );
+  },
+
+  async resolveSyntheticSmokeContact(input) {
+    return inSuperadminTransaction(
+      input.actorIdentityId,
+      async (transaction) => {
+        await setClinicContext(transaction, input.clinicId);
+        const contact = await transaction.query.contacts.findFirst({
+          columns: { id: true },
+          where: and(
+            eq(contacts.clinicId, input.clinicId),
+            eq(contacts.phoneE164, input.phoneE164),
+          ),
+        });
+        if (contact === undefined) {
+          throw new Error(
+            "El teléfono indicado no pertenece a un Contacto de esta Clínica",
+          );
+        }
+        const patientLink =
+          await transaction.query.contactPatientLinks.findFirst({
+            columns: { id: true },
+            where: and(
+              eq(contactPatientLinks.clinicId, input.clinicId),
+              eq(contactPatientLinks.contactId, contact.id),
+            ),
+          });
+        if (patientLink !== undefined) {
+          throw new Error(
+            "El Contacto de prueba tiene un vínculo a Paciente y no se puede usar",
+          );
+        }
+        return { id: contact.id, maskedPhone: maskPhone(input.phoneE164) };
+      },
     );
   },
 
@@ -139,6 +225,21 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
         const evidence = buildSmokeEvidence(result);
         await lockWhatsAppCircuit(transaction, input.clinicId);
         await setClinicContext(transaction, input.clinicId);
+        if (result.status === "pending") {
+          const [pendingRun] = await transaction
+            .select({ id: whatsappSmokeRuns.id })
+            .from(whatsappSmokeRuns)
+            .where(
+              and(
+                eq(whatsappSmokeRuns.clinicId, input.clinicId),
+                eq(whatsappSmokeRuns.status, "pending"),
+              ),
+            )
+            .for("update");
+          if (pendingRun !== undefined && pendingRun.id !== input.runId) {
+            throw new Error("Ya hay un smoke real pendiente para esta Clínica");
+          }
+        }
         await assertProvisioningGenerationBelongsToClinic(
           transaction,
           input.clinicId,
@@ -150,14 +251,19 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
             actorIdentityId: input.actorIdentityId,
             blockers: result.blockers,
             clinicId: input.clinicId,
-            createdAt: input.finishedAt,
+            createdAt: input.startedAt,
             evidence,
             finishedAt: input.finishedAt,
             id: input.runId,
             provisioningEventId: input.provisioningEventId,
             providerTransportVerified:
               result.providerTransportVerified === true,
+            requiresRealRoundtrip: result.requireRealRoundtrip === true,
             realPatientsEnabled: result.realPatientsEnabled,
+            testContactId: result.testContactId ?? null,
+            testContactMaskedPhone: result.testContactMaskedPhone ?? null,
+            timeoutAt: result.timeoutAt ?? null,
+            timedOutAt: result.timedOutAt ?? null,
             startedAt: input.startedAt,
             status: result.status,
             steps: result.steps,
@@ -172,7 +278,12 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
               provisioningEventId: input.provisioningEventId,
               providerTransportVerified:
                 result.providerTransportVerified === true,
+              requiresRealRoundtrip: result.requireRealRoundtrip === true,
               realPatientsEnabled: result.realPatientsEnabled,
+              testContactId: result.testContactId ?? null,
+              testContactMaskedPhone: result.testContactMaskedPhone ?? null,
+              timeoutAt: result.timeoutAt ?? null,
+              timedOutAt: result.timedOutAt ?? null,
               status: result.status,
               steps: result.steps,
               syntheticContact: result.syntheticContact,
@@ -180,18 +291,18 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
           });
         await insertApoloAudit(transaction, {
           action:
-            result.status === "passed"
-              ? "whatsapp-synthetic-smoke-passed"
-              : "whatsapp-synthetic-smoke-failed",
+            result.status === "pending"
+              ? "whatsapp-synthetic-smoke-started"
+              : `whatsapp-synthetic-smoke-${result.status}`,
           actorIdentityId: input.actorIdentityId,
           clinicId: input.clinicId,
-          occurredAt: input.finishedAt,
+          occurredAt: input.finishedAt ?? input.startedAt,
         });
         const snapshot = await readSnapshot(transaction, input.clinicId);
         await blockUnsafeRealTraffic(transaction, snapshot, {
           actorIdentityId: input.actorIdentityId,
           clinicId: input.clinicId,
-          now: input.finishedAt,
+          now: input.finishedAt ?? input.startedAt,
         });
         return readSnapshot(transaction, input.clinicId);
       },
@@ -531,7 +642,7 @@ async function readSnapshot(
       .select()
       .from(whatsappSmokeRuns)
       .where(eq(whatsappSmokeRuns.clinicId, clinicId))
-      .orderBy(desc(whatsappSmokeRuns.finishedAt))
+      .orderBy(desc(whatsappSmokeRuns.startedAt))
       .limit(1),
     transaction
       .select()
@@ -601,17 +712,11 @@ async function readSnapshot(
       latestSmoke === undefined
         ? null
         : {
-            blockers: latestSmoke.blockers,
-            evidence: latestSmoke.evidence,
+            ...smokeResultFromRow(latestSmoke),
             finishedAt: latestSmoke.finishedAt,
             id: latestSmoke.id,
             provisioningEventId: latestSmoke.provisioningEventId,
-            providerTransportVerified: latestSmoke.providerTransportVerified,
-            realPatientsEnabled: latestSmoke.realPatientsEnabled,
             startedAt: latestSmoke.startedAt,
-            status: latestSmoke.status,
-            steps: latestSmoke.steps,
-            syntheticContact: latestSmoke.syntheticContact,
           },
     offboarding:
       latestOffboarding === undefined
@@ -875,6 +980,11 @@ async function insertApoloAudit(
 
 function sanitizeEvidence(value: string | null) {
   return value === null ? null : sanitizeWhatsAppOperationalText(value);
+}
+
+function maskPhone(phoneE164: string) {
+  const digits = phoneE164.replace(/\D/g, "");
+  return `+${"•".repeat(Math.max(4, digits.length - 4))}${digits.slice(-4)}`;
 }
 
 function buildSmokeEvidence(

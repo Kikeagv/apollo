@@ -274,7 +274,10 @@ describe("migraciones de PostgreSQL", () => {
             ]),
           );
           const apo92Policies = await migrated<
-            Array<{ command: "ALL" | "INSERT" | "SELECT"; name: string }>
+            Array<{
+              command: "ALL" | "INSERT" | "SELECT" | "UPDATE";
+              name: string;
+            }>
           >`
             select cmd as command, policyname as name
             from pg_policies
@@ -305,6 +308,14 @@ describe("migraciones de PostgreSQL", () => {
                 name: "whatsapp_smoke_run_provider_read",
               },
               {
+                command: "SELECT",
+                name: "whatsapp_smoke_run_worker_read",
+              },
+              {
+                command: "UPDATE",
+                name: "whatsapp_smoke_run_worker_update",
+              },
+              {
                 command: "ALL",
                 name: "whatsapp_offboarding_run_superadmin_manage",
               },
@@ -318,6 +329,56 @@ describe("migraciones de PostgreSQL", () => {
               },
             ]),
           );
+          const apo106SmokeColumns = await migrated<
+            Array<{ column_name: string; is_nullable: string }>
+          >`
+            select column_name, is_nullable
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_smoke_run'
+              and column_name in (
+                'finished_at', 'requires_real_roundtrip', 'test_contact_id',
+                'test_contact_masked_phone', 'timeout_at', 'timed_out_at'
+              )
+            order by column_name
+          `;
+          expect(apo106SmokeColumns).toEqual([
+            { column_name: "finished_at", is_nullable: "YES" },
+            { column_name: "requires_real_roundtrip", is_nullable: "NO" },
+            { column_name: "test_contact_id", is_nullable: "YES" },
+            { column_name: "test_contact_masked_phone", is_nullable: "YES" },
+            { column_name: "timed_out_at", is_nullable: "YES" },
+            { column_name: "timeout_at", is_nullable: "YES" },
+          ]);
+          const apo106ContactConstraint = await migrated<
+            Array<{ columns: string[]; referencedColumns: string[] }>
+          >`
+            select
+              array(
+                select attribute.attname
+                from unnest(constraint_row.conkey) with ordinality as key(attnum, ordinality)
+                inner join pg_attribute attribute
+                  on attribute.attrelid = constraint_row.conrelid
+                 and attribute.attnum = key.attnum
+                order by key.ordinality
+              ) as columns,
+              array(
+                select attribute.attname
+                from unnest(constraint_row.confkey) with ordinality as key(attnum, ordinality)
+                inner join pg_attribute attribute
+                  on attribute.attrelid = constraint_row.confrelid
+                 and attribute.attnum = key.attnum
+                order by key.ordinality
+              ) as "referencedColumns"
+            from pg_constraint constraint_row
+            where constraint_row.conname = 'whatsapp_smoke_run_test_contact_fk'
+          `;
+          expect(apo106ContactConstraint).toEqual([
+            {
+              columns: ["clinic_id", "test_contact_id"],
+              referencedColumns: ["clinic_id", "id"],
+            },
+          ]);
           const apo92Rls = await migrated<
             Array<{
               force_row_security: boolean;

@@ -88,6 +88,9 @@ function fakeStore(events: WhatsAppInboundEvent[]) {
       recipientBusinessScopedUserId: "US.USER.1",
       recipientPhoneE164: null,
     });
+  const recordSyntheticSmokeInbound = vi
+    .fn<NonNullable<WhatsAppInboundStore["recordSyntheticSmokeInbound"]>>()
+    .mockResolvedValue(false);
   const scheduleRetry = vi.fn<WhatsAppInboundStore["scheduleRetry"]>();
   const suppressPendingReminderDeliveries = vi
     .fn<
@@ -111,6 +114,7 @@ function fakeStore(events: WhatsAppInboundEvent[]) {
     markProcessed,
     markRejected,
     recordOperationalAlert,
+    recordSyntheticSmokeInbound,
     resolveMessage,
     saveAssistantResponse,
     scheduleRetry,
@@ -126,6 +130,7 @@ function fakeStore(events: WhatsAppInboundEvent[]) {
     recordOperationalAlert,
     conversationLockKeys,
     outcomes,
+    recordSyntheticSmokeInbound,
     resolveMessage,
     saveAssistantResponse,
     scheduleRetry,
@@ -156,6 +161,40 @@ function assistant() {
 }
 
 describe("worker de mensajes entrantes de WhatsApp", () => {
+  it("procesa el desafío del Contacto de prueba sin pasar por el asistente", async () => {
+    const runId = "a268e988-cddc-47c8-8b7a-a40da1060016";
+    const fake = fakeStore([event({ text: `PRUEBA WHATSAPP ${runId}` })]);
+    fake.recordSyntheticSmokeInbound.mockResolvedValue(true);
+    const acceptedAssistant = assistant();
+    const send = vi.fn<WhatsAppInboundReplySender["send"]>();
+
+    const result = await runKapsoInboundWorker(
+      { now: NOW },
+      fake.store,
+      acceptedAssistant,
+      acceptedConsent,
+      { send },
+      undefined,
+      inactiveTakeover,
+    );
+
+    expect(result).toMatchObject({ ignored: 0, processed: 1 });
+    expect(fake.recordSyntheticSmokeInbound).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      contactId: "contact-1",
+      eventId: "message-1",
+      now: NOW,
+      runId,
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    const [reply] = send.mock.calls[0] ?? [];
+    expect(reply?.clinicId).toBe("clinic-1");
+    expect(reply?.idempotencyKey).toBe(`whatsapp-smoke:${runId}:reply`);
+    expect(reply?.text).toContain("no se registró como Paciente");
+    expect(acceptedAssistant.processText).not.toHaveBeenCalled();
+    expect(acceptedConsentCheck).not.toHaveBeenCalled();
+  });
+
   it("devuelve a pendiente el evento si el circuito se abre antes del asistente", async () => {
     const fake = fakeStore([event()]);
     const deferForCircuit =

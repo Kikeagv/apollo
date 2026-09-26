@@ -17,7 +17,10 @@ import {
   whatsappRealTrafficGateLabel,
   type WhatsAppRealTrafficBlocker,
 } from "~/domain/whatsapp-traffic";
-import type { WhatsAppOnboardingMode } from "~/domain/whatsapp-preflight";
+import {
+  isValidE164PhoneNumber,
+  type WhatsAppOnboardingMode,
+} from "~/domain/whatsapp-preflight";
 import { whatsappSyntheticSmokeStepLabels } from "~/domain/whatsapp-smoke";
 import { formatDateTime } from "~/app/format-date";
 import {
@@ -40,6 +43,7 @@ import { WhatsAppActivationClosureSection } from "./whatsapp-activation-closure-
 /** Panel mínimo, aislado de Panacea, para pagos, estado y soporte comercial. */
 export function ApoloOperations() {
   const [clinicId, setClinicId] = useState("");
+  const [smokeTestPhone, setSmokeTestPhone] = useState("");
   const [activationRefreshToken, setActivationRefreshToken] = useState(0);
   const refreshActivationContract = () =>
     setActivationRefreshToken((value) => value + 1);
@@ -69,7 +73,11 @@ export function ApoloOperations() {
   );
   const whatsappOperations = api.apolo.getWhatsAppOperations.useQuery(
     { clinicId },
-    { enabled: Boolean(clinicId) },
+    {
+      enabled: Boolean(clinicId),
+      refetchInterval: (query) =>
+        query.state.data?.latestSmoke?.status === "pending" ? 2_000 : false,
+    },
   );
   const [clinicName, setClinicName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
@@ -1284,9 +1292,10 @@ export function ApoloOperations() {
             Piloto, tráfico real y retirada de WhatsApp
           </h2>
           <p className="mt-1 text-sm text-slate-300">
-            El smoke usa el contacto sintético de la Clínica seleccionada. No
-            crea Pacientes ni habilita datos reales. El número, WABA y las
-            plantillas Meta se conservan durante el offboarding.
+            El smoke de Kapso usa un Contacto existente sin vínculo a Paciente.
+            El roundtrip vence en cinco minutos, registra pasos por Clínica y no
+            habilita Pacientes reales. El número, WABA y las plantillas Meta se
+            conservan durante el offboarding.
           </p>
         </div>
         {!clinicId ? (
@@ -1340,20 +1349,59 @@ export function ApoloOperations() {
                 <div>
                   <h3 className="font-semibold">Smoke E2E sintético</h3>
                   <p className="mt-1 text-sm text-slate-300">
-                    Cubre conexión, recepción, respuesta, takeover, history
-                    sync, templates, delivery, duplicados, 429/timeout y los
-                    controles Kapso/Consentimiento.
+                    Combina contratos locales, preflight del webhook de Kapso y
+                    un roundtrip firmado con un Contacto de prueba. La respuesta
+                    aceptada sigue pendiente hasta que llegue el callback de
+                    entrega.
                   </p>
                 </div>
+                {whatsappOperations.data.connection?.provider === "kapso" ? (
+                  <label className="grid min-w-64 gap-1 text-sm">
+                    <span>Teléfono E.164 del Contacto de prueba</span>
+                    <input
+                      autoComplete="off"
+                      className="rounded border border-slate-600 bg-slate-950 px-3 py-2 text-white"
+                      inputMode="tel"
+                      onChange={(event) =>
+                        setSmokeTestPhone(event.target.value)
+                      }
+                      placeholder="+50370000000"
+                      type="tel"
+                      value={smokeTestPhone}
+                    />
+                    <span className="text-xs text-slate-400">
+                      Debe existir en esta Clínica y no estar vinculado a un
+                      Paciente.
+                    </span>
+                  </label>
+                ) : null}
                 <button
                   className="rounded bg-sky-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-                  disabled={runSyntheticSmoke.isPending}
-                  onClick={() => runSyntheticSmoke.mutate({ clinicId })}
+                  disabled={
+                    runSyntheticSmoke.isPending ||
+                    whatsappOperations.data.latestSmoke?.status === "pending" ||
+                    (whatsappOperations.data.connection?.provider === "kapso" &&
+                      !isValidE164PhoneNumber(smokeTestPhone.trim()))
+                  }
+                  onClick={() =>
+                    runSyntheticSmoke.mutate({
+                      clinicId,
+                      ...(whatsappOperations.data.connection?.provider ===
+                      "kapso"
+                        ? { testContactPhoneE164: smokeTestPhone.trim() }
+                        : {}),
+                    })
+                  }
                   type="button"
                 >
                   {runSyntheticSmoke.isPending
                     ? "Ejecutando…"
-                    : "Ejecutar smoke sintético"}
+                    : whatsappOperations.data.latestSmoke?.status === "pending"
+                      ? "Smoke en curso"
+                      : whatsappOperations.data.connection?.provider ===
+                          "kapso"
+                        ? "Ejecutar smoke de transporte"
+                        : "Ejecutar smoke sintético"}
                 </button>
               </div>
               {whatsappOperations.data.latestSmoke ? (
@@ -1363,10 +1411,13 @@ export function ApoloOperations() {
                     <strong>
                       {whatsappOperations.data.latestSmoke.status === "passed"
                         ? "aprobado"
-                        : "fallido"}
+                        : whatsappOperations.data.latestSmoke.status ===
+                            "pending"
+                          ? "esperando roundtrip"
+                          : "fallido"}
                     </strong>{" "}
-                    · contacto sintético:{" "}
-                    {whatsappOperations.data.latestSmoke.syntheticContact
+                    · Contacto de prueba controlado: {" "}
+                    {whatsappOperations.data.latestSmoke.controlledTestContact
                       ? "sí"
                       : "no"}{" "}
                     · Pacientes reales habilitados:{" "}
@@ -1374,18 +1425,79 @@ export function ApoloOperations() {
                       ? "sí"
                       : "no"}
                   </p>
+                  {whatsappOperations.data.latestSmoke.requireRealRoundtrip ? (
+                    <dl className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+                      <div>
+                        <dt className="text-slate-400">ID del run</dt>
+                        <dd className="font-mono">
+                          {whatsappOperations.data.latestSmoke.id}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-slate-400">Contacto controlado</dt>
+                        <dd>
+                          {whatsappOperations.data.latestSmoke
+                            .testContactMaskedPhone ?? "Teléfono no disponible"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-slate-400">Inicio / timeout</dt>
+                        <dd>
+                          {formatDateTime(
+                            whatsappOperations.data.latestSmoke.startedAt,
+                          )}{" "}
+                          /{" "}
+                          {whatsappOperations.data.latestSmoke.timeoutAt
+                            ? formatDateTime(
+                                whatsappOperations.data.latestSmoke.timeoutAt,
+                              )
+                            : "sin timeout"}
+                        </dd>
+                      </div>
+                    </dl>
+                  ) : null}
+                  {whatsappOperations.data.latestSmoke.status === "pending" &&
+                  whatsappOperations.data.latestSmoke.requireRealRoundtrip ? (
+                    <p className="mt-3 rounded border border-amber-500/50 bg-amber-950/40 p-3 text-sm text-amber-100">
+                      Desde el Contacto indicado, envíe a la Clínica este
+                      código:{" "}
+                      <code className="font-mono font-semibold">
+                        PRUEBA WHATSAPP {whatsappOperations.data.latestSmoke.id}
+                      </code>
+                    </p>
+                  ) : null}
                   <ul className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
                     {whatsappOperations.data.latestSmoke.steps.map((step) => (
                       <li key={step.code}>
                         <span
                           className={
-                            step.passed ? "text-teal-200" : "text-rose-200"
+                            step.status === "passed"
+                              ? "text-teal-200"
+                              : step.status === "pending"
+                                ? "text-amber-200"
+                                : step.status === "skipped"
+                                  ? "text-slate-400"
+                                  : "text-rose-200"
                           }
                         >
-                          {step.passed ? "✓" : "✕"}{" "}
+                          {step.status === "passed"
+                            ? "✓"
+                            : step.status === "pending"
+                              ? "…"
+                              : step.status === "skipped"
+                                ? "–"
+                                : "✕"}{" "}
                           {whatsappSyntheticSmokeStepLabels[step.code]}
                         </span>
                         {step.message ? " · " + step.message : ""}
+                        {step.evidence ? " · " + step.evidence : ""}
+                        {step.source
+                          ? ` · ${step.source === "provider" ? "Kapso" : "Praxia"}`
+                          : ""}
+                        {step.eventId ? ` · ${step.eventId}` : ""}
+                        {step.observedAt
+                          ? ` · ${formatDateTime(step.observedAt)}`
+                          : ""}
                       </li>
                     ))}
                   </ul>

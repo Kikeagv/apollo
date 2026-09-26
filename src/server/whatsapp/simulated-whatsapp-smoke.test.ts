@@ -59,5 +59,10 @@ describe("smoke sintético simulado de WhatsApp", () => {
     ).toBe(true);
     expect(result.steps["adult-flow"]?.passed).toBe(true);
     expect(result.steps["guardian-pending"]?.passed).toBe(true);
+    expect(result.steps["webhook-preflight"]?.status).toBe("skipped");
+    expect(result.steps["real-reception"]?.status).toBe("skipped");
+    expect(result.steps["real-processing"]?.status).toBe("skipped");
+    expect(result.steps["real-response"]?.status).toBe("skipped");
+    expect(result.steps["real-delivery"]?.status).toBe("skipped");
   });
 });

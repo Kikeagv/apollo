@@ -45,6 +45,30 @@ describe("gate de tráfico real de WhatsApp", () => {
     expect(result.blockers).toEqual([]);
   });
 
+  it("permite un roundtrip aprobado por Contacto controlado sin clasificarlo sintético", () => {
+    const result = evaluateWhatsAppRealTraffic({
+      circuitStatus: "closed",
+      clinicIsSynthetic: false,
+      connectionGenerationId: "generation-current",
+      connectionProvider: "kapso",
+      connectionStatus: "ready",
+      gates: readyGates(),
+      smoke: {
+        controlledTestContact: true,
+        providerTransportVerified: true,
+        provisioningEventId: "generation-current",
+        realPatientsEnabled: false,
+        status: "passed",
+        syntheticContact: false,
+      },
+      technicalReadiness: "ready",
+      trafficStatus: "blocked",
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.blockers).toEqual([]);
+  });
+
   it("exige habilitación manual cuando se usa como guard de envío", () => {
     const blocked = evaluateWhatsAppRealTraffic({
       circuitStatus: "closed",

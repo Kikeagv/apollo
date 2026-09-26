@@ -62,7 +62,10 @@ import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboardin
 import { createKapsoWebhookOffboardingProvider } from "~/server/whatsapp/kapso-provisioning";
 import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
 import { createSimulatedWhatsAppSyntheticSmokeRunner } from "~/server/whatsapp/simulated-whatsapp-smoke";
-import { whatsappOnboardingModes } from "~/domain/whatsapp-preflight";
+import {
+  isValidE164PhoneNumber,
+  whatsappOnboardingModes,
+} from "~/domain/whatsapp-preflight";
 import { whatsappRealTrafficGateCodes } from "~/domain/whatsapp-traffic";
 import {
   whatsappActivationCriterionCodes,
@@ -313,11 +316,24 @@ export const apoloRouter = {
     ),
 
   runWhatsAppSyntheticSmoke: protectedProcedure
-    .input(z.object({ clinicId: z.string().uuid() }))
+    .input(
+      z.object({
+        clinicId: z.string().uuid(),
+        testContactPhoneE164: z
+          .string()
+          .trim()
+          .refine(isValidE164PhoneNumber)
+          .optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const actorIdentityId = ctx.session.user.id;
       return runWhatsAppSyntheticSmoke(
-        { actorIdentityId, clinicId: input.clinicId },
+        {
+          actorIdentityId,
+          clinicId: input.clinicId,
+          testContactPhoneE164: input.testContactPhoneE164,
+        },
         {
           runner: {
             async run(smokeInput) {
