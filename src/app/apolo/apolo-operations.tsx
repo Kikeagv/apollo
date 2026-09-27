@@ -2149,6 +2149,7 @@ function OnboardingSummary({
 }: {
   snapshot: {
     connection: {
+      businessAccountId?: string | null;
       metadata: Record<string, string | null>;
       phoneNumberE164: string | null;
       phoneNumberId: string | null;
