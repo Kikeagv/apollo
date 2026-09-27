@@ -150,6 +150,46 @@ describe("adaptador de onboarding de Kapso", () => {
     ]);
   });
 
+  it("ignora números aún sin customer ni número visible al consultar asociaciones", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              customer_id: "kapso-customer-1",
+              display_phone_number: "+50370000000",
+              display_phone_number_normalized: "50370000000",
+              is_coexistence: false,
+              phone_number_id: "phone-1",
+            },
+            {
+              customer_id: null,
+              display_phone_number: null,
+              display_phone_number_normalized: null,
+              is_coexistence: false,
+              phone_number_id: "pending-phone",
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await expect(provider.listPhoneNumbers()).resolves.toEqual([
+      {
+        customerId: "kapso-customer-1",
+        displayPhoneNumber: "+50370000000",
+        displayPhoneNumberNormalized: "50370000000",
+        isCoexistence: false,
+        phoneNumberId: "phone-1",
+      },
+    ]);
+  });
+
   it("recorre todas las páginas del catálogo de números", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

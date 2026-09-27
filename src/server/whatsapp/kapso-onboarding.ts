@@ -17,7 +17,7 @@ const customerSchema = z.object({
 
 const phoneNumberSchema = z
   .object({
-    customer_id: z.string(),
+    customer_id: z.string().nullable(),
     display_phone_number: z.string().nullable().optional(),
     display_phone_number_normalized: z.string().nullable().optional(),
     is_coexistence: z.boolean().nullable().optional(),
@@ -25,6 +25,7 @@ const phoneNumberSchema = z
   })
   .refine(
     (phoneNumber) =>
+      phoneNumber.customer_id === null ||
       (phoneNumber.display_phone_number?.trim() ?? "") !== "" ||
       (phoneNumber.display_phone_number_normalized?.trim() ?? "") !== "",
     "Kapso no devolvió un número visible para la asociación",
@@ -85,7 +86,7 @@ export type KapsoCustomer = {
 };
 
 export type KapsoPhoneNumber = {
-  customerId: string;
+  customerId: string | null;
   displayPhoneNumber: string | null;
   displayPhoneNumberNormalized: string | null;
   isCoexistence: boolean | null;
@@ -220,14 +221,22 @@ export function createKapsoOnboardingProvider(
         );
         const response = parseKapsoPayload(phoneNumbersPageSchema, payload);
         phoneNumbers.push(
-          ...response.data.map((phoneNumber) => ({
-            customerId: phoneNumber.customer_id,
-            displayPhoneNumber: phoneNumber.display_phone_number ?? null,
-            displayPhoneNumberNormalized:
-              phoneNumber.display_phone_number_normalized ?? null,
-            isCoexistence: phoneNumber.is_coexistence ?? null,
-            phoneNumberId: phoneNumber.phone_number_id,
-          })),
+          ...response.data
+            .filter(
+              (phoneNumber) =>
+                phoneNumber.customer_id !== null ||
+                (phoneNumber.display_phone_number?.trim() ?? "") !== "" ||
+                (phoneNumber.display_phone_number_normalized?.trim() ?? "") !==
+                  "",
+            )
+            .map((phoneNumber) => ({
+              customerId: phoneNumber.customer_id,
+              displayPhoneNumber: phoneNumber.display_phone_number ?? null,
+              displayPhoneNumberNormalized:
+                phoneNumber.display_phone_number_normalized ?? null,
+              isCoexistence: phoneNumber.is_coexistence ?? null,
+              phoneNumberId: phoneNumber.phone_number_id,
+            })),
         );
         if (response.meta === undefined || page >= response.meta.total_pages) {
           return phoneNumbers;
