@@ -108,6 +108,10 @@ _Avoid_: clínica suspendida, clínica desactivada
 La prueba de autenticación de una persona operadora. No concede por sí misma acceso a una clínica ni contiene un rol de negocio.
 _Avoid_: usuario de clínica
 
+**Superadmin de Apolo**:
+La Identidad autorizada para operar la plataforma desde la consola de Apolo. No requiere una membresía ni una Sesión de clínica; el acceso a los datos de una Clínica se concede mediante una operación administrativa explícita o una Sesión de soporte auditada.
+_Avoid_: asignarle un rol clínico o inferir acceso a una Clínica por ser superadmin
+
 **Usuario de clínica**:
 La persona operadora autorizada dentro de una clínica, con un rol y una relación con un médico cuando aplica. Es el sujeto que fija el contexto de clínica para RLS.
 _Avoid_: identidad cuando se habla de permisos sobre datos de una clínica

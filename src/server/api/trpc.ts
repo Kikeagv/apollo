@@ -17,6 +17,7 @@ import { ManualAppointmentOutsideScheduleConfirmationRequiredError } from "~/ser
 import {
   CLINIC_SESSION_COOKIE,
   CLINIC_TRUSTED_DEVICE_COOKIE,
+  findTrustedSuperadminAccess,
   findTrustedClinicContext,
 } from "~/server/application/clinic-access";
 import { db } from "~/server/db";
@@ -162,6 +163,23 @@ export const clinicProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   }
   return next({ ctx: { clinic } });
 });
+
+/** Procedimiento de Apolo: requiere rol de superadmin y un dispositivo verificado. */
+export const superadminProcedure = protectedProcedure.use(
+  async ({ ctx, next }) => {
+    const authorized = await findTrustedSuperadminAccess({
+      identityId: ctx.session.user.id,
+      trustedDeviceToken: readCookie(ctx.headers, CLINIC_TRUSTED_DEVICE_COOKIE),
+    });
+    if (!authorized) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Acceso de superadmin no disponible",
+      });
+    }
+    return next();
+  },
+);
 
 function readCookie(headers: Headers, name: string) {
   return headers

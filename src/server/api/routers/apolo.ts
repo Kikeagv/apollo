@@ -46,7 +46,7 @@ import {
   openWhatsAppCircuitBreaker,
   reactivateWhatsAppCircuitBreaker,
 } from "~/server/application/whatsapp-circuit-breaker";
-import { protectedProcedure } from "~/server/api/trpc";
+import { superadminProcedure } from "~/server/api/trpc";
 import {
   drizzleSubscriptionSupportStore,
   listCommercialClinics,
@@ -114,11 +114,11 @@ function withLegacyClinicSummary(registration: ClinicRegistration) {
 
 /** Operación comercial de Apolo, separada de los procedimientos de Panacea. */
 export const apoloRouter = {
-  listWhatsAppInboundAlerts: protectedProcedure.query(({ ctx }) =>
+  listWhatsAppInboundAlerts: superadminProcedure.query(({ ctx }) =>
     listWhatsAppInboundOperationalAlerts({ identityId: ctx.session.user.id }),
   ),
 
-  getClinicSupervisionSummary: protectedProcedure
+  getClinicSupervisionSummary: superadminProcedure
     .input(z.object({ clinicId: z.string().uuid() }))
     .query(({ ctx, input }) =>
       getClinicSupervisionSummary(
@@ -155,14 +155,14 @@ export const apoloRouter = {
       ),
     ),
 
-  getSupervisionTemplateCatalog: protectedProcedure.query(({ ctx }) =>
+  getSupervisionTemplateCatalog: superadminProcedure.query(({ ctx }) =>
     getWhatsAppTemplateCatalogCoverage(
       { actorIdentityId: ctx.session.user.id },
       drizzleSupervisionDashboardStore,
     ),
   ),
 
-  getSupervisionSystemOverview: protectedProcedure.query(({ ctx }) =>
+  getSupervisionSystemOverview: superadminProcedure.query(({ ctx }) =>
     getSupervisionSystemOverview(
       {
         actorIdentityId: ctx.session.user.id,
@@ -182,7 +182,7 @@ export const apoloRouter = {
     ),
   ),
 
-  resolveWhatsAppInboundAlert: protectedProcedure
+  resolveWhatsAppInboundAlert: superadminProcedure
     .input(z.object({ alertId: z.string().uuid() }))
     .mutation(({ ctx, input }) =>
       resolveWhatsAppInboundOperationalAlert({
@@ -192,18 +192,18 @@ export const apoloRouter = {
       }),
     ),
 
-  getWhatsAppRuntimeDiagnostic: protectedProcedure.query(({ ctx }) =>
+  getWhatsAppRuntimeDiagnostic: superadminProcedure.query(({ ctx }) =>
     getWhatsAppRuntimeDiagnostic(
       { identityId: ctx.session.user.id },
       drizzleWhatsAppRuntimeDiagnosticReader,
     ),
   ),
 
-  listCommercialClinics: protectedProcedure.query(({ ctx }) =>
+  listCommercialClinics: superadminProcedure.query(({ ctx }) =>
     listCommercialClinics(ctx.session.user.id),
   ),
 
-  createManualClinic: protectedProcedure
+  createManualClinic: superadminProcedure
     .input(
       z.object({
         clinicName: z.string().trim().min(1).max(120),
@@ -231,7 +231,7 @@ export const apoloRouter = {
       ),
     ),
 
-  retryClinicInvitation: protectedProcedure
+  retryClinicInvitation: superadminProcedure
     .input(z.object({ clinicId: z.string().uuid() }))
     .mutation(({ ctx, input }) =>
       retryClinicInvitation(
@@ -243,7 +243,7 @@ export const apoloRouter = {
       ),
     ),
 
-  getClinicRegistration: protectedProcedure
+  getClinicRegistration: superadminProcedure
     .input(z.object({ clinicId: z.string().uuid() }))
     .query(({ ctx, input }) =>
       drizzleClinicRegistrationStore.read({
@@ -252,7 +252,7 @@ export const apoloRouter = {
       }),
     ),
 
-  getKapsoOnboarding: protectedProcedure
+  getKapsoOnboarding: superadminProcedure
     .input(z.object({ clinicId: z.string().uuid() }))
     .query(({ ctx, input }) =>
       getKapsoWhatsAppOnboarding(
@@ -265,7 +265,7 @@ export const apoloRouter = {
       ),
     ),
 
-  getWhatsAppReadiness: protectedProcedure
+  getWhatsAppReadiness: superadminProcedure
     .input(z.object({ clinicId: z.string().uuid() }))
     .query(({ ctx, input }) =>
       getWhatsAppReadiness(
@@ -278,7 +278,7 @@ export const apoloRouter = {
       ),
     ),
 
-  retryWhatsAppReadiness: protectedProcedure
+  retryWhatsAppReadiness: superadminProcedure
     .input(
       z.object({
         action: z.enum([
@@ -302,7 +302,7 @@ export const apoloRouter = {
       ),
     ),
 
-  getWhatsAppOperations: protectedProcedure
+  getWhatsAppOperations: superadminProcedure
     .input(z.object({ clinicId: z.string().uuid() }))
     .query(({ ctx, input }) =>
       getWhatsAppOperations(
@@ -311,14 +311,14 @@ export const apoloRouter = {
       ),
     ),
 
-  getWhatsAppActivationContract: protectedProcedure
+  getWhatsAppActivationContract: superadminProcedure
     .input(z.object({ clinicId: z.string().uuid() }))
     .query(({ ctx, input }) =>
       getWhatsAppActivationContract(
         {
           actorIdentityId: ctx.session.user.id,
           clinicId: input.clinicId,
-          // protectedProcedure garantiza que la sesión de esta solicitud está autenticada.
+          // superadminProcedure garantiza que la sesión de esta solicitud está autenticada.
           identityStatus: "authenticated",
         },
         {
@@ -329,7 +329,7 @@ export const apoloRouter = {
       ),
     ),
 
-  recordWhatsAppActivationEvidence: protectedProcedure
+  recordWhatsAppActivationEvidence: superadminProcedure
     .input(
       z
         .object({
@@ -353,7 +353,7 @@ export const apoloRouter = {
           ...input,
           actorIdentityId: ctx.session.user.id,
           evidenceReference: input.evidenceReference ?? null,
-          // protectedProcedure garantiza que la sesión de esta solicitud está autenticada.
+          // superadminProcedure garantiza que la sesión de esta solicitud está autenticada.
           identityStatus: "authenticated",
           pendingReason: input.pendingReason ?? null,
         },
@@ -365,7 +365,7 @@ export const apoloRouter = {
       ),
     ),
 
-  recordWhatsAppTrafficGate: protectedProcedure
+  recordWhatsAppTrafficGate: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -385,7 +385,7 @@ export const apoloRouter = {
       ),
     ),
 
-  runWhatsAppSyntheticSmoke: protectedProcedure
+  runWhatsAppSyntheticSmoke: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -427,7 +427,7 @@ export const apoloRouter = {
       );
     }),
 
-  enableWhatsAppRealTraffic: protectedProcedure
+  enableWhatsAppRealTraffic: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -441,7 +441,7 @@ export const apoloRouter = {
       ),
     ),
 
-  revertWhatsAppRealTraffic: protectedProcedure
+  revertWhatsAppRealTraffic: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -456,7 +456,7 @@ export const apoloRouter = {
       ),
     ),
 
-  offboardWhatsAppConnection: protectedProcedure
+  offboardWhatsAppConnection: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -475,7 +475,7 @@ export const apoloRouter = {
       ),
     ),
 
-  getWhatsAppCircuitBreaker: protectedProcedure
+  getWhatsAppCircuitBreaker: superadminProcedure
     .input(z.object({ clinicId: z.string().uuid() }))
     .query(({ ctx, input }) =>
       getWhatsAppCircuitBreaker(
@@ -488,7 +488,7 @@ export const apoloRouter = {
       ),
     ),
 
-  getWhatsAppOperationalMetrics: protectedProcedure
+  getWhatsAppOperationalMetrics: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -508,7 +508,7 @@ export const apoloRouter = {
       ),
     ),
 
-  openWhatsAppCircuitBreaker: protectedProcedure
+  openWhatsAppCircuitBreaker: superadminProcedure
     .input(
       z.object({
         cause: z.enum([
@@ -536,7 +536,7 @@ export const apoloRouter = {
       ),
     ),
 
-  reactivateWhatsAppCircuitBreaker: protectedProcedure
+  reactivateWhatsAppCircuitBreaker: superadminProcedure
     .input(
       z.object({
         causeFixed: z.literal(true),
@@ -686,7 +686,7 @@ export const apoloRouter = {
       );
     }),
 
-  prepareKapsoWhatsAppOnboarding: protectedProcedure
+  prepareKapsoWhatsAppOnboarding: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -718,7 +718,7 @@ export const apoloRouter = {
       ),
     ),
 
-  manageKapsoWhatsAppSetupLink: protectedProcedure
+  manageKapsoWhatsAppSetupLink: superadminProcedure
     .input(
       z.object({
         action: z.enum(["generate", "regenerate", "revoke"]),
@@ -741,7 +741,7 @@ export const apoloRouter = {
       ),
     ),
 
-  recordTransferPayment: protectedProcedure
+  recordTransferPayment: superadminProcedure
     .input(
       z.object({
         amountUsd: z
@@ -762,7 +762,7 @@ export const apoloRouter = {
       }),
     ),
 
-  changeSubscriptionStatus: protectedProcedure
+  changeSubscriptionStatus: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -777,7 +777,7 @@ export const apoloRouter = {
       }),
     ),
 
-  openSupportSession: protectedProcedure
+  openSupportSession: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -793,7 +793,7 @@ export const apoloRouter = {
       }),
     ),
 
-  readSupportClinicSummary: protectedProcedure
+  readSupportClinicSummary: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),

@@ -4,10 +4,14 @@ import { and, eq, gt, sql } from "drizzle-orm";
 
 import { auth } from "~/server/better-auth";
 import { db } from "~/server/db";
-import { inClinicTransaction } from "~/server/db/clinic-context";
+import {
+  inClinicTransaction,
+  inSuperadminRlsTransaction,
+} from "~/server/db/clinic-context";
 import { env } from "~/env";
 import {
   type ClinicUserRole,
+  apoloSuperadmins,
   clinics,
   clinicSessions,
   clinicUsers,
@@ -53,6 +57,42 @@ export async function findActiveClinicContext(
     });
     if (clinic === undefined) return undefined;
     return { ...membership, clinicName: clinic.name };
+  });
+}
+
+/** Superadmins de Apolo no necesitan pertenecer a una Clínica. */
+export async function isSuperadminIdentity(identityId: string) {
+  const operator = await db.query.apoloSuperadmins.findFirst({
+    columns: { identityId: true },
+    where: eq(apoloSuperadmins.identityId, identityId),
+  });
+  return operator !== undefined;
+}
+
+/** Autoriza la consola de Apolo solo desde un dispositivo verificado y vigente. */
+export async function findTrustedSuperadminAccess(input: {
+  identityId: string;
+  trustedDeviceToken?: string;
+}) {
+  if (input.trustedDeviceToken === undefined) return false;
+  const trustedDeviceToken = input.trustedDeviceToken;
+
+  return db.transaction(async (transaction) => {
+    await setIdentityContext(transaction, input.identityId);
+    if (
+      !(await hasTrustedDevice(
+        transaction,
+        input.identityId,
+        trustedDeviceToken,
+      ))
+    ) {
+      return false;
+    }
+    const operator = await transaction.query.apoloSuperadmins.findFirst({
+      columns: { identityId: true },
+      where: eq(apoloSuperadmins.identityId, input.identityId),
+    });
+    return operator !== undefined;
   });
 }
 
@@ -123,7 +163,7 @@ export async function findTrustedDeviceClinicContext(input: {
 /** Inicia el desafío de correo solo después de una contraseña válida de Better Auth. */
 export async function sendClinicLoginOtp(identityId: string, email: string) {
   const membership = await findActiveMembership(identityId);
-  if (membership === undefined) {
+  if (membership === undefined && !(await isSuperadminIdentity(identityId))) {
     throw new ClinicAccessError("La Identidad no tiene una membresía activa");
   }
 
@@ -139,11 +179,13 @@ export async function verifyClinicLoginOtp(input: {
   identityId: string;
   otp: string;
 }): Promise<{
-  clinicSession: ClinicSession;
+  clinicSession?: ClinicSession;
+  isSuperadmin: boolean;
   trustedDevice: TrustedDevice;
 }> {
   const membership = await findActiveMembership(input.identityId);
-  if (membership === undefined) {
+  const isSuperadmin = await isSuperadminIdentity(input.identityId);
+  if (membership === undefined && !isSuperadmin) {
     throw new ClinicAccessError("La Identidad no tiene una membresía activa");
   }
 
@@ -158,9 +200,12 @@ export async function verifyClinicLoginOtp(input: {
     );
 
   const trustedDevice = await createTrustedDevice(input.identityId);
-  const clinicSession = await createClinicSession(input.identityId);
+  const clinicSession =
+    membership === undefined
+      ? undefined
+      : await createClinicSession(input.identityId);
 
-  return { clinicSession, trustedDevice };
+  return { clinicSession, isSuperadmin, trustedDevice };
 }
 
 export type ClinicSession = {
@@ -273,6 +318,25 @@ async function insertIdentityAuditEvent(input: {
       : await findActiveClinicContext(input.identityId);
 
   if (context === undefined) {
+    if (
+      input.identityId !== undefined &&
+      (await isSuperadminIdentity(input.identityId))
+    ) {
+      await inSuperadminRlsTransaction(
+        input.identityId,
+        async (transaction) => {
+          await transaction.insert(identityAuditEvents).values({
+            action: input.action,
+            actorIdentityId: input.identityId,
+            actorKind: input.actorKind,
+            clinicId: null,
+            result: input.result,
+          });
+        },
+      );
+      return;
+    }
+
     await db.insert(identityAuditEvents).values({
       action: input.action,
       actorIdentityId: input.identityId,

@@ -38,7 +38,10 @@ export async function POST(request: Request) {
       result: "succeeded",
     });
 
-    const response = NextResponse.json({ status: "authenticated" as const });
+    const response = NextResponse.json({
+      ...(trustedDevice.isSuperadmin ? { destination: "/apolo" as const } : {}),
+      status: "authenticated" as const,
+    });
     response.cookies.set(
       CLINIC_TRUSTED_DEVICE_COOKIE,
       trustedDevice.trustedDevice.token,
@@ -50,7 +53,9 @@ export async function POST(request: Request) {
         secure: process.env.NODE_ENV === "production",
       },
     );
-    setClinicSessionCookie(response, trustedDevice.clinicSession);
+    if (trustedDevice.clinicSession !== undefined) {
+      setClinicSessionCookie(response, trustedDevice.clinicSession);
+    }
     return response;
   } catch {
     await recordClinicLoginAudit({

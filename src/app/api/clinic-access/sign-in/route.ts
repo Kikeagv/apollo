@@ -4,7 +4,9 @@ import { z } from "zod";
 
 import {
   createClinicSession,
+  findTrustedSuperadminAccess,
   findTrustedDeviceClinicContext,
+  isSuperadminIdentity,
   recordClinicLoginAudit,
   recordIdentitySecurityAudit,
   sendClinicLoginOtp,
@@ -104,13 +106,37 @@ export async function POST(request: Request) {
 
   const signedIn = (await authResponse.json()) as { user: { id: string } };
   await drizzleIdentityPasswordBlockStore.clearFailures(signedIn.user.id);
-  const context = await findTrustedDeviceClinicContext({
-    identityId: signedIn.user.id,
-    trustedDeviceToken: readCookie(
-      request.headers,
-      CLINIC_TRUSTED_DEVICE_COOKIE,
-    ),
-  });
+  const trustedDeviceToken = readCookie(
+    request.headers,
+    CLINIC_TRUSTED_DEVICE_COOKIE,
+  );
+  const isSuperadmin = await isSuperadminIdentity(signedIn.user.id);
+
+  if (
+    isSuperadmin &&
+    (await findTrustedSuperadminAccess({
+      identityId: signedIn.user.id,
+      trustedDeviceToken,
+    }))
+  ) {
+    await recordClinicLoginAudit({
+      identityId: signedIn.user.id,
+      result: "succeeded",
+    });
+    const response = NextResponse.json({
+      destination: "/apolo" as const,
+      status: "authenticated" as const,
+    });
+    copySetCookies(authResponse, response);
+    return response;
+  }
+
+  const context = isSuperadmin
+    ? undefined
+    : await findTrustedDeviceClinicContext({
+        identityId: signedIn.user.id,
+        trustedDeviceToken,
+      });
 
   if (context !== undefined) {
     await recordClinicLoginAudit({
@@ -134,14 +160,21 @@ export async function POST(request: Request) {
       result: "failed",
     });
     const response = NextResponse.json(
-      { error: "No tiene acceso a una Clínica activa" },
-      { status: 403 },
+      {
+        error: isSuperadmin
+          ? "No se pudo enviar el código de verificación"
+          : "No tiene acceso a una Clínica activa",
+      },
+      { status: isSuperadmin ? 502 : 403 },
     );
     copySetCookies(authResponse, response);
     return response;
   }
 
-  const response = NextResponse.json({ status: "otp-required" as const });
+  const response = NextResponse.json({
+    ...(isSuperadmin ? { destination: "/apolo" as const } : {}),
+    status: "otp-required" as const,
+  });
   copySetCookies(authResponse, response);
   return response;
 }
