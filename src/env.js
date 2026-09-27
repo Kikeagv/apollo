@@ -28,7 +28,10 @@ export const env = createEnv({
       .enum(["simulated", "cloudflare"])
       .default("simulated"),
     TURNSTILE_SECRET_KEY: z.string().optional(),
-    PUBLIC_SITE_URL: z.string().url().default("https://www.usepraxia.com"),
+    PUBLIC_SITE_URL:
+      process.env.NODE_ENV === "production"
+        ? z.string().url()
+        : z.string().url().default("http://localhost:3000"),
     SCHEDULER_SECRET: z.string().min(1).optional(),
   },
 
