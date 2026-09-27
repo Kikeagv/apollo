@@ -2,6 +2,7 @@ import {
   currentWhatsAppNumberHealth,
   evaluateWhatsAppReadiness,
   getWhatsAppReadinessGeneration,
+  isWhatsAppNumberMessagingAvailable,
   isSameWhatsAppReadinessGeneration,
   whatsappNumberHealthMaxAgeMs,
   type WhatsAppReadinessGate,
@@ -1352,7 +1353,7 @@ async function applyAction(
         },
       };
     }
-    if (result.numberHealth !== "healthy") {
+    if (!isWhatsAppNumberMessagingAvailable(result.numberHealth)) {
       return {
         ...state,
         numberEnvironment: result.numberEnvironment,

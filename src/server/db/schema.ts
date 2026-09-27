@@ -368,7 +368,9 @@ export const whatsappReadiness = createTable(
       .default("unknown")
       .notNull(),
     numberHealth: text("number_health")
-      .$type<"healthy" | "degraded" | "unhealthy" | "error" | "unknown">()
+      .$type<
+        "healthy" | "limited" | "degraded" | "unhealthy" | "error" | "unknown"
+      >()
       .default("unknown")
       .notNull(),
     numberHealthCheckedAt: timestamp("number_health_checked_at", {
@@ -457,7 +459,7 @@ export const whatsappReadiness = createTable(
     ),
     check(
       "whatsapp_readiness_number_health",
-      sql`${table.numberHealth} IN ('healthy', 'degraded', 'unhealthy', 'error', 'unknown')`,
+      sql`${table.numberHealth} IN ('healthy', 'limited', 'degraded', 'unhealthy', 'error', 'unknown')`,
     ),
     check(
       "whatsapp_readiness_project_webhook_status",

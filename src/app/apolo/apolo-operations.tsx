@@ -1059,7 +1059,11 @@ export function ApoloOperations() {
                   />
                   <DiagnosticValue
                     label="Salud del número"
-                    value={readiness.data.numberHealth}
+                    value={
+                      readiness.data.numberHealth === "limited"
+                        ? "Limitada (mensajería disponible)"
+                        : readiness.data.numberHealth
+                    }
                   />
                   <DiagnosticValue
                     label="Última prueba E2E"

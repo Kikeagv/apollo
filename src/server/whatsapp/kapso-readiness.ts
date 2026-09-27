@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  isWhatsAppNumberMessagingAvailable,
   whatsappCriticalTemplateCatalog,
   type WhatsAppNumberHealth,
   type WhatsAppTemplateCategory,
@@ -120,7 +121,7 @@ export function createKapsoReadinessProvider(
         input.phoneNumberId,
       );
       const numberHealth = health.health;
-      if (numberHealth !== "healthy") {
+      if (!isWhatsAppNumberMessagingAvailable(numberHealth)) {
         return {
           numberEnvironment,
           numberHealth,
@@ -394,7 +395,7 @@ async function readNumberHealth(
     new Date();
   return {
     checkedAt,
-    health: normalizeNumberHealth(readString(data, ["health", "status"])),
+    health: normalizeNumberHealth(data),
   };
 }
 
@@ -699,12 +700,15 @@ function normalizeTemplateCategory(
   }
 }
 
-function normalizeNumberHealth(value: string | null): WhatsAppNumberHealth {
-  switch (value?.toLowerCase()) {
+function normalizeNumberHealth(
+  data: Record<string, unknown>,
+): WhatsAppNumberHealth {
+  const value = readString(data, ["health", "status"])?.toLowerCase();
+  switch (value) {
     case "healthy":
       return "healthy";
     case "degraded":
-      return "degraded";
+      return hasLimitedButAvailableMessaging(data) ? "limited" : "degraded";
     case "unhealthy":
       return "unhealthy";
     case "error":
@@ -712,6 +716,77 @@ function normalizeNumberHealth(value: string | null): WhatsAppNumberHealth {
     default:
       return "unknown";
   }
+}
+
+/** Accept Meta's limited mode only when all non-messaging checks still pass. */
+function hasLimitedButAvailableMessaging(data: Record<string, unknown>) {
+  if (
+    data.retry_after !== undefined &&
+    data.retry_after !== null &&
+    data.retry_after !== ""
+  ) {
+    return false;
+  }
+  if (typeof data.error === "string" && data.error.trim() !== "") return false;
+
+  const checks = isRecord(data.checks) ? data.checks : null;
+  if (checks === null) return false;
+
+  const messagingHealth = checks.messaging_health;
+  if (
+    !isRecord(messagingHealth) ||
+    readString(messagingHealth, "overall_status")?.toUpperCase() !== "LIMITED"
+  ) {
+    return false;
+  }
+  const details = isRecord(messagingHealth.details)
+    ? messagingHealth.details
+    : null;
+  if (
+    details === null ||
+    readString(details, "can_send_message")?.toUpperCase() !== "LIMITED"
+  ) {
+    return false;
+  }
+
+  const requiredChecks = [
+    "phone_number_access",
+    "phone_number_connection",
+    "webhook_subscription",
+    "webhook_verified",
+  ];
+  if (
+    requiredChecks.some((name) => {
+      const check = checks[name];
+      return !isRecord(check) || check.passed !== true;
+    })
+  ) {
+    return false;
+  }
+  if (
+    Object.entries(checks).some(
+      ([name, check]) =>
+        name !== "messaging_health" &&
+        (!isRecord(check) || check.passed !== true),
+    )
+  ) {
+    return false;
+  }
+
+  const entities = Array.isArray(details.entities)
+    ? details.entities.filter(isRecord)
+    : [];
+  return (
+    entities.length > 0 &&
+    entities.every(
+      (entity) =>
+        readString(entity, "can_send_message")?.toUpperCase() !== "BLOCKED",
+    ) &&
+    entities.some(
+      (entity) =>
+        readString(entity, "can_send_message")?.toUpperCase() === "LIMITED",
+    )
+  );
 }
 
 function extractTemplateContent(remote: Record<string, unknown>) {

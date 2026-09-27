@@ -73,6 +73,7 @@ import {
   whatsappOnboardingModes,
 } from "~/domain/whatsapp-preflight";
 import { whatsappRealTrafficGateCodes } from "~/domain/whatsapp-traffic";
+import { isWhatsAppNumberMessagingAvailable } from "~/domain/whatsapp-readiness";
 import {
   whatsappActivationCriterionCodes,
   whatsappActivationEvidenceSources,
@@ -646,7 +647,9 @@ export const apoloRouter = {
             store: drizzleWhatsAppReadinessStore,
           },
         );
-        if (latestReadiness.numberHealth !== "healthy") {
+        if (
+          !isWhatsAppNumberMessagingAvailable(latestReadiness.numberHealth)
+        ) {
           throw new Error("La salud del número todavía no está recuperada");
         }
       }

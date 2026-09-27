@@ -6,6 +6,7 @@ import {
 } from "~/domain/whatsapp-connection";
 import {
   evaluateWhatsAppReadiness,
+  isWhatsAppNumberMessagingAvailable,
   type WhatsAppReadinessInput,
 } from "~/domain/whatsapp-readiness";
 import { evaluateWhatsAppRealTraffic } from "~/domain/whatsapp-traffic";
@@ -193,7 +194,7 @@ export async function requireWhatsAppConnectionReady(input: {
           readiness.projectWebhookId === null ||
           readiness.phoneNumberWebhookId === null ||
           connection.metadata.webhookStatus !== "ready" ||
-          connection.metadata.health !== "healthy" ||
+          !isWhatsAppNumberMessagingAvailable(connection.metadata.health) ||
           connection.phoneNumberId == null ||
           connection.businessAccountId == null ||
           readiness.phoneNumberId !== connection.phoneNumberId ||

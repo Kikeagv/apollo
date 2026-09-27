@@ -46,6 +46,7 @@ export type WhatsAppTemplateProvisioningStatus =
 
 export const whatsappNumberHealthStatuses = [
   "healthy",
+  "limited",
   "degraded",
   "unhealthy",
   "error",
@@ -54,6 +55,11 @@ export const whatsappNumberHealthStatuses = [
 
 export type WhatsAppNumberHealth =
   (typeof whatsappNumberHealthStatuses)[number];
+
+/** LIMITED means Meta permits messaging, but with a restricted capacity. */
+export function isWhatsAppNumberMessagingAvailable(health: unknown) {
+  return health === "healthy" || health === "limited";
+}
 
 export const whatsappE2EEvidenceScopes = [
   "message-roundtrip",
@@ -440,6 +446,14 @@ function evaluateNumber(input: WhatsAppReadinessInput): WhatsAppReadinessGate {
       "pending",
       "No se pudo verificar la salud operativa del número en Kapso",
       "Revalidar la salud del número en Kapso",
+    );
+  }
+  if (health === "limited") {
+    return gate(
+      "number",
+      "ready",
+      "Kapso permite mensajería con la capacidad limitada actual de Meta",
+      "Operar dentro del límite actual y revisar la limitación antes de solicitar un aumento",
     );
   }
   if (health === "degraded") {

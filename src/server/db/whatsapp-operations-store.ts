@@ -17,7 +17,10 @@ import {
   sanitizeWhatsAppSyntheticSmokeResult,
 } from "~/domain/whatsapp-smoke";
 import { whatsappOffboardingDeliverySuppressionReason } from "~/domain/whatsapp-offboarding";
-import { evaluateWhatsAppReadiness } from "~/domain/whatsapp-readiness";
+import {
+  evaluateWhatsAppReadiness,
+  isWhatsAppNumberMessagingAvailable,
+} from "~/domain/whatsapp-readiness";
 import {
   inSuperadminTransaction,
   inSuperadminRlsTransaction,
@@ -1006,7 +1009,7 @@ function readinessBlockers(
         (connection.metadata.projectId ?? null) !== readiness.projectId ||
         (connection.metadata.provisioningEventId ?? null) !==
           readiness.provisioningEventId ||
-        connection.metadata.health !== "healthy" ||
+        !isWhatsAppNumberMessagingAvailable(connection.metadata.health) ||
         connection.metadata.webhookStatus !== "ready")
     ) {
       blockers.push(
