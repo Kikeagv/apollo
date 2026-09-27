@@ -66,20 +66,30 @@ describe("caso de uso de onboarding Kapso", () => {
     );
   });
 
-  it("persiste la modalidad elegida junto con el preflight", async () => {
-    const provider = providerFixture({ customer: customerFixture() });
+  it("prepara dedicated sin exigir app ni QR", async () => {
+    const provider = providerFixture({
+      customer: customerFixture(),
+      dedicatedPhone: true,
+    });
     const store = storeFixture();
 
     await prepareKapsoWhatsAppOnboarding(
-      { ...baseInput, onboardingMode: "dedicated" },
+      {
+        ...baseInput,
+        onboardingMode: "dedicated",
+        qrDeviceAvailable: false,
+        whatsappBusinessApp: "not-installed",
+      },
       { provider, store },
     );
 
     expect(store.saved?.preflight?.onboardingMode).toBe("dedicated");
+    expect(store.saved?.preflight?.status).toBe("passed");
+    expect(store.saved?.connection?.connectionType).toBe("dedicated");
+    expect(provider.findCustomerByExternalId).toHaveBeenCalledOnce();
   });
 
   it.each([
-    ["dedicated", "blocked"],
     ["later", "not-run"],
     ["not-integrated", "not-run"],
   ] as const)(
@@ -490,7 +500,10 @@ function storeFixture(
     clinicName: "Clínica Aurora",
     connection: {
       clinicId: "clinic-1",
-      connectionType: "simulated",
+      connectionType:
+        options.readyKapso || options.connectionStatus !== undefined
+          ? "coexistence"
+          : "simulated",
       createdAt: new Date("2026-09-01T00:00:00.000Z"),
       customer:
         options.readyKapso || options.connectionStatus !== undefined

@@ -865,8 +865,8 @@ export function ApoloOperations() {
               }
               value={onboardingMode}
             >
-              <option value="coexistence">Coexistence (v1)</option>
-              <option value="dedicated">Dedicated (requiere ampliación)</option>
+              <option value="coexistence">Coexistence (app y API)</option>
+              <option value="dedicated">Dedicated (solo API)</option>
               <option value="later">Activar más tarde</option>
               <option value="not-integrated">No integrar</option>
             </select>
@@ -887,29 +887,38 @@ export function ApoloOperations() {
             />
             El número es propio de la Clínica
           </label>
-          <label className="block text-sm">
-            WhatsApp instalado en el número
-            <select
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-              onChange={(event) =>
-                setWhatsappBusinessApp(
-                  event.target.value as
-                    | "active"
-                    | "messenger-only"
-                    | "not-installed"
-                    | "not-willing",
-                )
-              }
-              value={whatsappBusinessApp}
-            >
-              <option value="active">WhatsApp Business App activa</option>
-              <option value="not-installed">No está instalada</option>
-              <option value="messenger-only">Solo WhatsApp Messenger</option>
-              <option value="not-willing">
-                No desea mantener WhatsApp Business App
-              </option>
-            </select>
-          </label>
+          {onboardingMode === "dedicated" && (
+            <p className="text-sm text-slate-300">
+              Dedicated usa el número por API. El número debe poder recibir la
+              verificación de Meta; no estará disponible en WhatsApp Business
+              App.
+            </p>
+          )}
+          {onboardingMode === "coexistence" && (
+            <label className="block text-sm">
+              WhatsApp instalado en el número
+              <select
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+                onChange={(event) =>
+                  setWhatsappBusinessApp(
+                    event.target.value as
+                      | "active"
+                      | "messenger-only"
+                      | "not-installed"
+                      | "not-willing",
+                  )
+                }
+                value={whatsappBusinessApp}
+              >
+                <option value="active">WhatsApp Business App activa</option>
+                <option value="not-installed">No está instalada</option>
+                <option value="messenger-only">Solo WhatsApp Messenger</option>
+                <option value="not-willing">
+                  No desea mantener WhatsApp Business App
+                </option>
+              </select>
+            </label>
+          )}
           <label className="block text-sm">
             Autoridad Meta
             <select
@@ -925,14 +934,16 @@ export function ApoloOperations() {
               <option value="confirmed">Confirmada</option>
             </select>
           </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              checked={qrDeviceAvailable}
-              onChange={(event) => setQrDeviceAvailable(event.target.checked)}
-              type="checkbox"
-            />
-            Hay un dispositivo para mostrar y completar el QR
-          </label>
+          {onboardingMode === "coexistence" && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                checked={qrDeviceAvailable}
+                onChange={(event) => setQrDeviceAvailable(event.target.checked)}
+                type="checkbox"
+              />
+              Hay un dispositivo para mostrar y completar el QR
+            </label>
+          )}
           <button
             className="rounded bg-sky-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
             disabled={

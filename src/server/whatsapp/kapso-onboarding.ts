@@ -130,6 +130,7 @@ export type KapsoOnboardingProvider = {
   listPhoneNumbers: () => Promise<KapsoPhoneNumber[]>;
   createSetupLink: (input: {
     allowedOrigin: string;
+    connectionType?: "coexistence" | "dedicated";
     customerId: string;
     failureRedirectUrl: string;
     reconnectPhoneNumber?: string;
@@ -246,7 +247,7 @@ export function createKapsoOnboardingProvider(
         );
       }
       const setupLink = {
-        allowed_connection_types: ["coexistence"],
+        allowed_connection_types: [input.connectionType ?? "coexistence"],
         allowed_origins: [allowedOrigin],
         failure_redirect_url: input.failureRedirectUrl,
         language: "es",

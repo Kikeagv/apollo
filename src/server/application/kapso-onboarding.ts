@@ -96,7 +96,7 @@ export type KapsoWhatsAppOnboardingAuditEvent = {
 };
 
 export type KapsoWhatsAppConnectionUpdate = {
-  connectionType: "coexistence";
+  connectionType: "coexistence" | "dedicated";
   metadata: Record<string, string | null>;
   phoneNumberE164: string | null;
   phoneNumberId: string | null;
@@ -283,14 +283,23 @@ export async function prepareKapsoWhatsAppOnboarding(
     clinicId: input.clinicId,
   });
   const onboardingMode =
-    input.onboardingMode ?? current.preflight?.onboardingMode ?? "coexistence";
-  const localPreflightInput = createPreflightInput(input, current, {
-    association: "not-checked",
-    numberConnectionType: "unknown",
-    phoneNumberId: null,
-  });
+    input.onboardingMode ??
+    (current.connection?.provider === "kapso" &&
+    current.connection.connectionType === "dedicated"
+      ? "dedicated"
+      : current.preflight?.onboardingMode ?? "coexistence");
+  const localPreflightInput = createPreflightInput(
+    input,
+    current,
+    {
+      association: "not-checked",
+      numberConnectionType: "unknown",
+      phoneNumberId: null,
+    },
+    onboardingMode === "dedicated" ? "dedicated" : "coexistence",
+  );
 
-  if (onboardingMode !== "coexistence") {
+  if (onboardingMode === "later" || onboardingMode === "not-integrated") {
     if (
       current.customerId !== null ||
       current.setupLink !== null ||
@@ -301,10 +310,8 @@ export async function prepareKapsoWhatsAppOnboarding(
       );
     }
     const checkedAt = now();
-    const isDedicated = onboardingMode === "dedicated";
-    const reason = isDedicated
-      ? "La modalidad dedicated requiere una ampliación de alcance aprobada antes de contactar a Kapso."
-      : onboardingMode === "later"
+    const reason =
+      onboardingMode === "later"
         ? "La Clínica se creó correctamente y la activación de WhatsApp quedó pendiente."
         : "La Clínica se creó correctamente sin integración de WhatsApp.";
     await dependencies.store.save({
@@ -314,7 +321,7 @@ export async function prepareKapsoWhatsAppOnboarding(
           action: "preflight-executed",
           customerId: current.customerId,
           reason,
-          result: isDedicated ? "blocked" : "succeeded",
+          result: "succeeded",
         },
       ],
       clinicId: input.clinicId,
@@ -324,13 +331,12 @@ export async function prepareKapsoWhatsAppOnboarding(
         checkedAt,
         checks: toPersistedChecks(localPreflightInput),
         onboardingMode,
-        nextAction: isDedicated
-          ? "Solicitar y registrar una ampliación aprobada antes de provisionar dedicated."
-          : onboardingMode === "later"
+        nextAction:
+          onboardingMode === "later"
             ? "Iniciar la activación de WhatsApp cuando la Clínica esté lista."
             : "No hay ninguna acción de WhatsApp pendiente.",
         reason,
-        status: isDedicated ? "blocked" : "not-run",
+        status: "not-run",
       },
     });
     return dependencies.store.read({
@@ -363,6 +369,7 @@ export async function prepareKapsoWhatsAppOnboarding(
       input,
       current,
       phoneResolution,
+      onboardingMode,
     );
     const evaluation = evaluateKapsoWhatsAppPreflight(preflightInput);
     const checkedAt = now();
@@ -386,6 +393,11 @@ export async function prepareKapsoWhatsAppOnboarding(
       }
       assertSameConfiguredPhone(kapsoConnection, input.phoneNumberE164);
       assertSameConfiguredPhoneAssociation(kapsoConnection, phoneResolution);
+      if (kapsoConnection.connectionType !== onboardingMode) {
+        throw new Error(
+          "La Conexión de WhatsApp debe conservar su modalidad original",
+        );
+      }
     }
 
     await dependencies.store.save({
@@ -415,9 +427,9 @@ export async function prepareKapsoWhatsAppOnboarding(
         ? {}
         : {
             connection: {
-              connectionType: "coexistence" as const,
+              connectionType: onboardingMode,
               metadata: {
-                mode: "coexistence",
+                mode: onboardingMode,
                 source: "kapso-onboarding",
                 displayPhoneE164: persistedPhoneNumber,
               },
@@ -481,6 +493,7 @@ function createPreflightInput(
   input: PrepareKapsoWhatsAppOnboardingInput,
   current: KapsoWhatsAppOnboardingSnapshot,
   phoneResolution: PhoneAssociationResult,
+  onboardingMode: "coexistence" | "dedicated",
 ): KapsoWhatsAppPreflightInput {
   const persistedOwnerName = current.ownerName?.trim();
   const ownerMatchesClinic =
@@ -490,6 +503,7 @@ function createPreflightInput(
 
   return {
     clinicName: current.clinicName,
+    onboardingMode,
     metaAuthority: input.metaAuthority,
     numberAssociation: phoneResolution.association,
     numberConnectionType: phoneResolution.numberConnectionType,

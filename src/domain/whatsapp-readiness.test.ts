@@ -72,6 +72,17 @@ function readyInput(
 }
 
 describe("readiness técnico de la Conexión de WhatsApp", () => {
+  it("acepta un número dedicated con todos los gates técnicos listos", () => {
+    const input = readyInput();
+    expect(
+      evaluateWhatsAppReadiness({
+        ...input,
+        connection: { ...input.connection, connectionType: "dedicated" },
+        now,
+      }).status,
+    ).toBe("ready");
+  });
+
   it("trata salud sin timestamp como desconocida", () => {
     expect(
       currentWhatsAppNumberHealth({

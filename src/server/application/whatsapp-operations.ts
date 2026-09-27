@@ -29,7 +29,7 @@ export { WhatsAppRealTrafficBlockedError } from "./whatsapp-provider";
 
 export type WhatsAppOperationsConnection = {
   businessAccountId: string | null;
-  connectionType: "coexistence" | "simulated";
+  connectionType: "coexistence" | "dedicated" | "simulated";
   customer: string;
   phoneNumberE164: string | null;
   phoneNumberId: string | null;

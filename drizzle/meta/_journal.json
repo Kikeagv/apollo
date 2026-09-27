@@ -813,6 +813,13 @@
       "when": 1790462876645,
       "tag": "0120_apo109_supervision_dashboard",
       "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1790550000000,
+      "tag": "0121_apo74_dedicated_whatsapp",
+      "breakpoints": true
     }
   ]
 }

@@ -378,12 +378,15 @@ function evaluateNumber(input: WhatsAppReadinessInput): WhatsAppReadinessGate {
       "Asociar la Conexión de WhatsApp con Kapso",
     );
   }
-  if (input.connection.connectionType !== "coexistence") {
+  if (
+    input.connection.connectionType !== "coexistence" &&
+    input.connection.connectionType !== "dedicated"
+  ) {
     return gate(
       "number",
       "blocked",
-      "El número no está conectado en modo coexistence",
-      "Completar el setup link en modo coexistence",
+      "El número no está conectado en una modalidad productiva",
+      "Completar el enlace de configuración de WhatsApp",
     );
   }
   if (input.connection.phoneNumberId == null) {

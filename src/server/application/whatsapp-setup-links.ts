@@ -160,6 +160,11 @@ export async function manageKapsoWhatsAppSetupLink(
 
     const created = await dependencies.provider.createSetupLink({
       customerId,
+      connectionType:
+        current.connection?.connectionType === "dedicated" ||
+        current.preflight?.onboardingMode === "dedicated"
+          ? "dedicated"
+          : "coexistence",
       allowedOrigin: new URL(dependencies.appUrl).origin,
       failureRedirectUrl: whatsappSetupLinkReturnUrl(dependencies.appUrl),
       ...(reconnectPhoneNumber === undefined ? {} : { reconnectPhoneNumber }),
@@ -253,11 +258,12 @@ function resolveReconnectPhoneNumber(
     );
   }
   if (
-    connection.connectionType !== "coexistence" ||
+    (connection.connectionType !== "coexistence" &&
+      connection.connectionType !== "dedicated") ||
     connection.phoneNumberE164 === null
   ) {
     throw new Error(
-      "La reconexión de WhatsApp requiere conservar el número productivo y su configuración coexistence",
+      "La reconexión de WhatsApp requiere conservar el número productivo y su modalidad",
     );
   }
 

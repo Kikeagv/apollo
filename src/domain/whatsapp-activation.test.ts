@@ -55,16 +55,16 @@ function makeEvidence(
 }
 
 describe("contrato de cierre de Activación de clínica", () => {
-  it("mantiene coexistence como v1 y no convierte dedicated en un cierre válido", () => {
+  it("admite dedicated en el alcance de activación", () => {
     const result = evaluateWhatsAppActivationContract(
       makeInput({ requestedMode: "dedicated" }),
     );
 
     expect(result.scope).toEqual({
-      allowed: false,
+      allowed: true,
       requestedMode: "dedicated",
-      status: "requires-approved-extension",
-      v1Mode: "coexistence",
+      status: "v1",
+      v1Mode: "dedicated",
     });
     expect(result.states).toEqual({
       connection: "ready",

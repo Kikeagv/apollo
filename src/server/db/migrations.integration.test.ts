@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 
 import postgres from "postgres";
@@ -7,9 +8,13 @@ import { describe, expect, it } from "vitest";
 
 const canonicalTermsAcceptanceErrorMessage =
   "Debe aceptar los Términos de uso de Praxia en su versión vigente antes de habilitar la atención por WhatsApp.";
-const clinicTermsRepairMigrationCreatedAt = "1789575811006";
-const apo91SchemaRepairMigrationCreatedAt = "1789575811007";
-const apo101ForwardRepairMigrationCreatedAt = "1790044247017";
+const forwardRepairStatements = readFileSync(
+  "drizzle/0109_apo101_forward_schema_repairs.sql",
+  "utf8",
+)
+  .split(/--> statement-breakpoint/g)
+  .map((statement) => statement.trim())
+  .filter(Boolean);
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
@@ -28,6 +33,14 @@ function runMigrations(databaseUrl: string) {
       env: { ...process.env, DATABASE_URL: databaseUrl },
     },
   );
+}
+
+async function reapplyForwardRepairs(migrated: ReturnType<typeof postgres>) {
+  await migrated.begin(async (transaction) => {
+    for (const statement of forwardRepairStatements) {
+      await transaction.unsafe(statement);
+    }
+  });
 }
 
 describe("migraciones de PostgreSQL", () => {
@@ -848,19 +861,7 @@ describe("migraciones de PostgreSQL", () => {
             delete from "pg-drizzle_clinic_terms_contract"
             where id = true
           `;
-          await migrated`
-            delete from drizzle.__drizzle_migrations
-            where created_at = ${clinicTermsRepairMigrationCreatedAt}
-          `;
-          await migrated`
-            delete from drizzle.__drizzle_migrations
-            where created_at = ${apo91SchemaRepairMigrationCreatedAt}
-          `;
-          await migrated`
-            delete from drizzle.__drizzle_migrations
-            where created_at = ${apo101ForwardRepairMigrationCreatedAt}
-          `;
-          await runMigrations(migratedUrl.toString());
+          await reapplyForwardRepairs(migrated);
           const repairedTermsContracts = await migrated<
             Array<{
               acceptance_error_message: string;
@@ -2800,16 +2801,7 @@ describe("migraciones de PostgreSQL", () => {
             drop table if exists "pg-drizzle_whatsapp_circuit_breaker_alert"
             cascade
           `;
-          await migrated`
-            delete from drizzle.__drizzle_migrations
-            where created_at = ${apo91SchemaRepairMigrationCreatedAt}
-          `;
-          await migrated`
-            delete from drizzle.__drizzle_migrations
-            where created_at = ${apo101ForwardRepairMigrationCreatedAt}
-          `;
-
-          await runMigrations(migratedUrl.toString());
+          await reapplyForwardRepairs(migrated);
 
           const inboundColumns = await migrated<Array<{ column_name: string }>>`
             select column_name

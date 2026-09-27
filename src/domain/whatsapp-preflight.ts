@@ -47,6 +47,7 @@ export type PhoneConnectionType = (typeof phoneConnectionTypes)[number];
 
 export type KapsoWhatsAppPreflightInput = {
   clinicName: string;
+  onboardingMode?: "coexistence" | "dedicated";
   metaAuthority: MetaAuthorityStatus;
   numberAssociation: PhoneAssociation;
   numberConnectionType: PhoneConnectionType;
@@ -106,7 +107,7 @@ const actions = {
   customerNumberAlreadyConfigured:
     "Usa el número de WhatsApp ya configurado para esta Clínica.",
   numberConnectionType:
-    "Mantén el número existente en modo coexistence antes de continuar.",
+    "El número de Kapso debe conservar la modalidad seleccionada.",
   numberNotOwned: "Registra un número propio de la Clínica antes de continuar.",
   phoneNumber: "Registra un número propio válido en formato internacional.",
   qrDevice:
@@ -154,14 +155,18 @@ export function evaluateKapsoWhatsAppPreflight(
     });
   }
 
-  if (input.whatsappBusinessApp === "not-installed") {
+  const mode = input.onboardingMode ?? "coexistence";
+  if (mode === "coexistence" && input.whatsappBusinessApp === "not-installed") {
     blockers.push({
       code: "whatsapp-business-app-required",
       message: "El número todavía no está activo en WhatsApp Business App.",
       nextAction: actions.whatsappBusinessApp,
     });
   }
-  if (input.whatsappBusinessApp === "messenger-only") {
+  if (
+    mode === "coexistence" &&
+    input.whatsappBusinessApp === "messenger-only"
+  ) {
     blockers.push({
       code: "messenger-not-supported",
       message:
@@ -169,7 +174,7 @@ export function evaluateKapsoWhatsAppPreflight(
       nextAction: actions.messenger,
     });
   }
-  if (input.whatsappBusinessApp === "not-willing") {
+  if (mode === "coexistence" && input.whatsappBusinessApp === "not-willing") {
     blockers.push({
       code: "whatsapp-business-app-required-for-coexistence",
       message:
@@ -185,7 +190,7 @@ export function evaluateKapsoWhatsAppPreflight(
       nextAction: actions.metaAuthority,
     });
   }
-  if (!input.qrDeviceAvailable) {
+  if (mode === "coexistence" && !input.qrDeviceAvailable) {
     blockers.push({
       code: "qr-device-required",
       message:
@@ -218,12 +223,12 @@ export function evaluateKapsoWhatsAppPreflight(
   }
   if (
     input.numberAssociation === "same-customer" &&
-    input.numberConnectionType !== "coexistence"
+    input.numberConnectionType !== mode
   ) {
     blockers.push({
       code: "number-connection-type-not-supported",
       message:
-        "El número ya asociado no está confirmado como una conexión coexistence.",
+        "El número ya asociado en Kapso no corresponde a la modalidad seleccionada.",
       nextAction: actions.numberConnectionType,
     });
   }

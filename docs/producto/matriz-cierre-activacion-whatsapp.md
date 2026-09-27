@@ -7,8 +7,9 @@ representación ejecutable está en
 
 ## Alcance y estados
 
-El camino v1 es `coexistence`. `dedicated` requiere una ampliación aprobada;
-`later` y `not-integrated` quedan diferidos. El contrato separa:
+El alcance productivo admite `coexistence` y `dedicated`. Dedicated opera
+solo por API: no conserva WhatsApp Business App ni exige QR. `later` y
+`not-integrated` quedan diferidos. El contrato separa:
 
 | Dimensión                     | Valores relevantes                                                       | Qué no significa                                |
 | ----------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
@@ -26,7 +27,7 @@ ejecutándose en cada cambio.
 
 | Ticket(s)                         | Criterio                        | Comportamiento                                                        | Prueba local                                                                                                                                 | Evidencia externa  | Pendiente inicial       |
 | --------------------------------- | ------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------- |
-| APO-74 / APO-94                   | Alcance de modalidad            | coexistence v1; dedicated exige ampliación                            | `src/domain/whatsapp-activation.test.ts`                                                                                                     | decisión local     | confirmar alcance       |
+| APO-74 / APO-94                   | Alcance de modalidad            | coexistence y dedicated admitidos; dedicated solo API                 | `src/domain/whatsapp-activation.test.ts`                                                                                                     | decisión local     | confirmar alcance       |
 | APO-75 / APO-94                   | Acceso al producto              | Identidad y propietario se validan aparte                             | `src/server/application/clinic-access.integration.test.ts`                                                                                   | desplegado         | acceso del propietario  |
 | APO-74 / APO-82 / APO-83 / APO-85 | Propiedad y aislamiento         | customer, WABA, número y generación por Clínica con RLS               | `src/server/application/whatsapp-connections.integration.test.ts`                                                                            | Kapso + desplegado | asociación externa      |
 | APO-77 / APO-85 / APO-86          | Preparación técnica             | número, webhooks, templates, billing y E2E vigentes                   | `src/domain/whatsapp-readiness.test.ts`                                                                                                      | Kapso + desplegado | gates técnicos          |
@@ -78,3 +79,36 @@ El estado `accepted` acredita únicamente la respuesta aceptada. Solo un callbac
 Kapso `delivered` o `read` completa el transporte. Un fallo o timeout conserva
 un resultado no exitoso y los gates de tráfico no cambian. La misma secuencia
 usa IDs y fechas sanitizados; el teléfono completo no se persiste.
+
+## Corte de verificación de APO-110 — 26 de septiembre de 2026
+
+**Resultado: piloto bloqueado.** Esta observación no cierra criterios ni habilita
+tráfico real. Las fuentes fueron la API y el portal de Kapso, la base local de
+desarrollo y los endpoints públicos de Praxia; no se probó la base ni la
+configuración privada del despliegue.
+
+| Criterio                    | Evidencia observada                                                                                                                                                                                                                                                     | Pendiente para cierre                                                                                                                                               |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Modalidad y primera Clínica | El número de `Clinica testing` está `CONNECTED` en Kapso, pero `is_coexistence=false` (`Dedicated`). La Clínica local es sintética y su Conexión está `degraded`, con tráfico real `blocked`.                                                                           | Decidir y documentar la modalidad autorizada; probar con una Clínica comercial elegible.                                                                            |
+| Webhooks y despliegue       | Los webhooks de proyecto y número están activos en Kapso, pero apuntan a `two-goats-juggle.loca.lt`, que respondió HTTP 503. `POST /api/webhooks/kapso` en `app.usepraxia.com` respondió 404 y `/api/health` devolvió el contrato anterior sin diagnóstico de WhatsApp. | Desplegar el código y las migraciones vigentes, configurar secretos y workers, y reconciliar los webhooks hacia el endpoint estable con entrega firmada comprobada. |
+| Plantillas y billing        | Las cuatro plantillas locales están `PENDING`, `in_review`, sin locale ni ID externo. La verificación de billing consta como `failed`; la consulta de billing del número en Kapso respondió 404.                                                                        | Obtener cuatro plantillas Utility `APPROVED` en el locale exacto y confirmar billing, crédito y atribución por Clínica.                                             |
+| Smoke real                  | No hay Contacto ni run de smoke para esta Clínica. El `e2e_status=passed` local tiene alcance `webhook-preflight`, que no acredita ida y vuelta ni callback `delivered`/`read`.                                                                                         | Ejecutar el smoke de APO-106 con un Contacto controlado y registrar evidencia de transporte de la generación vigente.                                               |
+| Segunda Clínica             | El proyecto de Kapso muestra 1/1 números disponibles.                                                                                                                                                                                                                   | Obtener capacidad para una segunda Clínica y demostrar aislamiento externo y desplegado.                                                                            |
+
+El checkout conserva la protección de tráfico: la Conexión no está lista y la
+evidencia de `webhook-preflight` no sustituye al smoke real. El 27 de septiembre
+se incorporó `dedicated` al contrato y a la migración versionada
+`0121_apo74_dedicated_whatsapp`. La elección de modalidad debe corresponder
+al número real registrado en Kapso.
+
+Verificación local: 731 pruebas unitarias pasaron, y lint y tipos pasaron. El
+recorrido E2E de Panacea pasó sus 14 casos con proveedor simulado después de
+corregir aserciones de activación y restituir el aviso visible del gate de
+WhatsApp real. La integración de conexiones por Clínica pasó tras actualizar
+el fixture al catálogo vigente. Dos pruebas de migración siguen fallando:
+eliminan entradas antiguas del ledger después de aplicar migraciones más
+recientes y esperan que `drizzle-kit migrate` vuelva a ejecutar esos reparos.
+El runner solo aplica migraciones posteriores a la última entrada registrada;
+estos escenarios necesitan una reparación hacia adelante o una prueba de
+recuperación ajustada al orden real del ledger antes de dar por validado el
+despliegue de APO-110.

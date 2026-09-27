@@ -4,6 +4,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
+import { whatsappCriticalTemplateCatalog } from "~/domain/whatsapp-readiness";
 import { getWhatsAppConnection } from "./whatsapp-connections";
 import {
   inClinicTransaction,
@@ -178,30 +179,21 @@ describe("Conexiones de WhatsApp persistentes", () => {
               status: "ready",
             });
             await transaction.insert(whatsappCriticalTemplates).values(
-              (
-                [
-                  ["confirmation", "appointment_confirmation"],
-                  ["reminder", "appointment_reminder"],
-                  ["cancellation", "appointment_cancellation"],
-                  ["reschedule", "appointment_reschedule"],
-                ] as const
-              ).map(([kind, name]) => ({
-                category: "UTILITY" as const,
+              whatsappCriticalTemplateCatalog.map((template) => ({
+                catalogVersion: template.version,
+                category: template.category,
                 clinicId: fixture.primary.clinicId,
-                kind,
-                locale: "es",
-                name,
+                content: template.content,
+                examples: template.examples,
+                kind: template.kind,
+                locale: template.locale,
+                name: template.name,
                 projectId: "project-1",
                 provisioningEventId: "00000000-0000-0000-0000-000000000001",
-                providerTemplateId: `template-${kind}`,
+                providerTemplateId: `template-${template.kind}`,
+                provisioningStatus: "approved" as const,
                 status: "APPROVED" as const,
-                variables: [
-                  "patient_name",
-                  "clinic_name",
-                  "appointment_date",
-                  "appointment_time",
-                  "doctor_name",
-                ],
+                variables: [...template.variables],
               })),
             );
           },

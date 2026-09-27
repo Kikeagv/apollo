@@ -97,7 +97,7 @@ export type WhatsAppActivationClosureCriterion = {
 export const whatsappActivationClosureCriteria = [
   {
     behavior:
-      "La modalidad coexistence es el alcance v1; dedicated solo se puede abrir mediante una ampliación aprobada.",
+      "Las modalidades coexistence y dedicated permiten activación; dedicated opera solo por API y no conserva WhatsApp Business App.",
     code: "scope-v1",
     issue: "APO-74 / APO-94",
     label: "Alcance de modalidad",
@@ -486,8 +486,8 @@ export type WhatsAppActivationContractInput = {
 export type WhatsAppActivationScope = {
   allowed: boolean;
   requestedMode: WhatsAppActivationMode | null;
-  status: "deferred" | "pending" | "requires-approved-extension" | "v1";
-  v1Mode: "coexistence";
+  status: "deferred" | "pending" | "v1";
+  v1Mode: "coexistence" | "dedicated";
 };
 
 export type WhatsAppActivationCriterionResult =
@@ -627,10 +627,10 @@ function evaluateScope(
   }
   if (requestedMode === "dedicated") {
     return {
-      allowed: false,
+      allowed: true,
       requestedMode,
-      status: "requires-approved-extension",
-      v1Mode: "coexistence",
+      status: "v1",
+      v1Mode: "dedicated",
     };
   }
   if (requestedMode === "later" || requestedMode === "not-integrated") {

@@ -27,7 +27,9 @@ export default async function WhatsAppSettingsPage() {
         <AlertDescription>
           El enlace de abajo inicia la configuración del número de la Clínica.
           El propietario debe completar el flujo de Meta; la sesión de Praxia
-          nunca recibe ni guarda OTP, QR, contraseñas o credenciales.
+          nunca recibe ni guarda OTP, QR, contraseñas o credenciales. Estos
+          ajustes por sí solos no activan WhatsApp real ni habilitan mensajes a
+          pacientes.
         </AlertDescription>
       </Alert>
       <WhatsAppConnectionSection />

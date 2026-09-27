@@ -137,8 +137,9 @@ function buildContract(input: {
 }) {
   const requestedMode: WhatsAppActivationMode | null =
     input.onboarding.preflight?.onboardingMode ??
-    (input.operations.connection?.connectionType === "coexistence"
-      ? "coexistence"
+    (input.operations.connection?.connectionType === "coexistence" ||
+    input.operations.connection?.connectionType === "dedicated"
+      ? input.operations.connection.connectionType
       : null);
   const ownerAccess: WhatsAppOwnerAccessStatus =
     input.onboarding.ownerAccess ??

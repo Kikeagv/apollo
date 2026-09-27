@@ -59,10 +59,9 @@ test("el médico propietario activa, verifica su navegador y abre Panacea", asyn
     await page.getByLabel("Contraseña", { exact: true }).fill(password);
     await page.getByLabel("Confirmar contraseña").fill(password);
     await page.getByRole("button", { name: "Activar cuenta" }).click();
+    await expect(page).toHaveURL(/\/\?next=/);
     await expect(
-      page.getByText(
-        "La cuenta se activó. En unos segundos la llevaremos al inicio de sesión.",
-      ),
+      page.getByRole("button", { name: "Iniciar sesión" }),
     ).toBeVisible();
 
     await page.goto("/");
@@ -1938,10 +1937,9 @@ async function activateAndOpenPanacea(
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByLabel("Confirmar contraseña").fill(password);
   await page.getByRole("button", { name: "Activar cuenta" }).click();
+  await expect(page).toHaveURL(/\/\?next=/);
   await expect(
-    page.getByText(
-      "La cuenta se activó. En unos segundos la llevaremos al inicio de sesión.",
-    ),
+    page.getByRole("button", { name: "Iniciar sesión" }),
   ).toBeVisible();
 
   await signInAndOpenPanacea(page, email);

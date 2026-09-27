@@ -33,6 +33,7 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
 
     expect(provider.createSetupLink).toHaveBeenCalledWith({
       allowedOrigin: "https://app.praxia.test",
+      connectionType: "coexistence",
       customerId: "kapso-customer-1",
       failureRedirectUrl: "https://app.praxia.test/whatsapp/activacion/retorno",
       successRedirectUrl: "https://app.praxia.test/whatsapp/activacion/retorno",
@@ -48,6 +49,23 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
         customerId: "kapso-customer-1",
         result: "succeeded",
       }),
+    );
+  });
+
+  it("genera un enlace exclusivo para dedicated", async () => {
+    const store = storeFixture({ onboardingMode: "dedicated" });
+    const provider = providerFixture();
+    await manageKapsoWhatsAppSetupLink(
+      {
+        action: "generate",
+        actorIdentityId: "superadmin-1",
+        actorType: "superadmin",
+        clinicId: "clinic-1",
+      },
+      { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+    );
+    expect(provider.createSetupLink).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionType: "dedicated" }),
     );
   });
 
@@ -67,6 +85,7 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
 
     expect(provider.createSetupLink).toHaveBeenCalledWith({
       allowedOrigin: "https://app.praxia.test",
+      connectionType: "coexistence",
       customerId: "kapso-customer-1",
       failureRedirectUrl: "https://app.praxia.test/whatsapp/activacion/retorno",
       reconnectPhoneNumber: "+50370000000",
@@ -562,6 +581,7 @@ function providerFixture(
 function storeFixture(
   options: {
     connection?: WhatsAppConnection;
+    onboardingMode?: "coexistence" | "dedicated";
     preflightPhoneNumber?: string;
     preflightStatus?: "blocked" | "passed";
     simulateActiveConflict?: boolean;
@@ -583,6 +603,7 @@ function storeFixture(
     preflight: {
       blockers: [],
       checkedAt: now,
+      onboardingMode: options.onboardingMode,
       checks: {
         metaAuthority: "confirmed",
         numberAssociation: "available",

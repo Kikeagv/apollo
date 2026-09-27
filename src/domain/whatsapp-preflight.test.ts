@@ -96,7 +96,7 @@ describe("preflight de WhatsApp con Kapso", () => {
 
     expect(result).toMatchObject({
       nextAction:
-        "Mantén el número existente en modo coexistence antes de continuar.",
+        "El número de Kapso debe conservar la modalidad seleccionada.",
       status: "blocked",
     });
     expect(result.blockers).toEqual(
@@ -106,6 +106,19 @@ describe("preflight de WhatsApp con Kapso", () => {
         }),
       ]),
     );
+  });
+
+  it("acepta dedicated sin Business App ni QR cuando el número coincide", () => {
+    const result = evaluateKapsoWhatsAppPreflight(
+      validInput({
+        onboardingMode: "dedicated",
+        numberAssociation: "same-customer",
+        numberConnectionType: "dedicated",
+        qrDeviceAvailable: false,
+        whatsappBusinessApp: "not-installed",
+      }),
+    );
+    expect(result.status).toBe("passed");
   });
 
   it("bloquea una asociación de número que Kapso no puede resolver de forma única", () => {

@@ -12,7 +12,7 @@ export const whatsappConnectionStatuses = [
 export type WhatsAppConnectionStatus =
   (typeof whatsappConnectionStatuses)[number];
 
-export const whatsappConnectionTypes = ["simulated", "coexistence"] as const;
+export const whatsappConnectionTypes = ["simulated", "coexistence", "dedicated"] as const;
 export type WhatsAppConnectionType = (typeof whatsappConnectionTypes)[number];
 
 /** Metadatos operativos permitidos; nunca contiene credenciales o tokens. */

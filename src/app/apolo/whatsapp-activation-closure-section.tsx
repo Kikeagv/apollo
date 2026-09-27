@@ -371,12 +371,11 @@ function closureStatusLabel(status: "blocked" | "pending" | "ready") {
 }
 
 function scopeStatusLabel(
-  status: "deferred" | "pending" | "requires-approved-extension" | "v1",
+  status: "deferred" | "pending" | "v1",
 ) {
   return {
     deferred: "Diferida",
     pending: "Por definir",
-    "requires-approved-extension": "Requiere ampliación aprobada",
     v1: "Coexistence v1",
   }[status];
 }

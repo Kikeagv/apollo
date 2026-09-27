@@ -297,6 +297,47 @@ describe("adaptador de onboarding de Kapso", () => {
     );
   });
 
+  it("limita el enlace dedicated a la conexión API", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            created_at: "2026-09-07T12:00:00.000Z",
+            expires_at: "2026-10-07T12:00:00.000Z",
+            id: "setup-link-dedicated",
+            status: "active",
+            url: "https://app.kapso.ai/whatsapp/setup/dedicated",
+            whatsapp_setup_error: null,
+            whatsapp_setup_status: "pending",
+          },
+        }),
+        { status: 201 },
+      ),
+    );
+    const provider = createKapsoOnboardingProvider({
+      apiKey: "kapso-secret",
+      fetchImpl,
+    });
+
+    await provider.createSetupLink({
+      allowedOrigin: "https://app.usepraxia.com",
+      connectionType: "dedicated",
+      customerId: "kapso-customer-1",
+      failureRedirectUrl:
+        "https://app.usepraxia.com/whatsapp/activacion/retorno",
+      successRedirectUrl:
+        "https://app.usepraxia.com/whatsapp/activacion/retorno",
+    });
+
+    const request = fetchImpl.mock.calls[0]?.[1];
+    if (typeof request?.body !== "string") {
+      throw new Error("Kapso no recibió el cuerpo JSON del enlace");
+    }
+    expect(request.body).toContain('"allowed_connection_types":["dedicated"]');
+    expect(request.body).toContain('"meta_billing_mode":"partner_managed"');
+    expect(request.body).toContain('"provision_phone_number":false');
+  });
+
   it("lista los enlaces del customer sin devolver tokens", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
