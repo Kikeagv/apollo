@@ -31,12 +31,15 @@ export function VerifyClinicOtpForm({
         headers: { "content-type": "application/json" },
         method: "POST",
       });
-      const result = (await response.json()) as { error?: string };
+      const result = (await response.json()) as {
+        destination?: "/apolo";
+        error?: string;
+      };
       if (!response.ok) {
         setError(result.error ?? "El OTP no es válido.");
         return;
       }
-      window.location.assign(nextPath);
+      window.location.assign(result.destination ?? nextPath);
     } catch {
       setError("No se pudo verificar el OTP.");
     } finally {

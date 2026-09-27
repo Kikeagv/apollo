@@ -14,6 +14,7 @@ import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
 
 type SignInResult = {
+  destination?: "/apolo";
   error?: string;
   status?: "authenticated" | "otp-required";
 };
@@ -47,8 +48,8 @@ export function ClinicSignInForm({
       }
       window.location.assign(
         result.status === "otp-required"
-          ? `/?verificar=otp&next=${encodeURIComponent(nextPath)}`
-          : nextPath,
+          ? `/?verificar=otp&next=${encodeURIComponent(result.destination ?? nextPath)}`
+          : (result.destination ?? nextPath),
       );
     } catch {
       setError("No se pudo iniciar sesión.");
