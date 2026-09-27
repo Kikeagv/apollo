@@ -80,35 +80,29 @@ Kapso `delivered` o `read` completa el transporte. Un fallo o timeout conserva
 un resultado no exitoso y los gates de tráfico no cambian. La misma secuencia
 usa IDs y fechas sanitizados; el teléfono completo no se persiste.
 
-## Corte de verificación de APO-110 — 26 de septiembre de 2026
+## Corte de verificación de APO-110 — 27 de septiembre de 2026
 
-**Resultado: piloto bloqueado.** Esta observación no cierra criterios ni habilita
-tráfico real. Las fuentes fueron la API y el portal de Kapso, la base local de
-desarrollo y los endpoints públicos de Praxia; no se probó la base ni la
-configuración privada del despliegue.
+**Resultado: infraestructura del piloto desplegada; piloto comercial pendiente.**
+El commit `46c539ad` está en `main` y en producción. Antes de migrar se completó
+un backup de PostgreSQL con pgBackRest. La base productiva avanzó de la
+migración 59 a la 116, incluida `0121_apo74_dedicated_whatsapp`; el despliegue
+de Coolify terminó con la aplicación healthy. Las credenciales Kapso se
+configuraron en runtime y `GET /api/health` confirmó `provider=kapso`.
 
-| Criterio                    | Evidencia observada                                                                                                                                                                                                                                                     | Pendiente para cierre                                                                                                                                               |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Modalidad y primera Clínica | El número de `Clinica testing` está `CONNECTED` en Kapso, pero `is_coexistence=false` (`Dedicated`). La Clínica local es sintética y su Conexión está `degraded`, con tráfico real `blocked`.                                                                           | Decidir y documentar la modalidad autorizada; probar con una Clínica comercial elegible.                                                                            |
-| Webhooks y despliegue       | Los webhooks de proyecto y número están activos en Kapso, pero apuntan a `two-goats-juggle.loca.lt`, que respondió HTTP 503. `POST /api/webhooks/kapso` en `app.usepraxia.com` respondió 404 y `/api/health` devolvió el contrato anterior sin diagnóstico de WhatsApp. | Desplegar el código y las migraciones vigentes, configurar secretos y workers, y reconciliar los webhooks hacia el endpoint estable con entrega firmada comprobada. |
-| Plantillas y billing        | Las cuatro plantillas locales están `PENDING`, `in_review`, sin locale ni ID externo. La verificación de billing consta como `failed`; la consulta de billing del número en Kapso respondió 404.                                                                        | Obtener cuatro plantillas Utility `APPROVED` en el locale exacto y confirmar billing, crédito y atribución por Clínica.                                             |
-| Smoke real                  | No hay Contacto ni run de smoke para esta Clínica. El `e2e_status=passed` local tiene alcance `webhook-preflight`, que no acredita ida y vuelta ni callback `delivered`/`read`.                                                                                         | Ejecutar el smoke de APO-106 con un Contacto controlado y registrar evidencia de transporte de la generación vigente.                                               |
-| Segunda Clínica             | El proyecto de Kapso muestra 1/1 números disponibles.                                                                                                                                                                                                                   | Obtener capacidad para una segunda Clínica y demostrar aislamiento externo y desplegado.                                                                            |
+| Criterio | Evidencia observada | Pendiente para cierre |
+| --- | --- | --- |
+| Modalidad y primera Clínica | El número `Clinica Tests` está `CONNECTED` en Kapso con `is_coexistence=false`, por lo que corresponde a `dedicated`. Código, UI y restricciones de base productiva admiten esa modalidad. La Clínica vinculada existe solo en desarrollo y es sintética; producción aún no tiene Clínicas comerciales. | Registrar una Clínica comercial y su propietario en producción, asociar su número y recorrer el onboarding real. |
+| Webhooks y despliegue | Webhooks de proyecto y número reconciliados a `https://app.usepraxia.com/api/webhooks/kapso`. Kapso marcó como `delivered` un evento sintético `whatsapp.message.received` enviado al webhook del número. El endpoint rechazó una petición sin firma con HTTP 401. | Probar el evento real de conexión de la Clínica y conservar la referencia de su generación. |
+| Workers | Los jobs `whatsapp-provisioning`, `whatsapp-inbound` y `whatsapp-outbound` corren cada minuto en Coolify; los tres registraron una primera ejecución `success`. | Observarlos con eventos reales de la Clínica comercial, incluidos reintentos y aislamiento. |
+| Plantillas y billing | En el estado local de la Clínica sintética, cuatro plantillas siguen `PENDING` y la verificación de billing figura `failed`. | Conseguir las cuatro plantillas Utility `APPROVED` en el locale exacto y confirmar billing, crédito y atribución por Clínica. |
+| Smoke real | La entrega del evento de prueba acredita el webhook, no una respuesta outbound. No hay Contacto controlado ni run de smoke en producción. El `e2e_status=passed` local tenía alcance `webhook-preflight`. | Ejecutar APO-106 con un Contacto controlado y verificar el callback de entrega `delivered` o `read`. |
+| Segunda Clínica | Kapso mostraba capacidad de 1/1 números en este corte. | Obtener capacidad para un segundo número y demostrar aislamiento externo y desplegado. |
 
-El checkout conserva la protección de tráfico: la Conexión no está lista y la
-evidencia de `webhook-preflight` no sustituye al smoke real. El 27 de septiembre
-se incorporó `dedicated` al contrato y a la migración versionada
-`0121_apo74_dedicated_whatsapp`. La elección de modalidad debe corresponder
-al número real registrado en Kapso.
+El tráfico real sigue bloqueado por los gates de preparación y consentimiento.
+No se declara APO-74 ni APO-110 terminados. La prueba del webhook de Kapso no
+equivale al smoke de ida y vuelta.
 
-Verificación local: 731 pruebas unitarias pasaron, y lint y tipos pasaron. El
-recorrido E2E de Panacea pasó sus 14 casos con proveedor simulado después de
-corregir aserciones de activación y restituir el aviso visible del gate de
-WhatsApp real. La integración de conexiones por Clínica pasó tras actualizar
-el fixture al catálogo vigente. Dos pruebas de migración siguen fallando:
-eliminan entradas antiguas del ledger después de aplicar migraciones más
-recientes y esperan que `drizzle-kit migrate` vuelva a ejecutar esos reparos.
-El runner solo aplica migraciones posteriores a la última entrada registrada;
-estos escenarios necesitan una reparación hacia adelante o una prueba de
-recuperación ajustada al orden real del ledger antes de dar por validado el
-despliegue de APO-110.
+Verificación del commit desplegado: 733 pruebas unitarias, 832 pruebas de
+integración, 14 casos E2E de Panacea, `npm run check` y `npm run build`
+pasaron. Las dos pruebas de recuperación de migraciones que fallaban se
+ajustaron a un reparo hacia adelante, compatible con el orden real del ledger.
