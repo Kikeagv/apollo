@@ -82,6 +82,10 @@ usa IDs y fechas sanitizados; el teléfono completo no se persiste.
 
 ## Corte de verificación de APO-110 — 27 de septiembre de 2026
 
+Este corte es histórico y precede el alta productiva de «Clinica Tests». El
+estado operativo vigente y los pasos para incorporar los primeros clientes
+están en [Puesta en marcha de Praxia en producción](puesta-en-marcha-produccion.md).
+
 **Resultado: infraestructura del piloto desplegada; piloto comercial pendiente.**
 El commit `46c539ad` está en `main` y en producción. Antes de migrar se completó
 un backup de PostgreSQL con pgBackRest. La base productiva avanzó de la
