@@ -44,6 +44,47 @@ export function createKapsoReadinessProvider(
   const fetchImpl = options.fetchImpl ?? fetch;
 
   return {
+    async getPhoneNumber(phoneNumberId) {
+      try {
+        const payload = await requestJson(
+          fetchImpl,
+          options.apiKey,
+          `/whatsapp/phone_numbers/${encodeURIComponent(phoneNumberId)}`,
+          { method: "GET" },
+        );
+        const data = unwrapData(payload);
+        const remotePhoneNumberId = readString(data, "phone_number_id");
+        const customerId = readString(data, "customer_id");
+        if (
+          remotePhoneNumberId === null ||
+          remotePhoneNumberId.trim() === "" ||
+          customerId === null ||
+          customerId.trim() === ""
+        ) {
+          throw new KapsoReadinessProviderError(
+            0,
+            "Kapso devolvió una asociación incompleta del número",
+          );
+        }
+        const businessAccountId = readString(data, "business_account_id");
+        return {
+          businessAccountId:
+            businessAccountId === null || businessAccountId.trim() === ""
+              ? null
+              : businessAccountId,
+          customerId,
+          phoneNumberId: remotePhoneNumberId,
+        };
+      } catch (error) {
+        if (
+          error instanceof KapsoReadinessProviderError &&
+          error.status === 404
+        ) {
+          return undefined;
+        }
+        throw error;
+      }
+    },
     async syncTemplates(input): Promise<WhatsAppTemplateSyncResult> {
       const accountModePayload = await requestJson(
         fetchImpl,

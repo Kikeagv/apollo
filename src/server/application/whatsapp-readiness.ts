@@ -233,6 +233,14 @@ export type WhatsAppReadinessReconciliationProvider =
   };
 
 export type WhatsAppReadinessProvider = {
+  getPhoneNumber?(phoneNumberId: string): Promise<
+    | {
+        businessAccountId: string | null;
+        customerId: string;
+        phoneNumberId: string;
+      }
+    | undefined
+  >;
   getBilling(input: {
     businessAccountId: string;
     phoneNumberId: string;
@@ -665,6 +673,55 @@ export async function runWhatsAppReadinessReconciliation(
           failure = error;
         }
       }
+      const connectionForBusinessAccount = next.connection;
+      if (
+        failure === null &&
+        connectionForBusinessAccount?.provider === "kapso" &&
+        connectionForBusinessAccount.phoneNumberId !== null &&
+        connectionForBusinessAccount.businessAccountId === null &&
+        dependencies.provider.getPhoneNumber !== undefined
+      ) {
+        try {
+          const phoneNumber = await dependencies.provider.getPhoneNumber(
+            connectionForBusinessAccount.phoneNumberId,
+          );
+          if (phoneNumber === undefined) {
+            failure = new WhatsAppReadinessBlockedError(
+              "Kapso ya no encuentra el número asociado a la Clínica",
+            );
+          } else if (
+            phoneNumber.phoneNumberId !==
+              connectionForBusinessAccount.phoneNumberId ||
+            phoneNumber.customerId !== connectionForBusinessAccount.customer
+          ) {
+            failure = new WhatsAppReadinessBlockedError(
+              "La asociación del número de Kapso no coincide con la Clínica",
+            );
+          } else if (phoneNumber.businessAccountId === null) {
+            failure = new WhatsAppReadinessBlockedError(
+              "Kapso todavía no confirmó el Business Account de la Clínica",
+            );
+          } else {
+            const associatedConnection = {
+              ...connectionForBusinessAccount,
+              businessAccountId: phoneNumber.businessAccountId,
+              metadata: {
+                ...connectionForBusinessAccount.metadata,
+                nextAction: "Confirmar webhooks de WhatsApp",
+                statusReason:
+                  "Kapso confirmó el Business Account durante la reconciliación",
+              },
+              status: "provisioning" as const,
+              updatedAt: input.now,
+            };
+            next = { ...next, connection: associatedConnection };
+            expectedGeneration =
+              getWhatsAppReadinessGeneration(associatedConnection);
+          }
+        } catch (error) {
+          failure = error;
+        }
+      }
       if (
         failure === null &&
         next.connection !== null &&
@@ -826,15 +883,24 @@ export async function runWhatsAppReadinessReconciliation(
           // persistence is unavailable in this attempt.
         }
       }
-      await dependencies.store.completeReconciliation({
-        attempts,
-        clinicId: lease.clinicId,
-        lastError: toErrorMessage(error),
-        leaseToken: lease.leaseToken,
-        nextAttemptAt,
-        now: input.now,
-        status,
-      });
+      try {
+        await dependencies.store.completeReconciliation({
+          attempts,
+          clinicId: lease.clinicId,
+          lastError: toErrorMessage(error),
+          leaseToken: lease.leaseToken,
+          nextAttemptAt,
+          now: input.now,
+          status,
+        });
+      } catch (completionError) {
+        if (completionError instanceof WhatsAppReadinessConflictError) {
+          // A newer reconciliation owns this clinic's state now.
+          result.retried += 1;
+          continue;
+        }
+        throw completionError;
+      }
       if (status === "pending") {
         result.pending += 1;
         result.retried += 1;
@@ -1144,7 +1210,11 @@ function assertConnectionForAction(
       "Kapso todavía no confirmó el phone_number_id de la Clínica",
     );
   }
-  if (action !== "e2e" && connection.businessAccountId == null) {
+  if (
+    action !== "e2e" &&
+    action !== "reactivate" &&
+    connection.businessAccountId == null
+  ) {
     throw new WhatsAppReadinessBlockedError(
       "Kapso todavía no confirmó el Business Account de la Clínica",
     );
@@ -1358,6 +1428,7 @@ async function applyAction(
 
 function isRetryableReadinessError(error: unknown) {
   if (error instanceof WhatsAppReadinessBlockedError) return false;
+  if (error instanceof WhatsAppReadinessConflictError) return true;
   const status =
     typeof error === "object" &&
     error !== null &&
