@@ -32,6 +32,11 @@ import {
   getWhatsAppRuntimeDiagnostic,
 } from "~/server/application/whatsapp-runtime";
 import {
+  getClinicSupervisionSummary,
+  getSupervisionSystemOverview,
+  getWhatsAppTemplateCatalogCoverage,
+} from "~/server/application/supervision-dashboard";
+import {
   getWhatsAppReadiness,
   retryWhatsAppReadiness,
 } from "~/server/application/whatsapp-readiness";
@@ -53,6 +58,7 @@ import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-st
 import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
 import { drizzleWhatsAppOperationsStore } from "~/server/db/whatsapp-operations-store";
 import { drizzleWhatsAppActivationEvidenceStore } from "~/server/db/whatsapp-activation-evidence-store";
+import { drizzleSupervisionDashboardStore } from "~/server/db/supervision-dashboard-store";
 import {
   listWhatsAppInboundOperationalAlerts,
   resolveWhatsAppInboundOperationalAlert,
@@ -110,6 +116,70 @@ function withLegacyClinicSummary(registration: ClinicRegistration) {
 export const apoloRouter = {
   listWhatsAppInboundAlerts: protectedProcedure.query(({ ctx }) =>
     listWhatsAppInboundOperationalAlerts({ identityId: ctx.session.user.id }),
+  ),
+
+  getClinicSupervisionSummary: protectedProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      getClinicSupervisionSummary(
+        {
+          actorIdentityId: ctx.session.user.id,
+          clinicId: input.clinicId,
+        },
+        {
+          store: drizzleSupervisionDashboardStore,
+          readWhatsAppReadiness: ({ actorIdentityId, clinicId }) =>
+            getWhatsAppReadiness(
+              {
+                access: "superadmin",
+                actorIdentityId,
+                clinicId,
+              },
+              drizzleWhatsAppReadinessStore,
+            ),
+          readWhatsAppOperations: ({ actorIdentityId, clinicId }) =>
+            getWhatsAppOperations(
+              { actorIdentityId, clinicId },
+              drizzleWhatsAppOperationsStore,
+            ),
+          readCircuitBreaker: ({ actorIdentityId, clinicId }) =>
+            getWhatsAppCircuitBreaker(
+              {
+                access: "superadmin",
+                actorIdentityId,
+                clinicId,
+              },
+              drizzleWhatsAppCircuitBreakerStore,
+            ),
+        },
+      ),
+    ),
+
+  getSupervisionTemplateCatalog: protectedProcedure.query(({ ctx }) =>
+    getWhatsAppTemplateCatalogCoverage(
+      { actorIdentityId: ctx.session.user.id },
+      drizzleSupervisionDashboardStore,
+    ),
+  ),
+
+  getSupervisionSystemOverview: protectedProcedure.query(({ ctx }) =>
+    getSupervisionSystemOverview(
+      {
+        actorIdentityId: ctx.session.user.id,
+        schedulerConfigured: env.SCHEDULER_SECRET !== undefined,
+      },
+      {
+        readRuntime: ({ actorIdentityId }) =>
+          getWhatsAppRuntimeDiagnostic(
+            { identityId: actorIdentityId },
+            drizzleWhatsAppRuntimeDiagnosticReader,
+          ),
+        readQueues: ({ actorIdentityId }) =>
+          drizzleSupervisionDashboardStore.readSystemQueues({
+            actorIdentityId,
+          }),
+      },
+    ),
   ),
 
   resolveWhatsAppInboundAlert: protectedProcedure

@@ -32,6 +32,129 @@ function runMigrations(databaseUrl: string) {
 
 describe("migraciones de PostgreSQL", () => {
   databaseTest(
+    "APO-109 expone solo contadores de entregas al superadmin mediante RLS",
+    async () => {
+      const databaseName = `apo_109_${randomUUID().replaceAll("-", "")}`;
+      const admin = postgres(process.env.DATABASE_URL!, { max: 1 });
+      const migratedUrl = new URL(process.env.DATABASE_URL!);
+      migratedUrl.pathname = `/${databaseName}`;
+
+      try {
+        await admin.unsafe(`create database "${databaseName}"`);
+        await runMigrations(migratedUrl.toString());
+
+        const migrated = postgres(migratedUrl.toString(), { max: 1 });
+        try {
+          const functionInfo = await migrated<
+            Array<{ is_security_definer: boolean; settings: string[] | null }>
+          >`
+            select
+              routine.prosecdef as is_security_definer,
+              routine.proconfig as settings
+            from pg_proc as routine
+            inner join pg_namespace as namespace
+              on namespace.oid = routine.pronamespace
+            where namespace.nspname = 'public'
+              and routine.proname = 'apolo_supervision_delivery_queue_status'
+          `;
+          expect(functionInfo).toHaveLength(1);
+          expect(functionInfo[0]).toMatchObject({
+            is_security_definer: true,
+          });
+          expect(functionInfo[0]?.settings?.join(",")).toContain(
+            "search_path=pg_catalog, public",
+          );
+
+          const policy = await migrated<
+            Array<{ name: string; command: string }>
+          >`
+            select policyname as name, cmd as command
+            from pg_policies
+            where schemaname = 'public'
+              and tablename = 'pg-drizzle_transactional_delivery_alert'
+              and policyname = 'transactional_delivery_alert_superadmin_read'
+          `;
+          expect(policy).toEqual([
+            {
+              name: "transactional_delivery_alert_superadmin_read",
+              command: "SELECT",
+            },
+          ]);
+
+          await expect(
+            migrated.begin(async (transaction) => {
+              await transaction`set local role panacea_clinical_access`;
+              return transaction`
+                select * from public.apolo_supervision_delivery_queue_status()
+              `;
+            }),
+          ).rejects.toThrow(/superadmin authorization required/i);
+
+          const identityId = `apo-109-${randomUUID()}`;
+          const [clinic] = await migrated<{ id: string }[]>`
+            insert into public."pg-drizzle_clinic" (name, is_synthetic)
+            values ('Clínica de prueba APO-109', true)
+            returning id
+          `;
+          if (!clinic) throw new Error("No se creó la Clínica de prueba");
+          await migrated`
+            insert into public."user" (
+              id, name, email, email_verified, created_at, updated_at
+            ) values (
+              ${identityId}, 'Superadmin de prueba',
+              ${`${identityId}@example.test`}, true, now(), now()
+            )
+          `;
+          await migrated`
+            insert into public."pg-drizzle_superadmin" (identity_id)
+            values (${identityId})
+          `;
+          await migrated`
+            insert into public."pg-drizzle_transactional_delivery" (
+              clinic_id, kind, idempotency_key, payload,
+              next_attempt_at, retain_until
+            ) values (
+              ${clinic.id}, 'daily-agenda-pdf', ${randomUUID()},
+              '{"patientReference":"private-sentinel"}'::jsonb,
+              now(), now()
+            )
+          `;
+
+          const counts = await migrated.begin(async (transaction) => {
+            await transaction`set local role panacea_clinical_access`;
+            await transaction`
+              select set_config('app.superadmin_id', ${identityId}, true)
+            `;
+            return transaction<
+              Array<{
+                pending: number;
+                processing: number;
+                attention: number;
+              }>
+            >`
+              select * from public.apolo_supervision_delivery_queue_status()
+            `;
+          });
+          expect(counts).toEqual([{ pending: 1, processing: 0, attention: 0 }]);
+          expect(JSON.stringify(counts)).not.toContain("private-sentinel");
+        } finally {
+          await migrated.end();
+        }
+      } finally {
+        await admin`
+          select pg_terminate_backend(pid)
+          from pg_stat_activity
+          where datname = ${databaseName}
+            and pid <> pg_backend_pid()
+        `;
+        await admin.unsafe(`drop database if exists "${databaseName}"`);
+        await admin.end();
+      }
+    },
+    30_000,
+  );
+
+  databaseTest(
     "aplican desde una base vacía y preservan los Eventos de Cita como append-only",
     async () => {
       const databaseName = `apo_45_${randomUUID().replaceAll("-", "")}`;

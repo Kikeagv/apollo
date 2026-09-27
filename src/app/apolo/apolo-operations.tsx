@@ -21,6 +21,7 @@ import {
   isValidE164PhoneNumber,
   type WhatsAppOnboardingMode,
 } from "~/domain/whatsapp-preflight";
+import type { SupervisionTabId } from "~/domain/supervision-navigation";
 import {
   evaluateWhatsAppCircuitReactivationEvidence,
   whatsappCircuitReactivationEvidenceMaxAgeMs,
@@ -43,10 +44,30 @@ import {
 } from "~/components/ui/alert-dialog";
 import { api } from "~/trpc/react";
 import { WhatsAppActivationClosureSection } from "./whatsapp-activation-closure-section";
+import { ClinicSupervisionSummary } from "./clinic-supervision-summary";
+import { SupervisionSystem } from "./supervision-system";
+import { SupervisionTabs } from "./supervision-tabs";
+import { SupervisionTemplates } from "./supervision-templates";
+import {
+  getSupervisionOperationStatusLabel,
+  SupervisionTechnicalDetails,
+} from "./supervision-diagnostics";
 
-/** Panel mínimo, aislado de Panacea, para pagos, estado y soporte comercial. */
+const operationStatusLabels = {
+  idle: "Sin operación",
+  pending: "En proceso",
+  success: "Completado",
+};
+const supportQueryStatusLabels = {
+  idle: "Sin consulta",
+  pending: "En proceso",
+  success: "Completada",
+};
+
+/** Consola interna de supervisión y operación comercial de Apolo. */
 export function ApoloOperations() {
   const [clinicId, setClinicId] = useState("");
+  const [activeTab, setActiveTab] = useState<SupervisionTabId>("overview");
   const [smokeTestPhone, setSmokeTestPhone] = useState("");
   const [activationRefreshToken, setActivationRefreshToken] = useState(0);
   const [reactivationEvidenceNow, setReactivationEvidenceNow] = useState(
@@ -54,14 +75,13 @@ export function ApoloOperations() {
   );
   const refreshActivationContract = () =>
     setActivationRefreshToken((value) => value + 1);
+  const utils = api.useUtils();
+  const refreshSupervisionSummary = () => {
+    if (clinicId) {
+      void utils.apolo.getClinicSupervisionSummary.invalidate({ clinicId });
+    }
+  };
   const clinics = api.apolo.listCommercialClinics.useQuery();
-  const runtimeDiagnostic = api.apolo.getWhatsAppRuntimeDiagnostic.useQuery();
-  const inboundAlerts = api.apolo.listWhatsAppInboundAlerts.useQuery();
-  const resolveInboundAlert = api.apolo.resolveWhatsAppInboundAlert.useMutation(
-    {
-      onSuccess: () => void inboundAlerts.refetch(),
-    },
-  );
   const onboarding = api.apolo.getKapsoOnboarding.useQuery(
     { clinicId },
     { enabled: Boolean(clinicId) },
@@ -166,12 +186,14 @@ export function ApoloOperations() {
       onSuccess: () => {
         void onboarding.refetch();
         refreshActivationContract();
+        refreshSupervisionSummary();
       },
     });
   const manageSetupLink = api.apolo.manageKapsoWhatsAppSetupLink.useMutation({
     onSuccess: () => {
       void onboarding.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
   });
   const retryReadiness = api.apolo.retryWhatsAppReadiness.useMutation({
@@ -179,11 +201,13 @@ export function ApoloOperations() {
       void readiness.refetch();
       void circuitBreaker.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
     onError: () => {
       void readiness.refetch();
       void circuitBreaker.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
   });
   const openCircuitBreaker = api.apolo.openWhatsAppCircuitBreaker.useMutation({
@@ -192,6 +216,7 @@ export function ApoloOperations() {
       void circuitBreaker.refetch();
       void readiness.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
   });
   const reactivateCircuitBreaker =
@@ -203,15 +228,22 @@ export function ApoloOperations() {
         void readiness.refetch();
         void operationalMetrics.refetch();
         refreshActivationContract();
+        refreshSupervisionSummary();
       },
       onError: () => {
         void circuitBreaker.refetch();
         refreshActivationContract();
+        refreshSupervisionSummary();
       },
     });
-  const recordPayment = api.apolo.recordTransferPayment.useMutation();
+  const recordPayment = api.apolo.recordTransferPayment.useMutation({
+    onSuccess: refreshSupervisionSummary,
+  });
   const setSubscription = api.apolo.changeSubscriptionStatus.useMutation({
-    onSuccess: () => clinics.refetch(),
+    onSuccess: () => {
+      void clinics.refetch();
+      refreshSupervisionSummary();
+    },
   });
   const openSupport = api.apolo.openSupportSession.useMutation({
     onSuccess: (session) => setSupportSessionId(session.id),
@@ -221,6 +253,7 @@ export function ApoloOperations() {
     onSuccess: () => {
       void whatsappOperations.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
   });
   const runSyntheticSmoke = api.apolo.runWhatsAppSyntheticSmoke.useMutation({
@@ -229,6 +262,7 @@ export function ApoloOperations() {
       void readiness.refetch();
       void circuitBreaker.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
   });
   const enableRealTraffic = api.apolo.enableWhatsAppRealTraffic.useMutation({
@@ -237,6 +271,7 @@ export function ApoloOperations() {
       void whatsappOperations.refetch();
       void readiness.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
   });
   const revertRealTraffic = api.apolo.revertWhatsAppRealTraffic.useMutation({
@@ -246,6 +281,7 @@ export function ApoloOperations() {
       void readiness.refetch();
       void circuitBreaker.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
   });
   const offboardConnection = api.apolo.offboardWhatsAppConnection.useMutation({
@@ -256,6 +292,7 @@ export function ApoloOperations() {
       void readiness.refetch();
       void circuitBreaker.refetch();
       refreshActivationContract();
+      refreshSupervisionSummary();
     },
   });
 
@@ -392,917 +429,892 @@ export function ApoloOperations() {
   });
 
   return (
-    <main className="mx-auto min-h-screen max-w-2xl space-y-6 bg-slate-950 p-8 text-slate-100">
-      <div>
+    <main className="mx-auto min-h-screen max-w-7xl space-y-6 bg-slate-950 p-4 text-slate-100 sm:p-8 [&_*:focus-visible]:outline [&_*:focus-visible]:outline-2 [&_*:focus-visible]:outline-offset-2 [&_*:focus-visible]:outline-teal-200">
+      <header className="space-y-2">
         <p className="text-sm font-medium tracking-[0.2em] text-teal-300">
           PRAXIA
         </p>
-        <h1 className="text-4xl font-semibold">Operación comercial</h1>
-        <p className="mt-2 text-slate-300">
-          Este camino no abre el panel clínico ni concede acceso clínico por sí
-          mismo.
+        <h1 className="text-4xl font-semibold">Supervisión</h1>
+        <p className="max-w-3xl text-slate-300">
+          Acceso, suscripción, conexión y capacidad de mensajería por Clínica,
+          con operación comercial y diagnósticos del sistema.
         </p>
-      </div>
-      <a
-        className="inline-flex rounded border border-teal-300 px-3 py-2 font-medium text-teal-200"
-        href="/apolo/alta"
-      >
-        Alta comercial o sintética
-      </a>
-      <section
-        aria-labelledby="whatsapp-runtime-title"
-        className="space-y-3 rounded-xl border border-slate-700 p-5"
-        data-whatsapp-runtime-diagnostic="true"
-      >
-        <div>
-          <h2 className="text-xl font-semibold" id="whatsapp-runtime-title">
-            Runtime de WhatsApp
-          </h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Diagnóstico de credenciales del proveedor central. No prueba la
-            Conexión de WhatsApp de una Clínica; las credenciales nunca se
-            muestran ni se guardan por Clínica.
-          </p>
-        </div>
-        {runtimeDiagnostic.isLoading ? (
-          <p className="text-sm text-slate-300" role="status">
-            Consultando configuración…
-          </p>
-        ) : runtimeDiagnostic.data ? (
-          <dl className="grid gap-3 text-sm sm:grid-cols-3">
-            <DiagnosticValue
-              label="Proveedor activo"
-              value={
-                runtimeDiagnostic.data.provider === "kapso"
-                  ? "Kapso"
-                  : "Simulado"
-              }
-            />
-            <DiagnosticValue
-              label="Estado del runtime"
-              value={
-                runtimeDiagnostic.data.configured
-                  ? "Configurado"
-                  : "Requiere configuración"
-              }
-            />
-            <DiagnosticValue
-              label="Secretos"
-              value={
-                runtimeDiagnostic.data.provider === "kapso"
-                  ? `${secretStatusLabel(runtimeDiagnostic.data.apiKey)} · ${secretStatusLabel(runtimeDiagnostic.data.webhookSecret)}`
-                  : "No requeridos"
-              }
-            />
-          </dl>
-        ) : (
-          <p className="text-sm text-amber-200" role="status">
-            El diagnóstico no está disponible para esta identidad.
-          </p>
-        )}
-      </section>
-      <section
-        aria-labelledby="whatsapp-inbound-alerts-title"
-        className="space-y-3 rounded-xl border border-rose-500/70 p-5"
-        data-whatsapp-inbound-alerts="true"
-      >
-        <div>
-          <h2
-            className="text-xl font-semibold"
-            id="whatsapp-inbound-alerts-title"
+      </header>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <label className="block min-w-64 flex-1 text-sm">
+          Clínica
+          <select
+            className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-200"
+            onChange={(event) => {
+              resetAdministrativeOperationState();
+              setClinicId(event.target.value);
+            }}
+            value={clinicId}
           >
-            Alertas de recepción de WhatsApp
-          </h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Eventos rechazados porque no se pudo verificar su Conexión o
-            customer. No se asignan automáticamente a ninguna Clínica.
-          </p>
-        </div>
-        {inboundAlerts.isLoading ? (
-          <p className="text-sm text-slate-300" role="status">
-            Consultando alertas…
-          </p>
-        ) : inboundAlerts.error ? (
-          <p className="text-sm text-amber-200" role="alert">
-            {inboundAlerts.error.message}
-          </p>
-        ) : inboundAlerts.data?.length === 0 ? (
-          <p className="text-sm text-slate-400">No hay alertas abiertas.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {inboundAlerts.data?.map((alert) => (
-              <li
-                className="rounded-lg border border-rose-500/40 bg-rose-950/30 p-3"
-                key={alert.id}
-              >
-                <p>{alert.reason}</p>
-                <p className="mt-1 text-slate-300">
-                  Conexión: <code>{alert.connectionReference}</code> · customer:{" "}
-                  <code>{alert.customerReference ?? "no informado"}</code>
-                </p>
-                <p className="mt-1 text-slate-300">
-                  Siguiente acción: {alert.nextAction}
-                </p>
-                <p className="mt-1 text-xs text-slate-400">
-                  Recibida: {formatDateTime(alert.createdAt)}
-                </p>
-                <button
-                  className="mt-3 rounded bg-rose-300 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-50"
-                  disabled={resolveInboundAlert.isPending}
-                  onClick={() =>
-                    resolveInboundAlert.mutate({ alertId: alert.id })
-                  }
-                  type="button"
-                >
-                  Corregí la Conexión; reintentar
-                </button>
-              </li>
+            <option value="">Seleccione una Clínica</option>
+            {clinics.data?.map((clinic) => (
+              <option key={clinic.id} value={clinic.id}>
+                {clinic.name} · {clinic.subscriptionStatus}
+              </option>
             ))}
-          </ul>
-        )}
-        {resolveInboundAlert.error ? (
-          <p className="text-sm text-amber-200" role="alert">
-            {resolveInboundAlert.error.message}
-          </p>
+          </select>
+        </label>
+        <a
+          className="inline-flex rounded border border-teal-300 px-3 py-2 font-medium text-teal-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-200"
+          href="/apolo/alta"
+        >
+          Alta comercial o sintética
+        </a>
+      </div>
+      <SupervisionTabs value={activeTab} onChange={setActiveTab} />
+      <section
+        aria-labelledby="supervision-tab-overview"
+        className="space-y-5"
+        hidden={activeTab !== "overview"}
+        id="supervision-panel-overview"
+        role="tabpanel"
+        tabIndex={0}
+      >
+        {activeTab === "overview" ? (
+          <ClinicSupervisionSummary
+            clinicId={clinicId}
+            onNavigate={setActiveTab}
+          />
         ) : null}
       </section>
-      <label className="block text-sm">
-        Clínica
-        <select
-          className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => {
-            resetAdministrativeOperationState();
-            setClinicId(event.target.value);
-          }}
-          value={clinicId}
-        >
-          <option value="">Seleccione una Clínica</option>
-          {clinics.data?.map((clinic) => (
-            <option key={clinic.id} value={clinic.id}>
-              {clinic.name} · {clinic.subscriptionStatus}
-            </option>
-          ))}
-        </select>
-      </label>
       <section
-        aria-labelledby="whatsapp-circuit-breaker-title"
-        className="space-y-4 rounded-xl border border-amber-500/70 p-5"
-        data-whatsapp-circuit-breaker="true"
+        aria-labelledby="supervision-tab-templates"
+        className="space-y-5"
+        hidden={activeTab !== "templates"}
+        id="supervision-panel-templates"
+        role="tabpanel"
+        tabIndex={0}
       >
-        <div>
-          <h2
-            className="text-xl font-semibold"
-            id="whatsapp-circuit-breaker-title"
+        {activeTab === "templates" ? <SupervisionTemplates /> : null}
+      </section>
+      <section
+        aria-labelledby="supervision-tab-system"
+        className="space-y-5"
+        hidden={activeTab !== "system"}
+        id="supervision-panel-system"
+        role="tabpanel"
+        tabIndex={0}
+      >
+        {activeTab === "system" ? <SupervisionSystem /> : null}
+      </section>
+      <section
+        aria-labelledby="supervision-tab-whatsapp"
+        className="space-y-5"
+        hidden={activeTab !== "whatsapp"}
+        id="supervision-panel-whatsapp"
+        role="tabpanel"
+        tabIndex={0}
+      >
+        <SupervisionTechnicalDetails summary="Diagnóstico técnico de capacidad, circuit breaker y métricas">
+          <section
+            aria-labelledby="whatsapp-circuit-breaker-title"
+            className="space-y-4 rounded-xl border border-amber-500/70 p-5"
+            data-whatsapp-circuit-breaker="true"
           >
-            Circuit breaker, crédito y métricas
-          </h2>
-          <p className="mt-1 text-sm text-slate-300">
-            El corte es por Clínica. Pausa el agente y la outbox de WhatsApp,
-            conserva los eventos pendientes y deja disponible la WhatsApp
-            Business App para continuidad manual.
-          </p>
-        </div>
-        {!clinicId ? (
-          <p className="text-sm text-slate-400">
-            Selecciona una Clínica para consultar su operación.
-          </p>
-        ) : circuitBreaker.isLoading ? (
-          <p className="text-sm text-slate-300" role="status">
-            Consultando el circuito…
-          </p>
-        ) : circuitBreaker.error ? (
-          <p className="text-sm text-amber-200" role="alert">
-            {circuitBreaker.error.message}
-          </p>
-        ) : circuitBreaker.data ? (
-          <>
-            <dl className="grid gap-3 text-sm sm:grid-cols-3">
-              <DiagnosticValue
-                label="Estado"
-                value={
-                  circuitBreaker.data.status === "open" ? "Abierto" : "Cerrado"
-                }
-              />
-              <DiagnosticValue
-                label="Causa"
-                value={circuitBreaker.data.cause ?? "—"}
-              />
-              <DiagnosticValue
-                label="Última transición"
-                value={formatDateTime(circuitBreaker.data.lastTransitionAt)}
-              />
-            </dl>
-            <p className="text-sm text-slate-300">
-              Motivo del corte: {circuitBreaker.data.reason}
-            </p>
-            <dl className="grid gap-3 rounded-lg border border-slate-700 p-3 text-sm sm:grid-cols-3">
-              <DiagnosticValue
-                label="Responsable del corte"
-                value={
-                  circuitBreaker.data.openedBy === null
-                    ? "Sin actor registrado"
-                    : circuitBreaker.data.openedBy.actorKind === "superadmin"
-                      ? (circuitBreaker.data.openedBy.displayName ??
-                        circuitBreaker.data.openedBy.actorIdentityId ??
-                        "Superadmin")
-                      : circuitBreaker.data.openedBy.actorKind === "system"
-                        ? "Sistema automático"
-                        : "Worker de WhatsApp"
-                }
-              />
-              <DiagnosticValue
-                label="Evidencia E2E más reciente"
-                value={
-                  latestSmoke === null
-                    ? (circuitBreaker.data.lastSyntheticEvidence ??
-                      "Todavía no hay evidencia E2E")
-                    : `${latestSmoke.status === "passed" ? "Aprobada" : latestSmoke.status === "pending" ? "Pendiente" : "Fallida"} · ${formatDateTime(latestSmoke.finishedAt)} · ${latestSmoke.evidence ?? (latestSmoke.blockers.map(({ message }) => message).join("; ") || "sin resumen")}`
-                }
-              />
-              <DiagnosticValue
-                label="Siguiente acción"
-                value={circuitBreaker.data.nextAction}
-              />
-            </dl>
-            <div className="grid gap-3 text-sm sm:grid-cols-3">
-              <MetricValue
-                label="Crédito Kapso"
-                value={
-                  readiness.data === undefined
-                    ? "—"
-                    : `${formatCents(readiness.data.billing.creditCents)} · reserva ${formatCents(readiness.data.billing.creditReserveCents ?? 0)} · en vuelo ${formatCents(readiness.data.billing.creditInFlightCents ?? 0)}`
-                }
-              />
-              <MetricValue
-                label="Salud de crédito"
-                value={
-                  readiness.data === undefined
-                    ? "—"
-                    : `${billingHealthLabel(readiness.data.billingHealth.level)} · ${readiness.data.billingHealth.balancePercent === null ? "saldo sin límite" : `${readiness.data.billingHealth.balancePercent}%`} · ${readiness.data.billingHealth.autonomyDays === null ? "autonomía no estimada" : `${readiness.data.billingHealth.autonomyDays} días`}`
-                }
-              />
-              <MetricValue
-                label="Consumo cuota"
-                value={
-                  readiness.data === undefined
-                    ? `${operationalMetrics.data?.quotaMessages ?? 0} mensajes`
-                    : `${readiness.data.billing.kapsoQuotaConsumed ?? operationalMetrics.data?.quotaMessages ?? 0} + ${readiness.data.billing.kapsoQuotaInFlight ?? 0} en vuelo / ${readiness.data.billing.kapsoMonthlyQuota ?? "∞"} mensajes`
-                }
-              />
-              <MetricValue
-                label="Latencia media"
-                value={
-                  operationalMetrics.data?.averageLatencyMs === null ||
-                  operationalMetrics.data?.averageLatencyMs === undefined
-                    ? "—"
-                    : `${operationalMetrics.data.averageLatencyMs} ms`
-                }
-              />
-              <MetricValue
-                label="Errores"
-                value={String(operationalMetrics.data?.errors ?? 0)}
-              />
-              <MetricValue
-                label="Entregas intentadas"
-                value={String(
-                  operationalMetrics.data?.deliveries.attempted ?? 0,
-                )}
-              />
-              <MetricValue
-                label="Entregas aceptadas / entregadas"
-                value={`${operationalMetrics.data?.deliveries.accepted ?? 0} / ${operationalMetrics.data?.deliveries.delivered ?? 0}`}
-              />
-              <MetricValue
-                label="Entregas fallidas / desconocidas"
-                value={`${operationalMetrics.data?.deliveries.failed ?? 0} / ${operationalMetrics.data?.deliveries.unknown ?? 0}`}
-              />
-              <MetricValue
-                label="Meta / plataforma (billing)"
-                value={`${readiness.data?.billing.metaChargesCents ?? operationalMetrics.data?.metaChargesCents ?? 0} / ${readiness.data?.billing.platformChargesCents ?? operationalMetrics.data?.platformChargesCents ?? 0} centavos`}
-              />
+            <div>
+              <h2
+                className="text-xl font-semibold"
+                id="whatsapp-circuit-breaker-title"
+              >
+                Circuit breaker, crédito y métricas
+              </h2>
+              <p className="mt-1 text-sm text-slate-300">
+                El corte es por Clínica. Pausa el agente y la outbox de
+                WhatsApp, conserva los eventos pendientes y deja disponible la
+                WhatsApp Business App para continuidad manual.
+              </p>
             </div>
-            <div className="grid gap-3 text-sm sm:grid-cols-2">
-              <MetricValue
-                label="Inbound / outbound"
-                value={`${operationalMetrics.data?.inboundMessages ?? 0} / ${operationalMetrics.data?.outboundMessages ?? 0}`}
-              />
-              <MetricValue
-                label="Media / plantillas / interactivos / reacciones"
-                value={`${operationalMetrics.data?.mediaMessages ?? 0} / ${operationalMetrics.data?.templateMessages ?? 0} / ${operationalMetrics.data?.interactiveMessages ?? 0} / ${operationalMetrics.data?.reactionMessages ?? 0}`}
-              />
-              <MetricValue
-                label="Recibos de lectura"
-                value={String(operationalMetrics.data?.readReceipts ?? 0)}
-              />
-            </div>
-            {operationalMetrics.data?.templates.length ? (
-              <div>
-                <h3 className="font-medium">Plantillas</h3>
-                <ul className="mt-2 space-y-1 text-sm text-slate-300">
-                  {operationalMetrics.data.templates.map((template) => (
-                    <li key={template.name}>
-                      {template.name}: {template.attempted} intentos ·{" "}
-                      {template.failed} fallos
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {circuitBreaker.data.status === "open" ? (
-              <div className="space-y-2 rounded-lg border border-amber-500/50 bg-amber-950/30 p-3 text-sm">
-                <p>
-                  Ejecute y complete el smoke E2E en el panel de Operación de
-                  WhatsApp. La reactivación usará el último roundtrip persistido
-                  y cerrará el circuito solo si sigue vigente y corresponde a
-                  esta Conexión.
-                </p>
-                <label className="flex items-center gap-2">
-                  <input
-                    checked={causeFixed}
-                    onChange={(event) => setCauseFixed(event.target.checked)}
-                    type="checkbox"
-                  />
-                  Confirmo que la causa del corte fue corregida.
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    checked={manualConfirmation}
-                    onChange={(event) =>
-                      setManualConfirmation(event.target.checked)
+            {!clinicId ? (
+              <p className="text-sm text-slate-400">
+                Selecciona una Clínica para consultar su operación.
+              </p>
+            ) : circuitBreaker.isLoading ? (
+              <p className="text-sm text-slate-300" role="status">
+                Consultando el circuito…
+              </p>
+            ) : circuitBreaker.error ? (
+              <p className="text-sm text-amber-200" role="alert">
+                {circuitBreaker.error.message}
+              </p>
+            ) : circuitBreaker.data ? (
+              <>
+                <dl className="grid gap-3 text-sm sm:grid-cols-3">
+                  <DiagnosticValue
+                    label="Estado"
+                    value={
+                      circuitBreaker.data.status === "open"
+                        ? "Abierto"
+                        : "Cerrado"
                     }
-                    type="checkbox"
                   />
-                  Confirmo manualmente la reactivación de esta Clínica.
-                </label>
-                <button
-                  className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-                  disabled={
-                    !causeFixed ||
-                    !manualConfirmation ||
-                    !reactivationEvidence.valid ||
-                    reactivateCircuitBreaker.isPending
-                  }
-                  onClick={() =>
-                    reactivateCircuitBreaker.mutate({
-                      causeFixed: true,
-                      clinicId,
-                      manualConfirmation: true,
-                    })
-                  }
-                  type="button"
-                >
-                  Reactivar con evidencia E2E
-                </button>
-                {!reactivationEvidence.valid ? (
-                  <p className="text-xs text-amber-100" role="status">
-                    {reactivationEvidence.reason}
+                  <DiagnosticValue
+                    label="Causa"
+                    value={circuitBreaker.data.cause ?? "—"}
+                  />
+                  <DiagnosticValue
+                    label="Última transición"
+                    value={formatDateTime(circuitBreaker.data.lastTransitionAt)}
+                  />
+                </dl>
+                <p className="text-sm text-slate-300">
+                  Motivo del corte: {circuitBreaker.data.reason}
+                </p>
+                <dl className="grid gap-3 rounded-lg border border-slate-700 p-3 text-sm sm:grid-cols-3">
+                  <DiagnosticValue
+                    label="Responsable del corte"
+                    value={
+                      circuitBreaker.data.openedBy === null
+                        ? "Sin actor registrado"
+                        : circuitBreaker.data.openedBy.actorKind ===
+                            "superadmin"
+                          ? (circuitBreaker.data.openedBy.displayName ??
+                            circuitBreaker.data.openedBy.actorIdentityId ??
+                            "Superadmin")
+                          : circuitBreaker.data.openedBy.actorKind === "system"
+                            ? "Sistema automático"
+                            : "Worker de WhatsApp"
+                    }
+                  />
+                  <DiagnosticValue
+                    label="Evidencia E2E más reciente"
+                    value={
+                      latestSmoke === null
+                        ? (circuitBreaker.data.lastSyntheticEvidence ??
+                          "Todavía no hay evidencia E2E")
+                        : `${latestSmoke.status === "passed" ? "Aprobada" : latestSmoke.status === "pending" ? "Pendiente" : "Fallida"} · ${formatDateTime(latestSmoke.finishedAt)} · ${latestSmoke.evidence ?? (latestSmoke.blockers.map(({ message }) => message).join("; ") || "sin resumen")}`
+                    }
+                  />
+                  <DiagnosticValue
+                    label="Siguiente acción"
+                    value={circuitBreaker.data.nextAction}
+                  />
+                </dl>
+                <div className="grid gap-3 text-sm sm:grid-cols-3">
+                  <MetricValue
+                    label="Crédito Kapso"
+                    value={
+                      readiness.data === undefined
+                        ? "—"
+                        : `${formatCents(readiness.data.billing.creditCents)} · reserva ${formatCents(readiness.data.billing.creditReserveCents ?? 0)} · en vuelo ${formatCents(readiness.data.billing.creditInFlightCents ?? 0)}`
+                    }
+                  />
+                  <MetricValue
+                    label="Salud de crédito"
+                    value={
+                      readiness.data === undefined
+                        ? "—"
+                        : `${billingHealthLabel(readiness.data.billingHealth.level)} · ${readiness.data.billingHealth.balancePercent === null ? "saldo sin límite" : `${readiness.data.billingHealth.balancePercent}%`} · ${readiness.data.billingHealth.autonomyDays === null ? "autonomía no estimada" : `${readiness.data.billingHealth.autonomyDays} días`}`
+                    }
+                  />
+                  <MetricValue
+                    label="Consumo cuota"
+                    value={
+                      readiness.data === undefined
+                        ? `${operationalMetrics.data?.quotaMessages ?? 0} mensajes`
+                        : `${readiness.data.billing.kapsoQuotaConsumed ?? operationalMetrics.data?.quotaMessages ?? 0} + ${readiness.data.billing.kapsoQuotaInFlight ?? 0} en vuelo / ${readiness.data.billing.kapsoMonthlyQuota ?? "∞"} mensajes`
+                    }
+                  />
+                  <MetricValue
+                    label="Latencia media"
+                    value={
+                      operationalMetrics.data?.averageLatencyMs === null ||
+                      operationalMetrics.data?.averageLatencyMs === undefined
+                        ? "—"
+                        : `${operationalMetrics.data.averageLatencyMs} ms`
+                    }
+                  />
+                  <MetricValue
+                    label="Errores"
+                    value={String(operationalMetrics.data?.errors ?? 0)}
+                  />
+                  <MetricValue
+                    label="Entregas intentadas"
+                    value={String(
+                      operationalMetrics.data?.deliveries.attempted ?? 0,
+                    )}
+                  />
+                  <MetricValue
+                    label="Entregas aceptadas / entregadas"
+                    value={`${operationalMetrics.data?.deliveries.accepted ?? 0} / ${operationalMetrics.data?.deliveries.delivered ?? 0}`}
+                  />
+                  <MetricValue
+                    label="Entregas fallidas / desconocidas"
+                    value={`${operationalMetrics.data?.deliveries.failed ?? 0} / ${operationalMetrics.data?.deliveries.unknown ?? 0}`}
+                  />
+                  <MetricValue
+                    label="Meta / plataforma (billing)"
+                    value={`${readiness.data?.billing.metaChargesCents ?? operationalMetrics.data?.metaChargesCents ?? 0} / ${readiness.data?.billing.platformChargesCents ?? operationalMetrics.data?.platformChargesCents ?? 0} centavos`}
+                  />
+                </div>
+                <div className="grid gap-3 text-sm sm:grid-cols-2">
+                  <MetricValue
+                    label="Inbound / outbound"
+                    value={`${operationalMetrics.data?.inboundMessages ?? 0} / ${operationalMetrics.data?.outboundMessages ?? 0}`}
+                  />
+                  <MetricValue
+                    label="Media / plantillas / interactivos / reacciones"
+                    value={`${operationalMetrics.data?.mediaMessages ?? 0} / ${operationalMetrics.data?.templateMessages ?? 0} / ${operationalMetrics.data?.interactiveMessages ?? 0} / ${operationalMetrics.data?.reactionMessages ?? 0}`}
+                  />
+                  <MetricValue
+                    label="Recibos de lectura"
+                    value={String(operationalMetrics.data?.readReceipts ?? 0)}
+                  />
+                </div>
+                {operationalMetrics.data?.templates.length ? (
+                  <div>
+                    <h3 className="font-medium">Plantillas</h3>
+                    <ul className="mt-2 space-y-1 text-sm text-slate-300">
+                      {operationalMetrics.data.templates.map((template) => (
+                        <li key={template.name}>
+                          {template.name}: {template.attempted} intentos ·{" "}
+                          {template.failed} fallos
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {circuitBreaker.data.status === "open" ? (
+                  <div className="space-y-2 rounded-lg border border-amber-500/50 bg-amber-950/30 p-3 text-sm">
+                    <p>
+                      Ejecute y complete el smoke E2E en el panel de Operación
+                      de WhatsApp. La reactivación usará el último roundtrip
+                      persistido y cerrará el circuito solo si sigue vigente y
+                      corresponde a esta Conexión.
+                    </p>
+                    <label className="flex items-center gap-2">
+                      <input
+                        checked={causeFixed}
+                        onChange={(event) =>
+                          setCauseFixed(event.target.checked)
+                        }
+                        type="checkbox"
+                      />
+                      Confirmo que la causa del corte fue corregida.
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        checked={manualConfirmation}
+                        onChange={(event) =>
+                          setManualConfirmation(event.target.checked)
+                        }
+                        type="checkbox"
+                      />
+                      Confirmo manualmente la reactivación de esta Clínica.
+                    </label>
+                    <button
+                      className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                      disabled={
+                        !causeFixed ||
+                        !manualConfirmation ||
+                        !reactivationEvidence.valid ||
+                        reactivateCircuitBreaker.isPending
+                      }
+                      onClick={() =>
+                        reactivateCircuitBreaker.mutate({
+                          causeFixed: true,
+                          clinicId,
+                          manualConfirmation: true,
+                        })
+                      }
+                      type="button"
+                    >
+                      Reactivar con evidencia E2E
+                    </button>
+                    {!reactivationEvidence.valid ? (
+                      <p className="text-xs text-amber-100" role="status">
+                        {reactivationEvidence.reason}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {reactivateCircuitBreaker.error ? (
+                  <p className="text-sm text-amber-200" role="alert">
+                    {reactivateCircuitBreaker.error.message}
                   </p>
                 ) : null}
-              </div>
+                <div className="space-y-2 border-t border-slate-700 pt-3">
+                  <p className="text-sm font-medium">Abrir corte operativo</p>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
+                    <select
+                      className="rounded border border-slate-700 bg-slate-900 p-2 text-sm"
+                      onChange={(event) =>
+                        setOpenCause(event.target.value as typeof openCause)
+                      }
+                      value={openCause}
+                    >
+                      <option value="provider-error">Error persistente</option>
+                      <option value="webhook-paused">Webhook pausado</option>
+                      <option value="high-failure-rate">
+                        Tasa alta de fallos
+                      </option>
+                      <option value="credit-exhausted">Crédito agotado</option>
+                      <option value="quota-exhausted">Cuota agotada</option>
+                      <option value="meta-error">Error de Meta</option>
+                      <option value="legal-block">Bloqueo legal</option>
+                    </select>
+                    <input
+                      className="rounded border border-slate-700 bg-slate-900 p-2 text-sm"
+                      onChange={(event) => setOpenReason(event.target.value)}
+                      placeholder="Motivo operativo"
+                      value={openReason}
+                    />
+                  </div>
+                  <button
+                    className="rounded border border-amber-300 px-3 py-2 text-sm text-amber-200 disabled:opacity-50"
+                    disabled={
+                      openReason.trim() === "" || openCircuitBreaker.isPending
+                    }
+                    onClick={() =>
+                      openCircuitBreaker.mutate({
+                        cause: openCause,
+                        clinicId,
+                        reason: openReason.trim(),
+                      })
+                    }
+                    type="button"
+                  >
+                    Abrir circuito para esta Clínica
+                  </button>
+                  {openCircuitBreaker.error ? (
+                    <p className="text-sm text-amber-200" role="alert">
+                      {openCircuitBreaker.error.message}
+                    </p>
+                  ) : null}
+                </div>
+              </>
             ) : null}
-            {reactivateCircuitBreaker.error ? (
-              <p className="text-sm text-amber-200" role="alert">
-                {reactivateCircuitBreaker.error.message}
-              </p>
-            ) : null}
-            <div className="space-y-2 border-t border-slate-700 pt-3">
-              <p className="text-sm font-medium">Abrir corte operativo</p>
-              <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
-                <select
-                  className="rounded border border-slate-700 bg-slate-900 p-2 text-sm"
-                  onChange={(event) =>
-                    setOpenCause(event.target.value as typeof openCause)
-                  }
-                  value={openCause}
-                >
-                  <option value="provider-error">Error persistente</option>
-                  <option value="webhook-paused">Webhook pausado</option>
-                  <option value="high-failure-rate">Tasa alta de fallos</option>
-                  <option value="credit-exhausted">Crédito agotado</option>
-                  <option value="quota-exhausted">Cuota agotada</option>
-                  <option value="meta-error">Error de Meta</option>
-                  <option value="legal-block">Bloqueo legal</option>
-                </select>
-                <input
-                  className="rounded border border-slate-700 bg-slate-900 p-2 text-sm"
-                  onChange={(event) => setOpenReason(event.target.value)}
-                  placeholder="Motivo operativo"
-                  value={openReason}
-                />
-              </div>
-              <button
-                className="rounded border border-amber-300 px-3 py-2 text-sm text-amber-200 disabled:opacity-50"
-                disabled={
-                  openReason.trim() === "" || openCircuitBreaker.isPending
-                }
-                onClick={() =>
-                  openCircuitBreaker.mutate({
-                    cause: openCause,
+          </section>
+        </SupervisionTechnicalDetails>
+        <section className="space-y-3 rounded-xl border border-teal-500/70 p-5">
+          <div>
+            <h2 className="text-xl font-semibold">Alta manual de Clínica</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              Crea la Clínica y envía la invitación al Médico propietario. El
+              customer de Kapso se confirma en el preflight, antes del enlace.
+            </p>
+          </div>
+          <input
+            className="w-full rounded border border-slate-700 bg-slate-900 p-2"
+            onChange={(event) => setClinicName(event.target.value)}
+            placeholder="Nombre de la Clínica"
+            value={clinicName}
+          />
+          <input
+            className="w-full rounded border border-slate-700 bg-slate-900 p-2"
+            onChange={(event) => setOwnerName(event.target.value)}
+            placeholder="Nombre del Médico propietario"
+            value={ownerName}
+          />
+          <input
+            className="w-full rounded border border-slate-700 bg-slate-900 p-2"
+            onChange={(event) => setOwnerEmail(event.target.value)}
+            placeholder="Correo del Médico propietario"
+            type="email"
+            value={ownerEmail}
+          />
+          <button
+            className="rounded bg-teal-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+            disabled={
+              !clinicName || !ownerName || !ownerEmail || createClinic.isPending
+            }
+            onClick={() =>
+              createClinic.mutate({ clinicName, ownerEmail, ownerName })
+            }
+            type="button"
+          >
+            Crear Clínica y enviar invitación
+          </button>
+          {createClinic.error ? (
+            <p className="text-sm text-amber-200" role="alert">
+              {createClinic.error.message}
+            </p>
+          ) : null}
+        </section>
+        <section className="space-y-3 rounded-xl border border-sky-500/70 p-5">
+          <div>
+            <h2 className="text-xl font-semibold">Preflight de WhatsApp</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              Comprueba las condiciones operativas de la Clínica. No se guardan
+              OTP, QR, documentos ni credenciales, y este paso no ejecuta
+              acciones de Meta por el Médico.
+            </p>
+          </div>
+          <input
+            className="w-full rounded border border-slate-700 bg-slate-900 p-2"
+            onChange={(event) => setOnboardingOwnerName(event.target.value)}
+            placeholder="Médico propietario confirmado"
+            value={onboardingOwnerName}
+          />
+          <input
+            className="w-full rounded border border-slate-700 bg-slate-900 p-2"
+            onChange={(event) => setPhoneNumberE164(event.target.value)}
+            placeholder="Número propio en formato internacional, por ejemplo +50370000000"
+            value={phoneNumberE164}
+          />
+          <label className="block text-sm">
+            Modalidad de WhatsApp
+            <select
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              onChange={(event) =>
+                setOnboardingMode(event.target.value as WhatsAppOnboardingMode)
+              }
+              value={onboardingMode}
+            >
+              <option value="coexistence">Coexistence (v1)</option>
+              <option value="dedicated">Dedicated (requiere ampliación)</option>
+              <option value="later">Activar más tarde</option>
+              <option value="not-integrated">No integrar</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              checked={ownerConfirmed}
+              onChange={(event) => setOwnerConfirmed(event.target.checked)}
+              type="checkbox"
+            />
+            Médico propietario confirmado para este flujo
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              checked={numberOwnedByClinic}
+              onChange={(event) => setNumberOwnedByClinic(event.target.checked)}
+              type="checkbox"
+            />
+            El número es propio de la Clínica
+          </label>
+          <label className="block text-sm">
+            WhatsApp instalado en el número
+            <select
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              onChange={(event) =>
+                setWhatsappBusinessApp(
+                  event.target.value as
+                    | "active"
+                    | "messenger-only"
+                    | "not-installed"
+                    | "not-willing",
+                )
+              }
+              value={whatsappBusinessApp}
+            >
+              <option value="active">WhatsApp Business App activa</option>
+              <option value="not-installed">No está instalada</option>
+              <option value="messenger-only">Solo WhatsApp Messenger</option>
+              <option value="not-willing">
+                No desea mantener WhatsApp Business App
+              </option>
+            </select>
+          </label>
+          <label className="block text-sm">
+            Autoridad Meta
+            <select
+              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+              onChange={(event) =>
+                setMetaAuthority(
+                  event.target.value as "confirmed" | "not-confirmed",
+                )
+              }
+              value={metaAuthority}
+            >
+              <option value="not-confirmed">No confirmada</option>
+              <option value="confirmed">Confirmada</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              checked={qrDeviceAvailable}
+              onChange={(event) => setQrDeviceAvailable(event.target.checked)}
+              type="checkbox"
+            />
+            Hay un dispositivo para mostrar y completar el QR
+          </label>
+          <button
+            className="rounded bg-sky-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+            disabled={
+              !clinicId ||
+              !onboardingOwnerName ||
+              !phoneNumberE164 ||
+              prepareOnboarding.isPending
+            }
+            onClick={() =>
+              prepareOnboarding.mutate({
+                clinicId,
+                metaAuthority,
+                numberOwnedByClinic,
+                onboardingMode,
+                ownerConfirmed,
+                ownerName: onboardingOwnerName,
+                phoneNumberE164,
+                qrDeviceAvailable,
+                whatsappBusinessApp,
+              })
+            }
+            type="button"
+          >
+            Confirmar customer y ejecutar preflight
+          </button>
+          {prepareOnboarding.error ? (
+            <p className="text-sm text-amber-200" role="alert">
+              {prepareOnboarding.error.message}
+            </p>
+          ) : null}
+          {onboarding.isLoading ? (
+            <p className="text-sm text-slate-300" role="status">
+              Consultando estado de onboarding…
+            </p>
+          ) : onboarding.data ? (
+            <>
+              <OnboardingSummary snapshot={onboarding.data} />
+              <SetupLinkOperations
+                clinicId={clinicId}
+                isPending={manageSetupLink.isPending}
+                onManage={(action, actionReason) =>
+                  manageSetupLink.mutate({
+                    action,
                     clinicId,
-                    reason: openReason.trim(),
+                    ...(actionReason === undefined
+                      ? {}
+                      : { reason: actionReason }),
                   })
                 }
-                type="button"
-              >
-                Abrir circuito para esta Clínica
-              </button>
-              {openCircuitBreaker.error ? (
+                snapshot={onboarding.data}
+              />
+              {manageSetupLink.error ? (
                 <p className="text-sm text-amber-200" role="alert">
-                  {openCircuitBreaker.error.message}
+                  {manageSetupLink.error.message}
                 </p>
               ) : null}
-            </div>
-          </>
-        ) : null}
-      </section>
-      <section className="space-y-3 rounded-xl border border-teal-500/70 p-5">
-        <div>
-          <h2 className="text-xl font-semibold">Alta manual de Clínica</h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Crea la Clínica y envía la invitación al Médico propietario. El
-            customer de Kapso se confirma en el preflight, antes del enlace.
-          </p>
-        </div>
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setClinicName(event.target.value)}
-          placeholder="Nombre de la Clínica"
-          value={clinicName}
-        />
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setOwnerName(event.target.value)}
-          placeholder="Nombre del Médico propietario"
-          value={ownerName}
-        />
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setOwnerEmail(event.target.value)}
-          placeholder="Correo del Médico propietario"
-          type="email"
-          value={ownerEmail}
-        />
-        <button
-          className="rounded bg-teal-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-          disabled={
-            !clinicName || !ownerName || !ownerEmail || createClinic.isPending
-          }
-          onClick={() =>
-            createClinic.mutate({ clinicName, ownerEmail, ownerName })
-          }
-          type="button"
-        >
-          Crear Clínica y enviar invitación
-        </button>
-        {createClinic.error ? (
-          <p className="text-sm text-amber-200" role="alert">
-            {createClinic.error.message}
-          </p>
-        ) : null}
-      </section>
-      <section className="space-y-3 rounded-xl border border-sky-500/70 p-5">
-        <div>
-          <h2 className="text-xl font-semibold">Preflight de WhatsApp</h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Comprueba las condiciones operativas de la Clínica. No se guardan
-            OTP, QR, documentos ni credenciales, y este paso no ejecuta acciones
-            de Meta por el Médico.
-          </p>
-        </div>
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setOnboardingOwnerName(event.target.value)}
-          placeholder="Médico propietario confirmado"
-          value={onboardingOwnerName}
-        />
-        <input
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2"
-          onChange={(event) => setPhoneNumberE164(event.target.value)}
-          placeholder="Número propio en formato internacional, por ejemplo +50370000000"
-          value={phoneNumberE164}
-        />
-        <label className="block text-sm">
-          Modalidad de WhatsApp
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-            onChange={(event) =>
-              setOnboardingMode(event.target.value as WhatsAppOnboardingMode)
-            }
-            value={onboardingMode}
+            </>
+          ) : clinicId ? (
+            <p className="text-sm text-slate-300">
+              Todavía no hay un preflight ejecutado para esta Clínica.
+            </p>
+          ) : null}
+        </section>
+        <SupervisionTechnicalDetails summary="Diagnóstico técnico de readiness y reconciliación">
+          <section
+            aria-labelledby="whatsapp-readiness-title"
+            className="space-y-4 rounded-xl border border-violet-500/70 p-5"
+            data-whatsapp-readiness-operations="true"
           >
-            <option value="coexistence">Coexistence (v1)</option>
-            <option value="dedicated">Dedicated (requiere ampliación)</option>
-            <option value="later">Activar más tarde</option>
-            <option value="not-integrated">No integrar</option>
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            checked={ownerConfirmed}
-            onChange={(event) => setOwnerConfirmed(event.target.checked)}
-            type="checkbox"
-          />
-          Médico propietario confirmado para este flujo
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            checked={numberOwnedByClinic}
-            onChange={(event) => setNumberOwnedByClinic(event.target.checked)}
-            type="checkbox"
-          />
-          El número es propio de la Clínica
-        </label>
-        <label className="block text-sm">
-          WhatsApp instalado en el número
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-            onChange={(event) =>
-              setWhatsappBusinessApp(
-                event.target.value as
-                  "active" | "messenger-only" | "not-installed" | "not-willing",
-              )
-            }
-            value={whatsappBusinessApp}
-          >
-            <option value="active">WhatsApp Business App activa</option>
-            <option value="not-installed">No está instalada</option>
-            <option value="messenger-only">Solo WhatsApp Messenger</option>
-            <option value="not-willing">
-              No desea mantener WhatsApp Business App
-            </option>
-          </select>
-        </label>
-        <label className="block text-sm">
-          Autoridad Meta
-          <select
-            className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-            onChange={(event) =>
-              setMetaAuthority(
-                event.target.value as "confirmed" | "not-confirmed",
-              )
-            }
-            value={metaAuthority}
-          >
-            <option value="not-confirmed">No confirmada</option>
-            <option value="confirmed">Confirmada</option>
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            checked={qrDeviceAvailable}
-            onChange={(event) => setQrDeviceAvailable(event.target.checked)}
-            type="checkbox"
-          />
-          Hay un dispositivo para mostrar y completar el QR
-        </label>
-        <button
-          className="rounded bg-sky-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-          disabled={
-            !clinicId ||
-            !onboardingOwnerName ||
-            !phoneNumberE164 ||
-            prepareOnboarding.isPending
-          }
-          onClick={() =>
-            prepareOnboarding.mutate({
-              clinicId,
-              metaAuthority,
-              numberOwnedByClinic,
-              onboardingMode,
-              ownerConfirmed,
-              ownerName: onboardingOwnerName,
-              phoneNumberE164,
-              qrDeviceAvailable,
-              whatsappBusinessApp,
-            })
-          }
-          type="button"
-        >
-          Confirmar customer y ejecutar preflight
-        </button>
-        {prepareOnboarding.error ? (
-          <p className="text-sm text-amber-200" role="alert">
-            {prepareOnboarding.error.message}
-          </p>
-        ) : null}
-        {onboarding.isLoading ? (
-          <p className="text-sm text-slate-300" role="status">
-            Consultando estado de onboarding…
-          </p>
-        ) : onboarding.data ? (
-          <>
-            <OnboardingSummary snapshot={onboarding.data} />
-            <SetupLinkOperations
-              clinicId={clinicId}
-              isPending={manageSetupLink.isPending}
-              onManage={(action, actionReason) =>
-                manageSetupLink.mutate({
-                  action,
-                  clinicId,
-                  ...(actionReason === undefined
-                    ? {}
-                    : { reason: actionReason }),
-                })
-              }
-              snapshot={onboarding.data}
-            />
-            {manageSetupLink.error ? (
-              <p className="text-sm text-amber-200" role="alert">
-                {manageSetupLink.error.message}
-              </p>
-            ) : null}
-          </>
-        ) : clinicId ? (
-          <p className="text-sm text-slate-300">
-            Todavía no hay un preflight ejecutado para esta Clínica.
-          </p>
-        ) : null}
-      </section>
-      <section
-        aria-labelledby="whatsapp-readiness-title"
-        className="space-y-4 rounded-xl border border-violet-500/70 p-5"
-        data-whatsapp-readiness-operations="true"
-      >
-        <div>
-          <h2 className="text-xl font-semibold" id="whatsapp-readiness-title">
-            Readiness técnico de WhatsApp
-          </h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Solo una Conexión con número, webhooks, plantillas, billing y E2E
-            correctos pasa a <code>ready</code>. Estos gates no autorizan datos
-            reales ni sustituyen Consentimiento, privacidad o el gate legal.
-          </p>
-        </div>
-        {!clinicId ? (
-          <p className="text-sm text-slate-400">
-            Seleccione una Clínica para consultar sus gates.
-          </p>
-        ) : readiness.isLoading ? (
-          <p className="text-sm text-slate-300" role="status">
-            Consultando readiness…
-          </p>
-        ) : readiness.error ? (
-          <p className="text-sm text-amber-200" role="alert">
-            {readiness.error.message}
-          </p>
-        ) : readiness.data?.connection === null ? (
-          <p className="text-sm text-slate-300">
-            La Clínica todavía no tiene una Conexión de WhatsApp. Complete el
-            enlace de configuración antes de reintentar readiness.
-          </p>
-        ) : readiness.data ? (
-          <>
-            <dl className="grid gap-3 text-sm sm:grid-cols-4">
-              <DiagnosticValue
-                label="Estado técnico"
-                value={apoloReadinessStatusLabel(
-                  readiness.data.readiness.status,
-                )}
-              />
-              <DiagnosticValue
-                label="Entorno del número"
-                value={readiness.data.numberEnvironment}
-              />
-              <DiagnosticValue
-                label="Salud del número"
-                value={readiness.data.numberHealth}
-              />
-              <DiagnosticValue
-                label="Última prueba E2E"
-                value={
-                  readiness.data.e2e.lastTestAt === null
-                    ? "Sin evidencia"
-                    : formatDateTime(readiness.data.e2e.lastTestAt)
-                }
-              />
-            </dl>
-            <div
-              className="rounded-lg border border-slate-700 bg-slate-900/60 p-3"
-              data-whatsapp-readiness-reconciliation="true"
-            >
-              <p className="font-medium">Reconciliación automática</p>
-              <dl className="mt-2 grid gap-2 text-sm text-slate-300 sm:grid-cols-4">
-                <div>
-                  <dt className="text-xs tracking-wide text-slate-400 uppercase">
-                    Estado
-                  </dt>
-                  <dd className="mt-1">
-                    {apoloReadinessReconciliationStatusLabel(
-                      readiness.data.reconciliation.status,
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs tracking-wide text-slate-400 uppercase">
-                    Intentos
-                  </dt>
-                  <dd className="mt-1">
-                    {readiness.data.reconciliation.attempts}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs tracking-wide text-slate-400 uppercase">
-                    Próxima ejecución
-                  </dt>
-                  <dd className="mt-1">
-                    {readiness.data.reconciliation.nextAttemptAt === null
-                      ? "No programada"
-                      : formatDateTime(
-                          readiness.data.reconciliation.nextAttemptAt,
-                        )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs tracking-wide text-slate-400 uppercase">
-                    Último intento
-                  </dt>
-                  <dd className="mt-1">
-                    {readiness.data.reconciliation.lastAttemptAt === null
-                      ? "Sin intentos"
-                      : formatDateTime(
-                          readiness.data.reconciliation.lastAttemptAt,
-                        )}
-                  </dd>
-                </div>
-              </dl>
-              {readiness.data.reconciliation.lastError !== null ? (
-                <p className="mt-2 text-sm text-amber-200" role="alert">
-                  {readiness.data.reconciliation.lastError}
-                </p>
-              ) : null}
-            </div>
-            <div className="grid gap-3 text-sm sm:grid-cols-2">
-              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
-                <p className="font-medium">Billing atribuido</p>
-                <dl className="mt-2 space-y-1 text-slate-300">
-                  <div>
-                    <dt className="inline">Modo: </dt>
-                    <dd className="inline">{readiness.data.billing.mode}</dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Crédito: </dt>
-                    <dd className="inline">
-                      {formatCents(readiness.data.billing.creditCents)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Reserva de crédito: </dt>
-                    <dd className="inline">
-                      {formatCents(
-                        readiness.data.billing.creditReserveCents ?? 0,
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Crédito en vuelo: </dt>
-                    <dd className="inline">
-                      {formatCents(
-                        readiness.data.billing.creditInFlightCents ?? 0,
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Salud: </dt>
-                    <dd className="inline">
-                      {billingHealthLabel(readiness.data.billingHealth.level)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Autonomía estimada: </dt>
-                    <dd className="inline">
-                      {readiness.data.billingHealth.autonomyDays === null
-                        ? "No estimada"
-                        : `${readiness.data.billingHealth.autonomyDays} días`}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Cuota Kapso: </dt>
-                    <dd className="inline">
-                      {readiness.data.billing.kapsoQuotaConsumed} /{" "}
-                      {readiness.data.billing.kapsoMonthlyQuota ?? "∞"} mensajes
-                      {readiness.data.billing.kapsoQuotaInFlight === undefined
-                        ? ""
-                        : ` · ${readiness.data.billing.kapsoQuotaInFlight} en vuelo`}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Consumo: </dt>
-                    <dd className="inline">
-                      {formatCents(readiness.data.billing.consumedCents)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Umbral de alerta: </dt>
-                    <dd className="inline">
-                      {readiness.data.billing.alertThresholdCents === null
-                        ? "No registrado"
-                        : formatCents(
-                            readiness.data.billing.alertThresholdCents,
-                          )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Cargos separados: </dt>
-                    <dd className="inline">
-                      {readiness.data.billing.chargesSeparated ? "Sí" : "No"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Cargos de Meta: </dt>
-                    <dd className="inline">
-                      {readiness.data.billing.metaChargesCents == null
-                        ? "No registrados"
-                        : formatCents(readiness.data.billing.metaChargesCents)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="inline">Cargos de plataforma: </dt>
-                    <dd className="inline">
-                      {readiness.data.billing.platformChargesCents == null
-                        ? "No registrados"
-                        : formatCents(
-                            readiness.data.billing.platformChargesCents,
-                          )}
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
-                <p className="font-medium">Plantillas críticas</p>
-                <ul className="mt-2 space-y-1 text-slate-300">
-                  {readiness.data.templates.map((template) => (
-                    <li key={template.kind}>
-                      {template.name} · v{template.catalogVersion ?? "?"} ·{" "}
-                      {template.locale || "sin locale"} ·{" "}
-                      {template.category ?? "sin categoría"} ·{" "}
-                      {whatsappTemplateProvisioningStatusLabel(
-                        template.provisioningStatus,
-                        template.status,
-                      )}
-                      {template.rejectionReason
-                        ? ` · ${template.rejectionReason}`
-                        : ""}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-            {readiness.data.alerts?.some((alert) => alert.status === "open") ? (
-              <div
-                className="rounded-lg border border-rose-500/70 bg-rose-950/30 p-4"
-                data-whatsapp-connection-alerts="true"
-                role="alert"
+            <div>
+              <h2
+                className="text-xl font-semibold"
+                id="whatsapp-readiness-title"
               >
-                <p className="font-medium text-rose-100">
-                  Alertas operativas de WhatsApp
-                </p>
-                <ul className="mt-2 space-y-2 text-sm text-rose-100/90">
-                  {readiness.data.alerts
-                    .filter((alert) => alert.status === "open")
-                    .map((alert) => (
-                      <li key={alert.id}>
-                        <span className="font-medium">
-                          {apoloReadinessGateLabel(alert.gateCode)}:
-                        </span>{" "}
-                        {alert.reason}{" "}
-                        <span className="text-rose-100/70">
-                          Siguiente acción: {alert.nextAction}
-                        </span>
-                      </li>
-                    ))}
-                </ul>
-              </div>
-            ) : null}
-            <ul className="space-y-3" data-whatsapp-readiness-gates="true">
-              {readiness.data.readiness.gates.map((gate) => (
-                <li
+                Readiness técnico de WhatsApp
+              </h2>
+              <p className="mt-1 text-sm text-slate-300">
+                Solo una Conexión con número, webhooks, plantillas, billing y
+                E2E correctos pasa a <code>ready</code>. Estos gates no
+                autorizan datos reales ni sustituyen Consentimiento, privacidad
+                o el gate legal.
+              </p>
+            </div>
+            {!clinicId ? (
+              <p className="text-sm text-slate-400">
+                Seleccione una Clínica para consultar sus gates.
+              </p>
+            ) : readiness.isLoading ? (
+              <p className="text-sm text-slate-300" role="status">
+                Consultando readiness…
+              </p>
+            ) : readiness.error ? (
+              <p className="text-sm text-amber-200" role="alert">
+                {readiness.error.message}
+              </p>
+            ) : readiness.data?.connection === null ? (
+              <p className="text-sm text-slate-300">
+                La Clínica todavía no tiene una Conexión de WhatsApp. Complete
+                el enlace de configuración antes de reintentar readiness.
+              </p>
+            ) : readiness.data ? (
+              <>
+                <dl className="grid gap-3 text-sm sm:grid-cols-4">
+                  <DiagnosticValue
+                    label="Estado técnico"
+                    value={apoloReadinessStatusLabel(
+                      readiness.data.readiness.status,
+                    )}
+                  />
+                  <DiagnosticValue
+                    label="Entorno del número"
+                    value={readiness.data.numberEnvironment}
+                  />
+                  <DiagnosticValue
+                    label="Salud del número"
+                    value={readiness.data.numberHealth}
+                  />
+                  <DiagnosticValue
+                    label="Última prueba E2E"
+                    value={
+                      readiness.data.e2e.lastTestAt === null
+                        ? "Sin evidencia"
+                        : formatDateTime(readiness.data.e2e.lastTestAt)
+                    }
+                  />
+                </dl>
+                <div
                   className="rounded-lg border border-slate-700 bg-slate-900/60 p-3"
-                  key={gate.code}
+                  data-whatsapp-readiness-reconciliation="true"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium">
-                      {apoloReadinessGateLabel(gate.code)}
-                    </span>
-                    <span className="text-xs tracking-wide text-slate-300 uppercase">
-                      {gate.status}
-                    </span>
+                  <p className="font-medium">Reconciliación automática</p>
+                  <dl className="mt-2 grid gap-2 text-sm text-slate-300 sm:grid-cols-4">
+                    <div>
+                      <dt className="text-xs tracking-wide text-slate-400 uppercase">
+                        Estado
+                      </dt>
+                      <dd className="mt-1">
+                        {apoloReadinessReconciliationStatusLabel(
+                          readiness.data.reconciliation.status,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs tracking-wide text-slate-400 uppercase">
+                        Intentos
+                      </dt>
+                      <dd className="mt-1">
+                        {readiness.data.reconciliation.attempts}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs tracking-wide text-slate-400 uppercase">
+                        Próxima ejecución
+                      </dt>
+                      <dd className="mt-1">
+                        {readiness.data.reconciliation.nextAttemptAt === null
+                          ? "No programada"
+                          : formatDateTime(
+                              readiness.data.reconciliation.nextAttemptAt,
+                            )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs tracking-wide text-slate-400 uppercase">
+                        Último intento
+                      </dt>
+                      <dd className="mt-1">
+                        {readiness.data.reconciliation.lastAttemptAt === null
+                          ? "Sin intentos"
+                          : formatDateTime(
+                              readiness.data.reconciliation.lastAttemptAt,
+                            )}
+                      </dd>
+                    </div>
+                  </dl>
+                  {readiness.data.reconciliation.lastError !== null ? (
+                    <p className="mt-2 text-sm text-amber-200" role="alert">
+                      {readiness.data.reconciliation.lastError}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="grid gap-3 text-sm sm:grid-cols-2">
+                  <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+                    <p className="font-medium">Billing atribuido</p>
+                    <dl className="mt-2 space-y-1 text-slate-300">
+                      <div>
+                        <dt className="inline">Modo: </dt>
+                        <dd className="inline">
+                          {readiness.data.billing.mode}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Crédito: </dt>
+                        <dd className="inline">
+                          {formatCents(readiness.data.billing.creditCents)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Reserva de crédito: </dt>
+                        <dd className="inline">
+                          {formatCents(
+                            readiness.data.billing.creditReserveCents ?? 0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Crédito en vuelo: </dt>
+                        <dd className="inline">
+                          {formatCents(
+                            readiness.data.billing.creditInFlightCents ?? 0,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Salud: </dt>
+                        <dd className="inline">
+                          {billingHealthLabel(
+                            readiness.data.billingHealth.level,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Autonomía estimada: </dt>
+                        <dd className="inline">
+                          {readiness.data.billingHealth.autonomyDays === null
+                            ? "No estimada"
+                            : `${readiness.data.billingHealth.autonomyDays} días`}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Cuota Kapso: </dt>
+                        <dd className="inline">
+                          {readiness.data.billing.kapsoQuotaConsumed} /{" "}
+                          {readiness.data.billing.kapsoMonthlyQuota ?? "∞"}{" "}
+                          mensajes
+                          {readiness.data.billing.kapsoQuotaInFlight ===
+                          undefined
+                            ? ""
+                            : ` · ${readiness.data.billing.kapsoQuotaInFlight} en vuelo`}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Consumo: </dt>
+                        <dd className="inline">
+                          {formatCents(readiness.data.billing.consumedCents)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Umbral de alerta: </dt>
+                        <dd className="inline">
+                          {readiness.data.billing.alertThresholdCents === null
+                            ? "No registrado"
+                            : formatCents(
+                                readiness.data.billing.alertThresholdCents,
+                              )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Cargos separados: </dt>
+                        <dd className="inline">
+                          {readiness.data.billing.chargesSeparated
+                            ? "Sí"
+                            : "No"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Cargos de Meta: </dt>
+                        <dd className="inline">
+                          {readiness.data.billing.metaChargesCents == null
+                            ? "No registrados"
+                            : formatCents(
+                                readiness.data.billing.metaChargesCents,
+                              )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Cargos de plataforma: </dt>
+                        <dd className="inline">
+                          {readiness.data.billing.platformChargesCents == null
+                            ? "No registrados"
+                            : formatCents(
+                                readiness.data.billing.platformChargesCents,
+                              )}
+                        </dd>
+                      </div>
+                    </dl>
                   </div>
-                  <p className="mt-1 text-sm text-slate-300">{gate.message}</p>
-                  {gate.code === "webhooks" ||
-                  gate.code === "templates" ||
-                  gate.code === "billing" ||
-                  gate.code === "e2e" ||
-                  (gate.code === "number" &&
-                    (readiness.data.connection?.status === "blocked" ||
-                      readiness.data.connection?.status === "degraded")) ||
-                  gate.action ===
-                    "Reactivar manualmente la Conexión de WhatsApp" ? (
-                    <button
-                      className="mt-3 rounded border border-violet-300 px-3 py-2 text-sm text-violet-100 disabled:opacity-50"
-                      disabled={retryReadiness.isPending}
-                      onClick={() =>
-                        retryReadiness.mutate({
-                          action:
+                  <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+                    <p className="font-medium">Plantillas críticas</p>
+                    <ul className="mt-2 space-y-1 text-slate-300">
+                      {readiness.data.templates.map((template) => (
+                        <li key={template.kind}>
+                          {template.name} · v{template.catalogVersion ?? "?"} ·{" "}
+                          {template.locale || "sin locale"} ·{" "}
+                          {template.category ?? "sin categoría"} ·{" "}
+                          {whatsappTemplateProvisioningStatusLabel(
+                            template.provisioningStatus,
+                            template.status,
+                          )}
+                          {template.rejectionReason
+                            ? ` · ${template.rejectionReason}`
+                            : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+                {readiness.data.alerts?.some(
+                  (alert) => alert.status === "open",
+                ) ? (
+                  <div
+                    className="rounded-lg border border-rose-500/70 bg-rose-950/30 p-4"
+                    data-whatsapp-connection-alerts="true"
+                    role="alert"
+                  >
+                    <p className="font-medium text-rose-100">
+                      Alertas operativas de WhatsApp
+                    </p>
+                    <ul className="mt-2 space-y-2 text-sm text-rose-100/90">
+                      {readiness.data.alerts
+                        .filter((alert) => alert.status === "open")
+                        .map((alert) => (
+                          <li key={alert.id}>
+                            <span className="font-medium">
+                              {apoloReadinessGateLabel(alert.gateCode)}:
+                            </span>{" "}
+                            {alert.reason}{" "}
+                            <span className="text-rose-100/70">
+                              Siguiente acción: {alert.nextAction}
+                            </span>
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                ) : null}
+                <ul className="space-y-3" data-whatsapp-readiness-gates="true">
+                  {readiness.data.readiness.gates.map((gate) => (
+                    <li
+                      className="rounded-lg border border-slate-700 bg-slate-900/60 p-3"
+                      key={gate.code}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium">
+                          {apoloReadinessGateLabel(gate.code)}
+                        </span>
+                        <span className="text-xs tracking-wide text-slate-300 uppercase">
+                          {gate.status}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-slate-300">
+                        {gate.message}
+                      </p>
+                      {gate.code === "webhooks" ||
+                      gate.code === "templates" ||
+                      gate.code === "billing" ||
+                      gate.code === "e2e" ||
+                      (gate.code === "number" &&
+                        (readiness.data.connection?.status === "blocked" ||
+                          readiness.data.connection?.status === "degraded")) ||
+                      gate.action ===
+                        "Reactivar manualmente la Conexión de WhatsApp" ? (
+                        <button
+                          className="mt-3 rounded border border-violet-300 px-3 py-2 text-sm text-violet-100 disabled:opacity-50"
+                          disabled={retryReadiness.isPending}
+                          onClick={() =>
+                            retryReadiness.mutate({
+                              action:
+                                gate.code === "webhooks"
+                                  ? "webhooks"
+                                  : gate.code === "templates"
+                                    ? "templates"
+                                    : gate.code === "billing"
+                                      ? "billing"
+                                      : gate.code === "e2e"
+                                        ? "e2e"
+                                        : "reactivate",
+                              clinicId,
+                            })
+                          }
+                          type="button"
+                        >
+                          {apoloReadinessActionLabel(
                             gate.code === "webhooks"
                               ? "webhooks"
                               : gate.code === "templates"
@@ -1312,666 +1324,771 @@ export function ApoloOperations() {
                                   : gate.code === "e2e"
                                     ? "e2e"
                                     : "reactivate",
-                          clinicId,
-                        })
-                      }
-                      type="button"
-                    >
-                      {apoloReadinessActionLabel(
-                        gate.code === "webhooks"
-                          ? "webhooks"
-                          : gate.code === "templates"
-                            ? "templates"
-                            : gate.code === "billing"
-                              ? "billing"
-                              : gate.code === "e2e"
-                                ? "e2e"
-                                : "reactivate",
-                      )}
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-            <p className="rounded-lg border border-amber-500/60 bg-amber-950/30 p-3 text-sm text-amber-100">
-              {readiness.data.readiness.legalAuthorization.message}
-            </p>
-            {retryReadiness.error ? (
-              <p className="text-sm text-amber-200" role="alert">
-                {retryReadiness.error.message}
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <p className="text-sm text-slate-300">
-            La Clínica todavía no tiene una Conexión de WhatsApp.
-          </p>
-        )}
-      </section>
-      <section
-        aria-labelledby="whatsapp-final-operations-title"
-        className="space-y-4 rounded-xl border border-rose-500/70 p-5"
-        data-whatsapp-final-operations="true"
-      >
-        <div>
-          <h2
-            className="text-xl font-semibold"
-            id="whatsapp-final-operations-title"
-          >
-            Piloto, tráfico real y retirada de WhatsApp
-          </h2>
-          <p className="mt-1 text-sm text-slate-300">
-            El smoke de Kapso usa un Contacto existente sin vínculo a Paciente.
-            El roundtrip vence en cinco minutos, registra pasos por Clínica y no
-            habilita Pacientes reales. Retirar la Conexión suprime las Entregas
-            de WhatsApp pendientes; un envío ya iniciado podría terminar. El
-            número, WABA, plantillas e historial administrativo se conservan.
-          </p>
-        </div>
-        {!clinicId ? (
-          <p className="text-sm text-slate-400">
-            Seleccione una Clínica para operar el piloto.
-          </p>
-        ) : whatsappOperations.isLoading ? (
-          <p className="text-sm text-slate-300" role="status">
-            Consultando controles de tráfico…
-          </p>
-        ) : whatsappOperations.error ? (
-          <p className="text-sm text-amber-200" role="alert">
-            {whatsappOperations.error.message}
-          </p>
-        ) : whatsappOperations.data ? (
-          <>
-            <dl className="grid gap-3 text-sm sm:grid-cols-4">
-              <DiagnosticValue
-                label="Tráfico real"
-                value={whatsappTrafficStatusLabel(
-                  whatsappOperations.data.trafficStatus,
-                )}
-              />
-              <DiagnosticValue
-                label="Smoke sintético"
-                value={
-                  whatsappOperations.data.latestSmoke?.status === "passed"
-                    ? "Aprobado"
-                    : "Pendiente o fallido"
-                }
-              />
-              <DiagnosticValue
-                label="Readiness técnico"
-                value={
-                  whatsappOperations.data.technicalReadiness.status === "ready"
-                    ? "Listo"
-                    : "Bloqueado"
-                }
-              />
-              <DiagnosticValue
-                label="Circuit breaker"
-                value={
-                  whatsappOperations.data.circuitStatus === "closed"
-                    ? "Cerrado"
-                    : "Abierto"
-                }
-              />
-            </dl>
-            <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="font-semibold">Smoke E2E sintético</h3>
-                  <p className="mt-1 text-sm text-slate-300">
-                    Combina contratos locales, preflight del webhook de Kapso y
-                    un roundtrip firmado con un Contacto de prueba. La respuesta
-                    aceptada sigue pendiente hasta que llegue el callback de
-                    entrega.
+                          )}
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                <p className="rounded-lg border border-amber-500/60 bg-amber-950/30 p-3 text-sm text-amber-100">
+                  {readiness.data.readiness.legalAuthorization.message}
+                </p>
+                {retryReadiness.error ? (
+                  <p className="text-sm text-amber-200" role="alert">
+                    {retryReadiness.error.message}
                   </p>
-                </div>
-                {whatsappOperations.data.connection?.provider === "kapso" ? (
-                  <label className="grid min-w-64 gap-1 text-sm">
-                    <span>Teléfono E.164 del Contacto de prueba</span>
-                    <input
-                      autoComplete="off"
-                      className="rounded border border-slate-600 bg-slate-950 px-3 py-2 text-white"
-                      inputMode="tel"
-                      onChange={(event) =>
-                        setSmokeTestPhone(event.target.value)
-                      }
-                      placeholder="+50370000000"
-                      type="tel"
-                      value={smokeTestPhone}
-                    />
-                    <span className="text-xs text-slate-400">
-                      Debe existir en esta Clínica y no estar vinculado a un
-                      Paciente.
-                    </span>
-                  </label>
                 ) : null}
+              </>
+            ) : (
+              <p className="text-sm text-slate-300">
+                La Clínica todavía no tiene una Conexión de WhatsApp.
+              </p>
+            )}
+          </section>
+        </SupervisionTechnicalDetails>
+        <section
+          aria-labelledby="whatsapp-final-operations-title"
+          className="space-y-4 rounded-xl border border-rose-500/70 p-5"
+          data-whatsapp-final-operations="true"
+        >
+          <div>
+            <h2
+              className="text-xl font-semibold"
+              id="whatsapp-final-operations-title"
+            >
+              Piloto, tráfico real y retirada de WhatsApp
+            </h2>
+            <p className="mt-1 text-sm text-slate-300">
+              El smoke de Kapso usa un Contacto existente sin vínculo a
+              Paciente. El roundtrip vence en cinco minutos, registra pasos por
+              Clínica y no habilita Pacientes reales. Retirar la Conexión
+              suprime las Entregas de WhatsApp pendientes; un envío ya iniciado
+              podría terminar. El número, WABA, plantillas e historial
+              administrativo se conservan.
+            </p>
+          </div>
+          {!clinicId ? (
+            <p className="text-sm text-slate-400">
+              Seleccione una Clínica para operar el piloto.
+            </p>
+          ) : whatsappOperations.isLoading ? (
+            <p className="text-sm text-slate-300" role="status">
+              Consultando controles de tráfico…
+            </p>
+          ) : whatsappOperations.error ? (
+            <p className="text-sm text-amber-200" role="alert">
+              {whatsappOperations.error.message}
+            </p>
+          ) : whatsappOperations.data ? (
+            <>
+              <dl className="grid gap-3 text-sm sm:grid-cols-4">
+                <DiagnosticValue
+                  label="Tráfico real"
+                  value={whatsappTrafficStatusLabel(
+                    whatsappOperations.data.trafficStatus,
+                  )}
+                />
+                <DiagnosticValue
+                  label="Smoke sintético"
+                  value={
+                    whatsappOperations.data.latestSmoke?.status === "passed"
+                      ? "Aprobado"
+                      : "Pendiente o fallido"
+                  }
+                />
+                <DiagnosticValue
+                  label="Readiness técnico"
+                  value={
+                    whatsappOperations.data.technicalReadiness.status ===
+                    "ready"
+                      ? "Listo"
+                      : "Bloqueado"
+                  }
+                />
+                <DiagnosticValue
+                  label="Circuit breaker"
+                  value={
+                    whatsappOperations.data.circuitStatus === "closed"
+                      ? "Cerrado"
+                      : "Abierto"
+                  }
+                />
+              </dl>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold">Smoke E2E sintético</h3>
+                    <p className="mt-1 text-sm text-slate-300">
+                      Combina contratos locales, preflight del webhook de Kapso
+                      y un roundtrip firmado con un Contacto de prueba. La
+                      respuesta aceptada sigue pendiente hasta que llegue el
+                      callback de entrega.
+                    </p>
+                  </div>
+                  {whatsappOperations.data.connection?.provider === "kapso" ? (
+                    <label className="grid min-w-64 gap-1 text-sm">
+                      <span>Teléfono E.164 del Contacto de prueba</span>
+                      <input
+                        autoComplete="off"
+                        className="rounded border border-slate-600 bg-slate-950 px-3 py-2 text-white"
+                        inputMode="tel"
+                        onChange={(event) =>
+                          setSmokeTestPhone(event.target.value)
+                        }
+                        placeholder="+50370000000"
+                        type="tel"
+                        value={smokeTestPhone}
+                      />
+                      <span className="text-xs text-slate-400">
+                        Debe existir en esta Clínica y no estar vinculado a un
+                        Paciente.
+                      </span>
+                    </label>
+                  ) : null}
+                  <button
+                    className="rounded bg-sky-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                    disabled={
+                      runSyntheticSmoke.isPending ||
+                      whatsappOperations.data.latestSmoke?.status ===
+                        "pending" ||
+                      (whatsappOperations.data.connection?.provider ===
+                        "kapso" &&
+                        !isValidE164PhoneNumber(smokeTestPhone.trim()))
+                    }
+                    onClick={() =>
+                      runSyntheticSmoke.mutate({
+                        clinicId,
+                        ...(whatsappOperations.data.connection?.provider ===
+                        "kapso"
+                          ? { testContactPhoneE164: smokeTestPhone.trim() }
+                          : {}),
+                      })
+                    }
+                    type="button"
+                  >
+                    {runSyntheticSmoke.isPending
+                      ? "Ejecutando…"
+                      : whatsappOperations.data.latestSmoke?.status ===
+                          "pending"
+                        ? "Smoke en curso"
+                        : whatsappOperations.data.connection?.provider ===
+                            "kapso"
+                          ? "Ejecutar smoke de transporte"
+                          : "Ejecutar smoke sintético"}
+                  </button>
+                </div>
+                {whatsappOperations.data.latestSmoke ? (
+                  <>
+                    <p className="mt-3 text-sm">
+                      Resultado:{" "}
+                      <strong>
+                        {whatsappOperations.data.latestSmoke.status === "passed"
+                          ? "aprobado"
+                          : whatsappOperations.data.latestSmoke.status ===
+                              "pending"
+                            ? "esperando roundtrip"
+                            : "fallido"}
+                      </strong>{" "}
+                      · Contacto de prueba controlado:{" "}
+                      {whatsappOperations.data.latestSmoke.controlledTestContact
+                        ? "sí"
+                        : "no"}{" "}
+                      · Pacientes reales habilitados:{" "}
+                      {whatsappOperations.data.latestSmoke.realPatientsEnabled
+                        ? "sí"
+                        : "no"}
+                    </p>
+                    {whatsappOperations.data.latestSmoke
+                      .requireRealRoundtrip ? (
+                      <dl className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+                        <div>
+                          <dt className="text-slate-400">ID del run</dt>
+                          <dd className="font-mono">
+                            {whatsappOperations.data.latestSmoke.id}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-400">
+                            Contacto controlado
+                          </dt>
+                          <dd>
+                            {whatsappOperations.data.latestSmoke
+                              .testContactMaskedPhone ??
+                              "Teléfono no disponible"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-400">Inicio / timeout</dt>
+                          <dd>
+                            {formatDateTime(
+                              whatsappOperations.data.latestSmoke.startedAt,
+                            )}{" "}
+                            /{" "}
+                            {whatsappOperations.data.latestSmoke.timeoutAt
+                              ? formatDateTime(
+                                  whatsappOperations.data.latestSmoke.timeoutAt,
+                                )
+                              : "sin timeout"}
+                          </dd>
+                        </div>
+                      </dl>
+                    ) : null}
+                    {whatsappOperations.data.latestSmoke.status === "pending" &&
+                    whatsappOperations.data.latestSmoke.requireRealRoundtrip ? (
+                      <p className="mt-3 rounded border border-amber-500/50 bg-amber-950/40 p-3 text-sm text-amber-100">
+                        Desde el Contacto indicado, envíe a la Clínica este
+                        código:{" "}
+                        <code className="font-mono font-semibold">
+                          PRUEBA WHATSAPP{" "}
+                          {whatsappOperations.data.latestSmoke.id}
+                        </code>
+                      </p>
+                    ) : null}
+                    <ul className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+                      {whatsappOperations.data.latestSmoke.steps.map((step) => (
+                        <li key={step.code}>
+                          <span
+                            className={
+                              step.status === "passed"
+                                ? "text-teal-200"
+                                : step.status === "pending"
+                                  ? "text-amber-200"
+                                  : step.status === "skipped"
+                                    ? "text-slate-400"
+                                    : "text-rose-200"
+                            }
+                          >
+                            {step.status === "passed"
+                              ? "✓"
+                              : step.status === "pending"
+                                ? "…"
+                                : step.status === "skipped"
+                                  ? "–"
+                                  : "✕"}{" "}
+                            {whatsappSyntheticSmokeStepLabels[step.code]}
+                          </span>
+                          {step.message ? " · " + step.message : ""}
+                          {step.evidence ? " · " + step.evidence : ""}
+                          {step.source
+                            ? ` · ${step.source === "provider" ? "Kapso" : "Praxia"}`
+                            : ""}
+                          {step.eventId ? ` · ${step.eventId}` : ""}
+                          {step.observedAt
+                            ? ` · ${formatDateTime(step.observedAt)}`
+                            : ""}
+                        </li>
+                      ))}
+                    </ul>
+                    {whatsappOperations.data.latestSmoke.blockers.length > 0 ? (
+                      <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-200">
+                        {whatsappOperations.data.latestSmoke.blockers.map(
+                          (blocker) => (
+                            <li key={blocker.code + "-" + blocker.message}>
+                              {blocker.message}
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="mt-3 text-sm text-amber-200">
+                    Todavía no existe evidencia de smoke sintético.
+                  </p>
+                )}
+                {runSyntheticSmoke.error ? (
+                  <p className="mt-2 text-sm text-amber-200" role="alert">
+                    {runSyntheticSmoke.error.message}
+                  </p>
+                ) : null}
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+                <h3 className="font-semibold">Gates para tráfico real</h3>
+                <p className="mt-1 text-sm text-slate-300">
+                  Registre una referencia operativa breve por gate. No
+                  introduzca PII, tokens, QR ni credenciales.
+                </p>
+                <ul className="mt-3 space-y-3">
+                  {whatsappRealTrafficGateCodes.map((code) => {
+                    const gate = whatsappOperations.data.gates[code];
+                    const evidence =
+                      gateEvidence[code] ?? gate?.evidenceReference ?? "";
+                    return (
+                      <li
+                        className="flex flex-col gap-2 sm:flex-row sm:items-center"
+                        key={code}
+                      >
+                        <label className="flex-1 text-sm">
+                          <span className="block text-slate-200">
+                            {whatsappRealTrafficGateLabel(code)}
+                          </span>
+                          <input
+                            className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2"
+                            onChange={(event) =>
+                              setGateEvidence((current) => ({
+                                ...current,
+                                [code]: event.target.value,
+                              }))
+                            }
+                            placeholder="Referencia de evidencia"
+                            value={evidence}
+                          />
+                        </label>
+                        <button
+                          className="rounded border border-teal-300 px-3 py-2 text-sm text-teal-100 disabled:opacity-50"
+                          disabled={recordTrafficGate.isPending}
+                          onClick={() =>
+                            recordTrafficGate.mutate({
+                              clinicId,
+                              code,
+                              evidenceReference: evidence.trim() || null,
+                              ready: evidence.trim() !== "",
+                            })
+                          }
+                          type="button"
+                        >
+                          {gate?.ready ? "Actualizar" : "Registrar"}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {recordTrafficGate.error ? (
+                  <p className="mt-2 text-sm text-amber-200" role="alert">
+                    {recordTrafficGate.error.message}
+                  </p>
+                ) : null}
+              </div>
+              <div className="rounded-lg border border-amber-500/70 bg-amber-950/20 p-4">
+                <h3 className="font-semibold">Habilitación explícita</h3>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-300">
+                  {whatsappOperations.data.trafficEvaluation.blockers.length ===
+                  0 ? (
+                    <li>Todos los gates necesarios están presentes.</li>
+                  ) : (
+                    whatsappOperations.data.trafficEvaluation.blockers.map(
+                      (blocker: WhatsAppRealTrafficBlocker) => (
+                        <li key={blocker.code + "-" + blocker.message}>
+                          {blocker.message}
+                        </li>
+                      ),
+                    )
+                  )}
+                </ul>
+                <label className="mt-3 flex items-center gap-2 text-sm">
+                  <input
+                    checked={realTrafficConfirmation}
+                    onChange={(event) =>
+                      setRealTrafficConfirmation(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  Confirmo que la Clínica está autorizada para tráfico real.
+                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                    disabled={
+                      !whatsappOperations.data.trafficEvaluation.allowed ||
+                      !realTrafficConfirmation ||
+                      enableRealTraffic.isPending
+                    }
+                    onClick={() =>
+                      enableRealTraffic.mutate({
+                        clinicId,
+                        manualConfirmation: true,
+                      })
+                    }
+                    type="button"
+                  >
+                    Habilitar tráfico real
+                  </button>
+                  <button
+                    className="rounded border border-rose-300 px-3 py-2 text-rose-100 disabled:opacity-50"
+                    disabled={
+                      whatsappOperations.data.trafficStatus !== "enabled" ||
+                      !realTrafficConfirmation ||
+                      revertRealTraffic.isPending
+                    }
+                    onClick={() =>
+                      revertRealTraffic.mutate({
+                        clinicId,
+                        manualConfirmation: true,
+                        reason: "Reversión manual desde Operación comercial",
+                      })
+                    }
+                    type="button"
+                  >
+                    Revertir y abrir circuit breaker
+                  </button>
+                </div>
+                {enableRealTraffic.error || revertRealTraffic.error ? (
+                  <p className="mt-2 text-sm text-amber-200" role="alert">
+                    {
+                      (enableRealTraffic.error ?? revertRealTraffic.error)
+                        ?.message
+                    }
+                  </p>
+                ) : null}
+              </div>
+              <div className="rounded-lg border border-rose-500/70 bg-rose-950/20 p-4">
+                <h3 className="font-semibold">Offboarding de la Conexión</h3>
+                <p className="mt-1 text-sm text-slate-300">
+                  Detiene nuevos envíos, cancela las Entregas pendientes
+                  elegibles, desconecta y desactiva los webhooks de Kapso.
+                  Revoca los enlaces de configuración de Praxia y exporta la
+                  configuración permitida. No elimina el número, WABA,
+                  plantillas ni historial administrativo. Cada paso queda
+                  auditado y los fallos pueden reintentarse.
+                </p>
+                <p className="mt-2 text-sm text-slate-300">
+                  Autorización de la Clínica:{" "}
+                  {whatsappOperations.data.offboardingAuthorization === null
+                    ? "pendiente del Médico propietario"
+                    : `registrada por ${whatsappOperations.data.offboardingAuthorization.authorizedByIdentityId}`}
+                </p>
+                <label className="mt-3 flex items-center gap-2 text-sm">
+                  <input
+                    checked={offboardingConfirmation}
+                    onChange={(event) =>
+                      setOffboardingConfirmation(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  Confirmo retirar la Conexión de Praxia.
+                </label>
                 <button
-                  className="rounded bg-sky-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                  className="mt-3 rounded bg-rose-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
                   disabled={
-                    runSyntheticSmoke.isPending ||
-                    whatsappOperations.data.latestSmoke?.status === "pending" ||
-                    (whatsappOperations.data.connection?.provider === "kapso" &&
-                      !isValidE164PhoneNumber(smokeTestPhone.trim()))
+                    !offboardingConfirmation ||
+                    whatsappOperations.data.offboardingAuthorization === null ||
+                    offboardConnection.isPending
                   }
                   onClick={() =>
-                    runSyntheticSmoke.mutate({
+                    offboardConnection.mutate({
                       clinicId,
-                      ...(whatsappOperations.data.connection?.provider ===
-                      "kapso"
-                        ? { testContactPhoneE164: smokeTestPhone.trim() }
-                        : {}),
+                      manualConfirmation: true,
                     })
                   }
                   type="button"
                 >
-                  {runSyntheticSmoke.isPending
-                    ? "Ejecutando…"
-                    : whatsappOperations.data.latestSmoke?.status === "pending"
-                      ? "Smoke en curso"
-                      : whatsappOperations.data.connection?.provider === "kapso"
-                        ? "Ejecutar smoke de transporte"
-                        : "Ejecutar smoke sintético"}
+                  {offboardConnection.isPending
+                    ? "Retirando…"
+                    : "Retirar Conexión"}
                 </button>
-              </div>
-              {whatsappOperations.data.latestSmoke ? (
-                <>
-                  <p className="mt-3 text-sm">
-                    Resultado:{" "}
-                    <strong>
-                      {whatsappOperations.data.latestSmoke.status === "passed"
-                        ? "aprobado"
-                        : whatsappOperations.data.latestSmoke.status ===
-                            "pending"
-                          ? "esperando roundtrip"
-                          : "fallido"}
-                    </strong>{" "}
-                    · Contacto de prueba controlado:{" "}
-                    {whatsappOperations.data.latestSmoke.controlledTestContact
-                      ? "sí"
-                      : "no"}{" "}
-                    · Pacientes reales habilitados:{" "}
-                    {whatsappOperations.data.latestSmoke.realPatientsEnabled
-                      ? "sí"
-                      : "no"}
-                  </p>
-                  {whatsappOperations.data.latestSmoke.requireRealRoundtrip ? (
-                    <dl className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
-                      <div>
-                        <dt className="text-slate-400">ID del run</dt>
-                        <dd className="font-mono">
-                          {whatsappOperations.data.latestSmoke.id}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-slate-400">Contacto controlado</dt>
-                        <dd>
-                          {whatsappOperations.data.latestSmoke
-                            .testContactMaskedPhone ?? "Teléfono no disponible"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-slate-400">Inicio / timeout</dt>
-                        <dd>
-                          {formatDateTime(
-                            whatsappOperations.data.latestSmoke.startedAt,
-                          )}{" "}
-                          /{" "}
-                          {whatsappOperations.data.latestSmoke.timeoutAt
-                            ? formatDateTime(
-                                whatsappOperations.data.latestSmoke.timeoutAt,
-                              )
-                            : "sin timeout"}
-                        </dd>
-                      </div>
-                    </dl>
-                  ) : null}
-                  {whatsappOperations.data.latestSmoke.status === "pending" &&
-                  whatsappOperations.data.latestSmoke.requireRealRoundtrip ? (
-                    <p className="mt-3 rounded border border-amber-500/50 bg-amber-950/40 p-3 text-sm text-amber-100">
-                      Desde el Contacto indicado, envíe a la Clínica este
-                      código:{" "}
-                      <code className="font-mono font-semibold">
-                        PRUEBA WHATSAPP {whatsappOperations.data.latestSmoke.id}
-                      </code>
+                {whatsappOperations.data.offboarding ? (
+                  <div className="mt-3 space-y-2 text-sm">
+                    <p>
+                      Última retirada:{" "}
+                      {whatsappOperations.data.offboarding.status}
                     </p>
-                  ) : null}
-                  <ul className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
-                    {whatsappOperations.data.latestSmoke.steps.map((step) => (
-                      <li key={step.code}>
-                        <span
-                          className={
-                            step.status === "passed"
-                              ? "text-teal-200"
-                              : step.status === "pending"
-                                ? "text-amber-200"
-                                : step.status === "skipped"
-                                  ? "text-slate-400"
-                                  : "text-rose-200"
-                          }
-                        >
-                          {step.status === "passed"
-                            ? "✓"
-                            : step.status === "pending"
-                              ? "…"
-                              : step.status === "skipped"
-                                ? "–"
-                                : "✕"}{" "}
-                          {whatsappSyntheticSmokeStepLabels[step.code]}
-                        </span>
-                        {step.message ? " · " + step.message : ""}
-                        {step.evidence ? " · " + step.evidence : ""}
-                        {step.source
-                          ? ` · ${step.source === "provider" ? "Kapso" : "Praxia"}`
-                          : ""}
-                        {step.eventId ? ` · ${step.eventId}` : ""}
-                        {step.observedAt
-                          ? ` · ${formatDateTime(step.observedAt)}`
-                          : ""}
-                      </li>
-                    ))}
-                  </ul>
-                  {whatsappOperations.data.latestSmoke.blockers.length > 0 ? (
-                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-200">
-                      {whatsappOperations.data.latestSmoke.blockers.map(
-                        (blocker) => (
-                          <li key={blocker.code + "-" + blocker.message}>
-                            {blocker.message}
+                    <ul className="space-y-1 text-slate-300">
+                      {whatsappOperations.data.offboarding.steps.map(
+                        (step, index) => (
+                          <li key={step.code + "-" + index}>
+                            {step.status === "succeeded" ? "✓" : "✕"}{" "}
+                            {step.message}
+                            {step.effect === "already-complete"
+                              ? " (idempotente)"
+                              : ""}
                           </li>
                         ),
                       )}
                     </ul>
-                  ) : null}
-                </>
-              ) : (
-                <p className="mt-3 text-sm text-amber-200">
-                  Todavía no existe evidencia de smoke sintético.
-                </p>
-              )}
-              {runSyntheticSmoke.error ? (
-                <p className="mt-2 text-sm text-amber-200" role="alert">
-                  {runSyntheticSmoke.error.message}
-                </p>
-              ) : null}
-            </div>
-            <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
-              <h3 className="font-semibold">Gates para tráfico real</h3>
-              <p className="mt-1 text-sm text-slate-300">
-                Registre una referencia operativa breve por gate. No introduzca
-                PII, tokens, QR ni credenciales.
-              </p>
-              <ul className="mt-3 space-y-3">
-                {whatsappRealTrafficGateCodes.map((code) => {
-                  const gate = whatsappOperations.data.gates[code];
-                  const evidence =
-                    gateEvidence[code] ?? gate?.evidenceReference ?? "";
-                  return (
-                    <li
-                      className="flex flex-col gap-2 sm:flex-row sm:items-center"
-                      key={code}
+                    <details>
+                      <summary className="cursor-pointer text-teal-200">
+                        Ver exportación de configuración permitida
+                      </summary>
+                      <pre className="mt-2 max-h-56 overflow-auto rounded bg-slate-950 p-3 text-xs text-slate-300">
+                        {JSON.stringify(
+                          whatsappOperations.data.offboarding
+                            .configurationExport,
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </details>
+                    <button
+                      className="rounded border border-slate-500 px-3 py-2 text-sm"
+                      onClick={() =>
+                        downloadWhatsAppConfigurationExport(
+                          clinicId,
+                          whatsappOperations.data.offboarding
+                            ?.configurationExport ?? {},
+                        )
+                      }
+                      type="button"
                     >
-                      <label className="flex-1 text-sm">
-                        <span className="block text-slate-200">
-                          {whatsappRealTrafficGateLabel(code)}
-                        </span>
-                        <input
-                          className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2"
-                          onChange={(event) =>
-                            setGateEvidence((current) => ({
-                              ...current,
-                              [code]: event.target.value,
-                            }))
-                          }
-                          placeholder="Referencia de evidencia"
-                          value={evidence}
-                        />
-                      </label>
-                      <button
-                        className="rounded border border-teal-300 px-3 py-2 text-sm text-teal-100 disabled:opacity-50"
-                        disabled={recordTrafficGate.isPending}
-                        onClick={() =>
-                          recordTrafficGate.mutate({
-                            clinicId,
-                            code,
-                            evidenceReference: evidence.trim() || null,
-                            ready: evidence.trim() !== "",
-                          })
-                        }
-                        type="button"
-                      >
-                        {gate?.ready ? "Actualizar" : "Registrar"}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-              {recordTrafficGate.error ? (
-                <p className="mt-2 text-sm text-amber-200" role="alert">
-                  {recordTrafficGate.error.message}
-                </p>
-              ) : null}
-            </div>
-            <div className="rounded-lg border border-amber-500/70 bg-amber-950/20 p-4">
-              <h3 className="font-semibold">Habilitación explícita</h3>
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-300">
-                {whatsappOperations.data.trafficEvaluation.blockers.length ===
-                0 ? (
-                  <li>Todos los gates necesarios están presentes.</li>
-                ) : (
-                  whatsappOperations.data.trafficEvaluation.blockers.map(
-                    (blocker: WhatsAppRealTrafficBlocker) => (
-                      <li key={blocker.code + "-" + blocker.message}>
-                        {blocker.message}
-                      </li>
-                    ),
-                  )
-                )}
-              </ul>
-              <label className="mt-3 flex items-center gap-2 text-sm">
-                <input
-                  checked={realTrafficConfirmation}
-                  onChange={(event) =>
-                    setRealTrafficConfirmation(event.target.checked)
-                  }
-                  type="checkbox"
-                />
-                Confirmo que la Clínica está autorizada para tráfico real.
-              </label>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-                  disabled={
-                    !whatsappOperations.data.trafficEvaluation.allowed ||
-                    !realTrafficConfirmation ||
-                    enableRealTraffic.isPending
-                  }
-                  onClick={() =>
-                    enableRealTraffic.mutate({
-                      clinicId,
-                      manualConfirmation: true,
-                    })
-                  }
-                  type="button"
-                >
-                  Habilitar tráfico real
-                </button>
-                <button
-                  className="rounded border border-rose-300 px-3 py-2 text-rose-100 disabled:opacity-50"
-                  disabled={
-                    whatsappOperations.data.trafficStatus !== "enabled" ||
-                    !realTrafficConfirmation ||
-                    revertRealTraffic.isPending
-                  }
-                  onClick={() =>
-                    revertRealTraffic.mutate({
-                      clinicId,
-                      manualConfirmation: true,
-                      reason: "Reversión manual desde Operación comercial",
-                    })
-                  }
-                  type="button"
-                >
-                  Revertir y abrir circuit breaker
-                </button>
+                      Descargar exportación permitida
+                    </button>
+                  </div>
+                ) : null}
+                {offboardConnection.error ? (
+                  <p className="mt-2 text-sm text-amber-200" role="alert">
+                    {offboardConnection.error.message}
+                  </p>
+                ) : null}
               </div>
-              {enableRealTraffic.error || revertRealTraffic.error ? (
-                <p className="mt-2 text-sm text-amber-200" role="alert">
-                  {
-                    (enableRealTraffic.error ?? revertRealTraffic.error)
-                      ?.message
-                  }
-                </p>
-              ) : null}
-            </div>
-            <div className="rounded-lg border border-rose-500/70 bg-rose-950/20 p-4">
-              <h3 className="font-semibold">Offboarding de la Conexión</h3>
-              <p className="mt-1 text-sm text-slate-300">
-                Detiene nuevos envíos, cancela las Entregas pendientes
-                elegibles, desconecta y desactiva los webhooks de Kapso. Revoca
-                los enlaces de configuración de Praxia y exporta la
-                configuración permitida. No elimina el número, WABA, plantillas
-                ni historial administrativo. Cada paso queda auditado y los
-                fallos pueden reintentarse.
+            </>
+          ) : null}
+        </section>
+        <WhatsAppActivationClosureSection
+          clinicId={clinicId}
+          refreshToken={activationRefreshToken}
+        />
+      </section>
+      <section
+        aria-labelledby="supervision-tab-payments"
+        className="space-y-5"
+        hidden={activeTab !== "payments"}
+        id="supervision-panel-payments"
+        role="tabpanel"
+        tabIndex={0}
+      >
+        <div className="grid gap-6 lg:grid-cols-2">
+          <section className="space-y-4 rounded-xl border border-slate-700 p-5">
+            <h2 className="text-xl font-semibold">Pago por transferencia</h2>
+            <label className="block text-sm" htmlFor="payment-amount">
+              Monto en USD
+              <input
+                aria-describedby="payment-amount-help"
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+                id="payment-amount"
+                inputMode="decimal"
+                onChange={(event) => setAmountUsd(event.target.value)}
+                placeholder="75.00"
+                value={amountUsd}
+              />
+            </label>
+            <p className="text-xs text-slate-400" id="payment-amount-help">
+              Usa dos decimales y un monto mayor que cero.
+            </p>
+            <label className="block text-sm" htmlFor="payment-reference">
+              Referencia de transferencia
+              <input
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+                id="payment-reference"
+                onChange={(event) => setReference(event.target.value)}
+                placeholder="TRX-001"
+                value={reference}
+              />
+            </label>
+            <button
+              className="rounded bg-teal-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+              disabled={!clinicId || recordPayment.isPending}
+              onClick={submitPayment}
+              type="button"
+            >
+              {paymentFeedback.status === "failed"
+                ? "Reintentar de forma segura"
+                : recordPayment.isPending
+                  ? "Procesando…"
+                  : "Registrar pago"}
+            </button>
+            <AdministrativeOperationFeedback feedback={paymentFeedback} />
+            {paymentFeedback.status === "succeeded" && recordPayment.data ? (
+              <p className="text-sm text-teal-200" role="status">
+                Pago registrado. ID: {recordPayment.data.paymentId} ·{" "}
+                {formatDateTime(recordPayment.data.recordedAt)}
               </p>
-              <p className="mt-2 text-sm text-slate-300">
-                Autorización de la Clínica:{" "}
-                {whatsappOperations.data.offboardingAuthorization === null
-                  ? "pendiente del Médico propietario"
-                  : `registrada por ${whatsappOperations.data.offboardingAuthorization.authorizedByIdentityId}`}
-              </p>
-              <label className="mt-3 flex items-center gap-2 text-sm">
-                <input
-                  checked={offboardingConfirmation}
-                  onChange={(event) =>
-                    setOffboardingConfirmation(event.target.checked)
-                  }
-                  type="checkbox"
-                />
-                Confirmo retirar la Conexión de Praxia.
-              </label>
+            ) : null}
+          </section>
+          <section className="space-y-4 rounded-xl border border-slate-700 p-5">
+            <h2 className="text-xl font-semibold">Suscripción</h2>
+            <p className="text-sm text-slate-300">
+              Los reintentos conservan la misma operación administrativa.
+            </p>
+            <div className="flex flex-wrap gap-2">
               <button
-                className="mt-3 rounded bg-rose-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-                disabled={
-                  !offboardingConfirmation ||
-                  whatsappOperations.data.offboardingAuthorization === null ||
-                  offboardConnection.isPending
-                }
-                onClick={() =>
-                  offboardConnection.mutate({
-                    clinicId,
-                    manualConfirmation: true,
-                  })
-                }
+                className="rounded border border-teal-300 px-3 py-2 disabled:opacity-50"
+                disabled={!clinicId || setSubscription.isPending}
+                onClick={() => submitSubscription("active")}
                 type="button"
               >
-                {offboardConnection.isPending
-                  ? "Retirando…"
-                  : "Retirar Conexión"}
+                Activar
               </button>
-              {whatsappOperations.data.offboarding ? (
-                <div className="mt-3 space-y-2 text-sm">
-                  <p>
-                    Última retirada:{" "}
-                    {whatsappOperations.data.offboarding.status}
-                  </p>
-                  <ul className="space-y-1 text-slate-300">
-                    {whatsappOperations.data.offboarding.steps.map(
-                      (step, index) => (
-                        <li key={step.code + "-" + index}>
-                          {step.status === "succeeded" ? "✓" : "✕"}{" "}
-                          {step.message}
-                          {step.effect === "already-complete"
-                            ? " (idempotente)"
-                            : ""}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                  <details>
-                    <summary className="cursor-pointer text-teal-200">
-                      Ver exportación de configuración permitida
-                    </summary>
-                    <pre className="mt-2 max-h-56 overflow-auto rounded bg-slate-950 p-3 text-xs text-slate-300">
-                      {JSON.stringify(
-                        whatsappOperations.data.offboarding.configurationExport,
-                        null,
-                        2,
-                      )}
-                    </pre>
-                  </details>
-                  <button
-                    className="rounded border border-slate-500 px-3 py-2 text-sm"
-                    onClick={() =>
-                      downloadWhatsAppConfigurationExport(
-                        clinicId,
-                        whatsappOperations.data.offboarding
-                          ?.configurationExport ?? {},
-                      )
-                    }
-                    type="button"
-                  >
-                    Descargar exportación permitida
-                  </button>
-                </div>
-              ) : null}
-              {offboardConnection.error ? (
-                <p className="mt-2 text-sm text-amber-200" role="alert">
-                  {offboardConnection.error.message}
-                </p>
-              ) : null}
+              <button
+                className="rounded border border-amber-400 px-3 py-2 disabled:opacity-50"
+                disabled={!clinicId || setSubscription.isPending}
+                onClick={() => submitSubscription("suspended")}
+                type="button"
+              >
+                Suspender
+              </button>
             </div>
-          </>
-        ) : null}
+            <AdministrativeOperationFeedback feedback={subscriptionFeedback} />
+            {subscriptionFeedback.status === "succeeded" &&
+            setSubscription.data ? (
+              <p className="text-sm text-teal-200" role="status">
+                Suscripción actualizada a{" "}
+                {setSubscription.data.subscriptionStatus}. Operación:{" "}
+                {setSubscription.data.operationKey}
+              </p>
+            ) : null}
+          </section>
+        </div>
+        <SupervisionTechnicalDetails summary="Diagnóstico técnico de Pagos">
+          <dl className="grid gap-3 sm:grid-cols-2">
+            <DiagnosticValue
+              label="Estado del pago"
+              value={getSupervisionOperationStatusLabel(
+                recordPayment.status,
+                operationStatusLabels,
+              )}
+            />
+            <DiagnosticValue
+              label="Clave de operación del pago"
+              value={paymentAttempt?.key ?? "Sin operación generada"}
+            />
+            <DiagnosticValue
+              label="ID del pago registrado"
+              value={recordPayment.data?.paymentId ?? "No disponible"}
+            />
+            <DiagnosticValue
+              label="Estado de suscripción"
+              value={getSupervisionOperationStatusLabel(
+                setSubscription.status,
+                operationStatusLabels,
+              )}
+            />
+            <DiagnosticValue
+              label="Clave de operación de suscripción"
+              value={subscriptionAttempt?.key ?? "Sin operación generada"}
+            />
+            <DiagnosticValue
+              label="Suscripción registrada"
+              value={
+                setSubscription.data?.subscriptionStatus ?? "No disponible"
+              }
+            />
+          </dl>
+          {recordPayment.error ? (
+            <p className="break-words text-amber-200">
+              Error de pago: {recordPayment.error.message}
+            </p>
+          ) : null}
+          {setSubscription.error ? (
+            <p className="break-words text-amber-200">
+              Error de suscripción: {setSubscription.error.message}
+            </p>
+          ) : null}
+        </SupervisionTechnicalDetails>
       </section>
-      <WhatsAppActivationClosureSection
-        clinicId={clinicId}
-        refreshToken={activationRefreshToken}
-      />
-      <div className="grid gap-6 lg:grid-cols-3">
-        <section className="space-y-4 rounded-xl border border-slate-700 p-5">
-          <h2 className="text-xl font-semibold">Pago por transferencia</h2>
-          <label className="block text-sm" htmlFor="payment-amount">
-            Monto en USD
-            <input
-              aria-describedby="payment-amount-help"
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-              id="payment-amount"
-              inputMode="decimal"
-              onChange={(event) => setAmountUsd(event.target.value)}
-              placeholder="75.00"
-              value={amountUsd}
-            />
-          </label>
-          <p className="text-xs text-slate-400" id="payment-amount-help">
-            Usa dos decimales y un monto mayor que cero.
-          </p>
-          <label className="block text-sm" htmlFor="payment-reference">
-            Referencia de transferencia
-            <input
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-              id="payment-reference"
-              onChange={(event) => setReference(event.target.value)}
-              placeholder="TRX-001"
-              value={reference}
-            />
-          </label>
-          <button
-            className="rounded bg-teal-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-            disabled={!clinicId || recordPayment.isPending}
-            onClick={submitPayment}
-            type="button"
-          >
-            {paymentFeedback.status === "failed"
-              ? "Reintentar de forma segura"
-              : recordPayment.isPending
-                ? "Procesando…"
-                : "Registrar pago"}
-          </button>
-          <AdministrativeOperationFeedback feedback={paymentFeedback} />
-          {paymentFeedback.status === "succeeded" && recordPayment.data ? (
-            <p className="text-sm text-teal-200" role="status">
-              Pago registrado. ID: {recordPayment.data.paymentId} ·{" "}
-              {formatDateTime(recordPayment.data.recordedAt)}
-            </p>
-          ) : null}
-        </section>
-        <section className="space-y-4 rounded-xl border border-slate-700 p-5">
-          <h2 className="text-xl font-semibold">Suscripción</h2>
-          <p className="text-sm text-slate-300">
-            Los reintentos conservan la misma operación administrativa.
-          </p>
-          <div className="flex flex-wrap gap-2">
+      <section
+        aria-labelledby="supervision-tab-support"
+        className="space-y-5"
+        hidden={activeTab !== "support"}
+        id="supervision-panel-support"
+        role="tabpanel"
+        tabIndex={0}
+      >
+        <div className="grid gap-6 lg:grid-cols-2">
+          <section className="space-y-4 rounded-xl border border-amber-500/70 p-5">
+            <h2 className="text-xl font-semibold">Soporte con vencimiento</h2>
+            <label className="block text-sm" htmlFor="support-reason">
+              Motivo de soporte
+              <textarea
+                className="mt-1 min-h-20 w-full rounded border border-slate-700 bg-slate-900 p-2"
+                id="support-reason"
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Motivo de soporte"
+                value={reason}
+              />
+            </label>
+            <label className="block text-sm" htmlFor="support-expires-at">
+              Vencimiento de la sesión
+              <input
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+                id="support-expires-at"
+                onChange={(event) => setExpiresAt(event.target.value)}
+                type="datetime-local"
+                value={expiresAt}
+              />
+            </label>
             <button
-              className="rounded border border-teal-300 px-3 py-2 disabled:opacity-50"
-              disabled={!clinicId || setSubscription.isPending}
-              onClick={() => submitSubscription("active")}
+              className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+              disabled={!clinicId || openSupport.isPending}
+              onClick={submitSupport}
               type="button"
             >
-              Activar
+              {supportFeedback.status === "failed"
+                ? "Reintentar de forma segura"
+                : openSupport.isPending
+                  ? "Procesando…"
+                  : "Abrir soporte auditado"}
             </button>
+            <AdministrativeOperationFeedback feedback={supportFeedback} />
+            <label className="block text-sm" htmlFor="support-session-id">
+              ID de sesión de soporte
+              <input
+                className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
+                id="support-session-id"
+                onChange={(event) => setSupportSessionId(event.target.value)}
+                placeholder="Se completa al abrir soporte"
+                value={supportSessionId}
+              />
+            </label>
             <button
-              className="rounded border border-amber-400 px-3 py-2 disabled:opacity-50"
-              disabled={!clinicId || setSubscription.isPending}
-              onClick={() => submitSubscription("suspended")}
+              className="rounded border border-amber-300 px-3 py-2 disabled:opacity-50"
+              disabled={!clinicId || !supportSessionId || readSupport.isPending}
+              onClick={() => readSupport.mutate({ clinicId, supportSessionId })}
               type="button"
             >
-              Suspender
+              Consultar estado de soporte
             </button>
-          </div>
-          <AdministrativeOperationFeedback feedback={subscriptionFeedback} />
-          {subscriptionFeedback.status === "succeeded" &&
-          setSubscription.data ? (
-            <p className="text-sm text-teal-200" role="status">
-              Suscripción actualizada a{" "}
-              {setSubscription.data.subscriptionStatus}. Operación:{" "}
-              {setSubscription.data.operationKey}
+            {readSupport.error ? (
+              <p className="text-sm text-amber-200" role="alert">
+                {readSupport.error.message}
+              </p>
+            ) : null}
+            {readSupport.data ? (
+              <p className="text-sm text-slate-200" role="status">
+                {readSupport.data.name}: {readSupport.data.subscriptionStatus}
+              </p>
+            ) : null}
+          </section>
+        </div>
+        <SupervisionTechnicalDetails summary="Diagnóstico técnico de Soporte">
+          <dl className="grid gap-3 sm:grid-cols-2">
+            <DiagnosticValue
+              label="Estado de apertura"
+              value={getSupervisionOperationStatusLabel(
+                openSupport.status,
+                operationStatusLabels,
+              )}
+            />
+            <DiagnosticValue
+              label="Clave de operación"
+              value={supportAttempt?.key ?? "Sin operación generada"}
+            />
+            <DiagnosticValue
+              label="ID de sesión"
+              value={supportSessionId || "No disponible"}
+            />
+            <DiagnosticValue
+              label="Vencimiento solicitado"
+              value={expiresAt || "No especificado"}
+            />
+            <DiagnosticValue
+              label="Estado de consulta"
+              value={getSupervisionOperationStatusLabel(
+                readSupport.status,
+                supportQueryStatusLabels,
+              )}
+            />
+          </dl>
+          {openSupport.error ? (
+            <p className="break-words text-amber-200">
+              Error al abrir soporte: {openSupport.error.message}
             </p>
           ) : null}
-        </section>
-        <section className="space-y-4 rounded-xl border border-amber-500/70 p-5">
-          <h2 className="text-xl font-semibold">Soporte con vencimiento</h2>
-          <label className="block text-sm" htmlFor="support-reason">
-            Motivo de soporte
-            <textarea
-              className="mt-1 min-h-20 w-full rounded border border-slate-700 bg-slate-900 p-2"
-              id="support-reason"
-              onChange={(event) => setReason(event.target.value)}
-              placeholder="Motivo de soporte"
-              value={reason}
-            />
-          </label>
-          <label className="block text-sm" htmlFor="support-expires-at">
-            Vencimiento de la sesión
-            <input
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-              id="support-expires-at"
-              onChange={(event) => setExpiresAt(event.target.value)}
-              type="datetime-local"
-              value={expiresAt}
-            />
-          </label>
-          <button
-            className="rounded bg-amber-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
-            disabled={!clinicId || openSupport.isPending}
-            onClick={submitSupport}
-            type="button"
-          >
-            {supportFeedback.status === "failed"
-              ? "Reintentar de forma segura"
-              : openSupport.isPending
-                ? "Procesando…"
-                : "Abrir soporte auditado"}
-          </button>
-          <AdministrativeOperationFeedback feedback={supportFeedback} />
-          <label className="block text-sm" htmlFor="support-session-id">
-            ID de sesión de soporte
-            <input
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-900 p-2"
-              id="support-session-id"
-              onChange={(event) => setSupportSessionId(event.target.value)}
-              placeholder="Se completa al abrir soporte"
-              value={supportSessionId}
-            />
-          </label>
-          <button
-            className="rounded border border-amber-300 px-3 py-2 disabled:opacity-50"
-            disabled={!clinicId || !supportSessionId || readSupport.isPending}
-            onClick={() => readSupport.mutate({ clinicId, supportSessionId })}
-            type="button"
-          >
-            Consultar estado de soporte
-          </button>
           {readSupport.error ? (
-            <p className="text-sm text-amber-200" role="alert">
-              {readSupport.error.message}
+            <p className="break-words text-amber-200">
+              Error de consulta: {readSupport.error.message}
             </p>
           ) : null}
-          {readSupport.data ? (
-            <p className="text-sm text-slate-200" role="status">
-              {readSupport.data.name}: {readSupport.data.subscriptionStatus}
-            </p>
-          ) : null}
-        </section>
-      </div>
+        </SupervisionTechnicalDetails>
+      </section>
     </main>
   );
 }
@@ -2457,12 +2574,4 @@ function MetricValue({ label, value }: { label: string; value: string }) {
       <p className="mt-1 font-medium text-slate-100">{value}</p>
     </div>
   );
-}
-
-function secretStatusLabel(
-  status: "configured" | "not-configured" | "not-required",
-) {
-  if (status === "configured") return "Configurado";
-  if (status === "not-configured") return "Ausente";
-  return "No requerida";
 }
