@@ -2202,7 +2202,11 @@ function OnboardingSummary({
         />
         <DiagnosticValue
           label="WABA / business account"
-          value={snapshot.connection?.metadata.businessAccountId ?? "Pendiente"}
+          value={
+            snapshot.connection?.businessAccountId ??
+            snapshot.connection?.metadata.businessAccountId ??
+            "Pendiente"
+          }
         />
       </dl>
       {snapshot.connection?.metadata.statusReason ? (
