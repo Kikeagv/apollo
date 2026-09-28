@@ -595,16 +595,10 @@ describe("adaptador de readiness de Kapso", () => {
         new Response(
           JSON.stringify({
             data: {
-              alert_threshold_usd: "1.00",
-              charges_separated: true,
-              attributed_consumption_usd: "2.50",
-              credit_balance_usd: "10.00",
-              monthly_message_quota: 100,
-              messages_used: 4,
-              meta_charges_usd: "1.50",
-              meta_billing_mode: "partner_managed",
-              platform_charges_usd: "1.00",
-              quota_period: "2026-09-01T00:00:00Z",
+              paid_messages: { paused: false, reasons: [] },
+              reason: null,
+              status: "funded",
+              waba_id: "waba-1",
             },
           }),
         ),
@@ -623,16 +617,15 @@ describe("adaptador de readiness de Kapso", () => {
         phoneNumberId: "phone-1",
       }),
     ).resolves.toEqual({
-      alertThresholdCents: 100,
-      chargesSeparated: true,
-      consumedCents: 250,
-      creditCents: 1_000,
-      kapsoMonthlyQuota: 100,
-      kapsoQuotaConsumed: 4,
-      kapsoQuotaPeriod: "2026-09",
-      metaChargesCents: 150,
+      alertThresholdCents: null,
+      chargesSeparated: false,
+      consumedCents: 0,
+      creditBalanceKnown: false,
+      creditCents: 0,
+      kapsoFundingReason: null,
+      kapsoFundingStatus: "funded",
+      kapsoPaidMessagesPaused: false,
       mode: "partner_managed",
-      platformChargesCents: 100,
       status: "ready",
     });
     const e2eResult = await provider.runE2ETest({
@@ -643,7 +636,7 @@ describe("adaptador de readiness de Kapso", () => {
     expect(e2eResult.evidenceScope).toBe("webhook-preflight");
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
-      "https://api.kapso.ai/platform/v1/whatsapp/phone_numbers/phone-1/billing?waba_id=waba-1",
+      "https://api.kapso.ai/platform/v1/whatsapp/accounts/waba-1/funding",
       expect.objectContaining({ method: "GET" }),
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
@@ -743,15 +736,15 @@ describe("adaptador de readiness de Kapso", () => {
     ).rejects.toMatchObject({ status: 422 });
   });
 
-  it("mantiene billing pendiente si Kapso no devuelve umbral de alerta", async () => {
+  it("confirma funding aunque Kapso no exponga el saldo por API", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
         JSON.stringify({
           data: {
-            charges_separated: true,
-            attributed_consumption_usd: "2.50",
-            credit_balance_usd: "10.00",
-            meta_billing_mode: "partner_managed",
+            paid_messages: { paused: false, reasons: [] },
+            reason: null,
+            status: "funded",
+            waba_id: "waba-1",
           },
         }),
       ),
@@ -766,6 +759,12 @@ describe("adaptador de readiness de Kapso", () => {
         businessAccountId: "waba-1",
         phoneNumberId: "phone-1",
       }),
-    ).resolves.toMatchObject({ status: "pending" });
+    ).resolves.toMatchObject({
+      creditBalanceKnown: false,
+      kapsoFundingStatus: "funded",
+      kapsoPaidMessagesPaused: false,
+      mode: "partner_managed",
+      status: "ready",
+    });
   });
 });

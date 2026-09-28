@@ -1269,6 +1269,7 @@ async function openCreditCircuitIfExhausted(input: {
 function isCreditExhausted(billing: WhatsAppReadinessBilling) {
   return (
     billing.status === "ready" &&
+    billing.creditBalanceKnown !== false &&
     billing.creditCents <= (billing.creditReserveCents ?? 0)
   );
 }
@@ -1520,6 +1521,7 @@ function withDerivedState(
   );
   const billingGate = readiness.gates.find((gate) => gate.code === "billing");
   const webhookGate = readiness.gates.find((gate) => gate.code === "webhooks");
+  const numberGate = readiness.gates.find((gate) => gate.code === "number");
   const connection =
     currentState.connection === null
       ? null
@@ -1537,7 +1539,7 @@ function withDerivedState(
           },
           status: connectionStatusForReadiness(
             currentState.connection.status,
-            readiness.status,
+            numberGate?.status ?? "pending",
           ),
           updatedAt: touchConnection ? now : currentState.connection.updatedAt,
         };
@@ -1553,19 +1555,14 @@ function withDerivedState(
 
 function connectionStatusForReadiness(
   current: WhatsAppConnection["status"],
-  readiness: WhatsAppTechnicalReadinessStatus,
+  numberStatus: WhatsAppReadinessGate["status"],
 ): WhatsAppConnection["status"] {
   if (current === "disconnected") return "disconnected";
-  if (readiness === "ready") return "ready";
+  if (numberStatus === "ready") return "ready";
   if (current === "blocked") return "blocked";
-  if (current === "degraded") return "degraded";
-  if (readiness === "blocked") return "blocked";
-  if (readiness === "degraded") return "degraded";
-  return current === "ready"
-    ? "degraded"
-    : current === "pending"
-      ? "pending"
-      : "provisioning";
+  if (numberStatus === "blocked") return "blocked";
+  if (numberStatus === "failed") return "degraded";
+  return current === "pending" ? "pending" : "provisioning";
 }
 
 function toEvaluationInput(

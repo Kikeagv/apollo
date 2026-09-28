@@ -56,6 +56,17 @@ export const whatsappNumberHealthStatuses = [
 export type WhatsAppNumberHealth =
   (typeof whatsappNumberHealthStatuses)[number];
 
+export const whatsappKapsoFundingStatuses = [
+  "funded",
+  "pending",
+  "unknown",
+  "not_funded",
+  "revoked",
+] as const;
+
+export type WhatsAppKapsoFundingStatus =
+  (typeof whatsappKapsoFundingStatuses)[number];
+
 /** LIMITED means Meta permits messaging, but with a restricted capacity. */
 export function isWhatsAppNumberMessagingAvailable(health: unknown) {
   return health === "healthy" || health === "limited";
@@ -70,7 +81,9 @@ export type WhatsAppE2EEvidenceScope =
   (typeof whatsappE2EEvidenceScopes)[number];
 
 /** La salud remota deja de ser evidencia suficiente después de este intervalo. */
-export const whatsappNumberHealthMaxAgeMs = 5 * 60_000;
+// Health reconciliation runs every five minutes. Allow a missed or delayed
+// reconciliation before treating the last known provider state as stale.
+export const whatsappNumberHealthMaxAgeMs = 15 * 60_000;
 
 /** Una lectura antigua no demuestra que el número siga bloqueado. */
 export function currentWhatsAppNumberHealth(input: {
@@ -256,6 +269,7 @@ export type WhatsAppBillingSnapshot = {
   chargesSeparated: boolean;
   consumedCents: number;
   creditCents: number;
+  creditBalanceKnown?: boolean;
   creditInFlightCents?: number;
   creditLimitCents?: number | null;
   creditReserveCents?: number | null;
@@ -269,6 +283,9 @@ export type WhatsAppBillingSnapshot = {
   kapsoQuotaConsumed?: number;
   kapsoQuotaReserved?: number;
   kapsoQuotaInFlight?: number;
+  kapsoFundingStatus?: WhatsAppKapsoFundingStatus | null;
+  kapsoFundingReason?: string | null;
+  kapsoPaidMessagesPaused?: boolean | null;
   metaChargesCents?: number | null;
   platformChargesCents?: number | null;
   mode: "partner_managed" | "customer_managed" | "unknown";
@@ -354,17 +371,6 @@ function evaluateNumber(input: WhatsAppReadinessInput): WhatsAppReadinessGate {
       "blocked",
       "La Conexión está bloqueada y requiere reactivación manual",
       "Reactivar manualmente la Conexión de WhatsApp",
-    );
-  }
-  if (
-    input.connection.status === "degraded" &&
-    input.allowConnectionRecovery !== true
-  ) {
-    return gate(
-      "number",
-      "failed",
-      "La Conexión está degradada y no puede enviar todavía",
-      "Revisar la Conexión y reintentar sus gates",
     );
   }
   if (input.connection.provider !== "kapso") {
@@ -673,6 +679,60 @@ function evaluateBilling(input: WhatsAppReadinessInput): WhatsAppReadinessGate {
       "El billing de Kapso todavía no está verificado",
       "Reintentar la verificación de billing",
     );
+  }
+  if (input.billing.kapsoFundingStatus != null) {
+    switch (input.billing.kapsoFundingStatus) {
+      case "pending":
+      case "unknown":
+        return gate(
+          "billing",
+          "pending",
+          "Kapso todavía no confirma el funding del WABA",
+          "Revisar el estado de funding en Kapso",
+        );
+      case "not_funded":
+      case "revoked":
+        return gate(
+          "billing",
+          "blocked",
+          "Kapso no tiene funding activo para este WABA",
+          "Activar funding en Kapso o configurar el método de pago del negocio",
+        );
+      case "funded":
+        if (input.billing.kapsoPaidMessagesPaused === true) {
+          return gate(
+            "billing",
+            "blocked",
+            "Kapso tiene pausados los mensajes pagados de este WABA",
+            "Revisar el saldo y las pausas de billing en Kapso",
+          );
+        }
+        if (input.billing.kapsoPaidMessagesPaused !== false) {
+          return gate(
+            "billing",
+            "pending",
+            "Kapso no confirmó el estado de pausa de los mensajes pagados",
+            "Revalidar el funding en Kapso",
+          );
+        }
+        if (
+          input.billing.creditBalanceKnown === true &&
+          input.billing.creditCents <= (input.billing.creditReserveCents ?? 0)
+        ) {
+          return gate(
+            "billing",
+            "blocked",
+            "La cuenta partner_managed no tiene crédito disponible sobre la reserva",
+            "Agregar crédito antes de habilitar envíos",
+          );
+        }
+        return gate(
+          "billing",
+          "ready",
+          "Kapso confirma funding activo y mensajes pagados sin pausa",
+          "",
+        );
+    }
   }
   if (input.billing.mode !== "partner_managed") {
     return gate(

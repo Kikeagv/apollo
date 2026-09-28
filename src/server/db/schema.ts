@@ -64,6 +64,7 @@ import type { KapsoWebhookEventPayload } from "~/domain/whatsapp-kapso-provision
 import type {
   WhatsAppCriticalTemplateKind,
   WhatsAppE2EEvidenceScope,
+  WhatsAppKapsoFundingStatus,
   WhatsAppReadinessGateCode,
   WhatsAppTemplateCategory,
   WhatsAppTemplateProvisioningStatus,
@@ -980,6 +981,14 @@ export const whatsappBilling = createTable(
     kapsoQuotaConsumed: integer("kapso_quota_consumed").default(0).notNull(),
     kapsoQuotaReserved: integer("kapso_quota_reserved").default(0).notNull(),
     kapsoQuotaInFlight: integer("kapso_quota_in_flight").default(0).notNull(),
+    creditBalanceKnown: boolean("credit_balance_known")
+      .default(false)
+      .notNull(),
+    kapsoFundingStatus: text(
+      "kapso_funding_status",
+    ).$type<WhatsAppKapsoFundingStatus | null>(),
+    kapsoFundingReason: text("kapso_funding_reason"),
+    kapsoPaidMessagesPaused: boolean("kapso_paid_messages_paused"),
     metaChargesCents: integer("meta_charges_cents"),
     platformChargesCents: integer("platform_charges_cents"),
     chargesSeparated: boolean("charges_separated").default(false).notNull(),
@@ -1004,6 +1013,10 @@ export const whatsappBilling = createTable(
     check(
       "whatsapp_billing_status",
       sql`${table.status} IN ('ready', 'pending', 'failed')`,
+    ),
+    check(
+      "whatsapp_billing_kapso_funding_status",
+      sql`${table.kapsoFundingStatus} IS NULL OR ${table.kapsoFundingStatus} IN ('funded', 'pending', 'unknown', 'not_funded', 'revoked')`,
     ),
     check(
       "whatsapp_billing_non_negative",

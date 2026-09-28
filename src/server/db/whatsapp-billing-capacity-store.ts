@@ -64,7 +64,12 @@ export const drizzleWhatsAppBillingCapacityStore: WhatsAppBillingCapacityStore =
           .from(whatsappBilling)
           .where(eq(whatsappBilling.clinicId, input.clinicId))
           .for("update");
-        if (billing?.status !== "ready") {
+        if (
+          billing?.status !== "ready" ||
+          (billing.kapsoFundingStatus !== null &&
+            (billing.kapsoFundingStatus !== "funded" ||
+              billing.kapsoPaidMessagesPaused !== false))
+        ) {
           return { reason: "billing-not-ready", reserved: false } as const;
         }
 
@@ -83,7 +88,10 @@ export const drizzleWhatsAppBillingCapacityStore: WhatsAppBillingCapacityStore =
         );
         const availableCredit =
           billing.creditCents - billing.creditInFlightCents - creditCents;
-        if (availableCredit <= (billing.creditReserveCents ?? 0)) {
+        if (
+          billing.creditBalanceKnown &&
+          availableCredit <= (billing.creditReserveCents ?? 0)
+        ) {
           await openWhatsAppCircuitInTransaction(transaction, {
             actorKind: "worker",
             cause: "credit-exhausted",

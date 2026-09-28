@@ -600,7 +600,9 @@ export function ApoloOperations() {
                     value={
                       readiness.data === undefined
                         ? "—"
-                        : `${formatCents(readiness.data.billing.creditCents)} · reserva ${formatCents(readiness.data.billing.creditReserveCents ?? 0)} · en vuelo ${formatCents(readiness.data.billing.creditInFlightCents ?? 0)}`
+                        : readiness.data.billing.creditBalanceKnown === true
+                          ? `${formatCents(readiness.data.billing.creditCents)} · reserva ${formatCents(readiness.data.billing.creditReserveCents ?? 0)} · en vuelo ${formatCents(readiness.data.billing.creditInFlightCents ?? 0)}`
+                          : `${kapsoFundingStatusLabel(readiness.data.billing.kapsoFundingStatus)} · saldo no expuesto por API`
                     }
                   />
                   <MetricValue
@@ -608,7 +610,9 @@ export function ApoloOperations() {
                     value={
                       readiness.data === undefined
                         ? "—"
-                        : `${billingHealthLabel(readiness.data.billingHealth.level)} · ${readiness.data.billingHealth.balancePercent === null ? "saldo sin límite" : `${readiness.data.billingHealth.balancePercent}%`} · ${readiness.data.billingHealth.autonomyDays === null ? "autonomía no estimada" : `${readiness.data.billingHealth.autonomyDays} días`}`
+                        : readiness.data.billing.creditBalanceKnown !== true
+                          ? "Saldo no consultable por API"
+                          : `${billingHealthLabel(readiness.data.billingHealth.level)} · ${readiness.data.billingHealth.balancePercent === null ? "saldo sin límite" : `${readiness.data.billingHealth.balancePercent}%`} · ${readiness.data.billingHealth.autonomyDays === null ? "autonomía no estimada" : `${readiness.data.billingHealth.autonomyDays} días`}`
                     }
                   />
                   <MetricValue
@@ -616,7 +620,9 @@ export function ApoloOperations() {
                     value={
                       readiness.data === undefined
                         ? `${operationalMetrics.data?.quotaMessages ?? 0} mensajes`
-                        : `${readiness.data.billing.kapsoQuotaConsumed ?? operationalMetrics.data?.quotaMessages ?? 0} + ${readiness.data.billing.kapsoQuotaInFlight ?? 0} en vuelo / ${readiness.data.billing.kapsoMonthlyQuota ?? "∞"} mensajes`
+                        : readiness.data.billing.kapsoMonthlyQuota == null
+                          ? "Cuota no consultable por API"
+                          : `${readiness.data.billing.kapsoQuotaConsumed ?? operationalMetrics.data?.quotaMessages ?? 0} + ${readiness.data.billing.kapsoQuotaInFlight ?? 0} en vuelo / ${readiness.data.billing.kapsoMonthlyQuota} mensajes`
                     }
                   />
                   <MetricValue
@@ -1140,66 +1146,96 @@ export function ApoloOperations() {
                         </dd>
                       </div>
                       <div>
+                        <dt className="inline">Funding del WABA: </dt>
+                        <dd className="inline">
+                          {kapsoFundingStatusLabel(
+                            readiness.data.billing.kapsoFundingStatus,
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline">Mensajes pagados: </dt>
+                        <dd className="inline">
+                          {readiness.data.billing.kapsoPaidMessagesPaused ===
+                          false
+                            ? "Activos en Kapso"
+                            : readiness.data.billing.kapsoPaidMessagesPaused ===
+                                true
+                              ? "Pausados en Kapso"
+                              : "Estado no reportado"}
+                        </dd>
+                      </div>
+                      <div>
                         <dt className="inline">Crédito: </dt>
                         <dd className="inline">
-                          {formatCents(readiness.data.billing.creditCents)}
+                          {readiness.data.billing.creditBalanceKnown === true
+                            ? formatCents(readiness.data.billing.creditCents)
+                            : "Saldo no expuesto por API"}
                         </dd>
                       </div>
                       <div>
                         <dt className="inline">Reserva de crédito: </dt>
                         <dd className="inline">
-                          {formatCents(
-                            readiness.data.billing.creditReserveCents ?? 0,
-                          )}
+                          {readiness.data.billing.creditBalanceKnown === true
+                            ? formatCents(
+                                readiness.data.billing.creditReserveCents ?? 0,
+                              )
+                            : "No disponible por API"}
                         </dd>
                       </div>
                       <div>
                         <dt className="inline">Crédito en vuelo: </dt>
                         <dd className="inline">
-                          {formatCents(
-                            readiness.data.billing.creditInFlightCents ?? 0,
-                          )}
+                          {readiness.data.billing.creditBalanceKnown === true
+                            ? formatCents(
+                                readiness.data.billing.creditInFlightCents ?? 0,
+                              )
+                            : "No disponible por API"}
                         </dd>
                       </div>
                       <div>
                         <dt className="inline">Salud: </dt>
                         <dd className="inline">
-                          {billingHealthLabel(
-                            readiness.data.billingHealth.level,
-                          )}
+                          {readiness.data.billing.creditBalanceKnown === true
+                            ? billingHealthLabel(
+                                readiness.data.billingHealth.level,
+                              )
+                            : "Saldo no consultable por API"}
                         </dd>
                       </div>
                       <div>
                         <dt className="inline">Autonomía estimada: </dt>
                         <dd className="inline">
-                          {readiness.data.billingHealth.autonomyDays === null
-                            ? "No estimada"
-                            : `${readiness.data.billingHealth.autonomyDays} días`}
+                          {readiness.data.billing.creditBalanceKnown !== true
+                            ? "No disponible por API"
+                            : readiness.data.billingHealth.autonomyDays === null
+                              ? "No estimada"
+                              : `${readiness.data.billingHealth.autonomyDays} días`}
                         </dd>
                       </div>
                       <div>
                         <dt className="inline">Cuota Kapso: </dt>
                         <dd className="inline">
-                          {readiness.data.billing.kapsoQuotaConsumed} /{" "}
-                          {readiness.data.billing.kapsoMonthlyQuota ?? "∞"}{" "}
-                          mensajes
-                          {readiness.data.billing.kapsoQuotaInFlight ===
-                          undefined
-                            ? ""
-                            : ` · ${readiness.data.billing.kapsoQuotaInFlight} en vuelo`}
+                          {readiness.data.billing.kapsoMonthlyQuota == null
+                            ? "No consultable por API"
+                            : `${readiness.data.billing.kapsoQuotaConsumed} / ${readiness.data.billing.kapsoMonthlyQuota} mensajes${readiness.data.billing.kapsoQuotaInFlight === undefined ? "" : ` · ${readiness.data.billing.kapsoQuotaInFlight} en vuelo`}`}
                         </dd>
                       </div>
                       <div>
                         <dt className="inline">Consumo: </dt>
                         <dd className="inline">
-                          {formatCents(readiness.data.billing.consumedCents)}
+                          {readiness.data.billing.creditBalanceKnown === true
+                            ? formatCents(readiness.data.billing.consumedCents)
+                            : "No disponible por API"}
                         </dd>
                       </div>
                       <div>
                         <dt className="inline">Umbral de alerta: </dt>
                         <dd className="inline">
                           {readiness.data.billing.alertThresholdCents === null
-                            ? "No registrado"
+                            ? readiness.data.billing.kapsoFundingStatus != null
+                              ? "No disponible por API"
+                              : "No registrado"
                             : formatCents(
                                 readiness.data.billing.alertThresholdCents,
                               )}
@@ -1208,16 +1244,23 @@ export function ApoloOperations() {
                       <div>
                         <dt className="inline">Cargos separados: </dt>
                         <dd className="inline">
-                          {readiness.data.billing.chargesSeparated
-                            ? "Sí"
-                            : "No"}
+                          {readiness.data.billing.kapsoFundingStatus != null
+                            ? readiness.data.billing.kapsoFundingStatus ===
+                              "funded"
+                              ? "Kapso gestiona los cargos de Meta"
+                              : "No confirmado por API"
+                            : readiness.data.billing.chargesSeparated
+                              ? "Sí"
+                              : "No"}
                         </dd>
                       </div>
                       <div>
                         <dt className="inline">Cargos de Meta: </dt>
                         <dd className="inline">
                           {readiness.data.billing.metaChargesCents == null
-                            ? "No registrados"
+                            ? readiness.data.billing.kapsoFundingStatus != null
+                              ? "No disponibles por API"
+                              : "No registrados"
                             : formatCents(
                                 readiness.data.billing.metaChargesCents,
                               )}
@@ -1227,7 +1270,9 @@ export function ApoloOperations() {
                         <dt className="inline">Cargos de plataforma: </dt>
                         <dd className="inline">
                           {readiness.data.billing.platformChargesCents == null
-                            ? "No registrados"
+                            ? readiness.data.billing.kapsoFundingStatus != null
+                              ? "No disponibles por API"
+                              : "No registrados"
                             : formatCents(
                                 readiness.data.billing.platformChargesCents,
                               )}
@@ -2572,6 +2617,23 @@ function billingHealthLabel(level: "normal" | "warning" | "critical") {
     normal: "Normal",
     warning: "Advertencia",
   }[level];
+}
+
+function kapsoFundingStatusLabel(status: string | null | undefined) {
+  switch (status) {
+    case "funded":
+      return "Activo";
+    case "pending":
+      return "Pendiente";
+    case "not_funded":
+      return "No financiado";
+    case "revoked":
+      return "Revocado";
+    case "unknown":
+      return "No confirmado";
+    default:
+      return "No reportado";
+  }
 }
 
 function DiagnosticValue({ label, value }: { label: string; value: string }) {

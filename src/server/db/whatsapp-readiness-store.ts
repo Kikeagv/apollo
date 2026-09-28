@@ -878,15 +878,22 @@ async function persistReadinessState(
     state.billing.consumedCents < persistedBilling.consumedCents
       ? persistedBilling.consumedCents - state.billing.consumedCents
       : 0;
+  const preservePersistedCredit =
+    persistedBilling !== undefined &&
+    (incomingBillingSnapshotIsOlder ||
+      state.billing.creditBalanceKnown === false);
+  const usePersistedBillingSnapshot =
+    incomingBillingSnapshotIsOlder && persistedBilling !== undefined;
   const creditCents =
-    incomingBillingSnapshotIsOlder && persistedBilling !== undefined
+    preservePersistedCredit && persistedBilling !== undefined
       ? persistedBilling.creditCents
       : Math.max(0, state.billing.creditCents - localConsumedSinceSnapshot);
   const billingSnapshotValues =
-    incomingBillingSnapshotIsOlder && persistedBilling !== undefined
+    usePersistedBillingSnapshot && persistedBilling !== undefined
       ? {
           alertThresholdCents: persistedBilling.alertThresholdCents,
           chargesSeparated: persistedBilling.chargesSeparated,
+          creditBalanceKnown: persistedBilling.creditBalanceKnown,
           creditLimitCents: persistedBilling.creditLimitCents,
           creditReserveCents: persistedBilling.creditReserveCents,
           estimatedDailyConsumptionCents:
@@ -898,6 +905,9 @@ async function persistReadinessState(
           kapsoMonthlyQuota: persistedBilling.kapsoMonthlyQuota,
           kapsoQuotaPeriod: persistedBilling.kapsoQuotaPeriod,
           kapsoQuotaReserved: persistedBilling.kapsoQuotaReserved,
+          kapsoFundingReason: persistedBilling.kapsoFundingReason,
+          kapsoFundingStatus: persistedBilling.kapsoFundingStatus,
+          kapsoPaidMessagesPaused: persistedBilling.kapsoPaidMessagesPaused,
           lastError: persistedBilling.lastError,
           lastSyncedAt: persistedBilling.lastSyncedAt,
           metaChargesCents: persistedBilling.metaChargesCents,
@@ -908,6 +918,7 @@ async function persistReadinessState(
       : {
           alertThresholdCents: state.billing.alertThresholdCents,
           chargesSeparated: state.billing.chargesSeparated,
+          creditBalanceKnown: state.billing.creditBalanceKnown ?? false,
           creditLimitCents: state.billing.creditLimitCents ?? null,
           creditReserveCents: state.billing.creditReserveCents ?? null,
           estimatedDailyConsumptionCents:
@@ -922,6 +933,10 @@ async function persistReadinessState(
             persistedBilling?.kapsoQuotaPeriod ??
             null,
           kapsoQuotaReserved: state.billing.kapsoQuotaReserved ?? 0,
+          kapsoFundingReason: state.billing.kapsoFundingReason ?? null,
+          kapsoFundingStatus: state.billing.kapsoFundingStatus ?? null,
+          kapsoPaidMessagesPaused:
+            state.billing.kapsoPaidMessagesPaused ?? null,
           lastError: state.billing.lastError,
           lastSyncedAt: state.billing.lastSyncedAt,
           metaChargesCents: state.billing.metaChargesCents ?? null,
@@ -1188,6 +1203,7 @@ function toRecord(input: {
       alertThresholdCents: input.billing?.alertThresholdCents ?? null,
       chargesSeparated: input.billing?.chargesSeparated ?? false,
       consumedCents: input.billing?.consumedCents ?? 0,
+      creditBalanceKnown: input.billing?.creditBalanceKnown ?? false,
       creditCents: input.billing?.creditCents ?? 0,
       creditInFlightCents: input.billing?.creditInFlightCents ?? 0,
       creditLimitCents: input.billing?.creditLimitCents ?? null,
@@ -1203,6 +1219,9 @@ function toRecord(input: {
       kapsoQuotaConsumed: input.billing?.kapsoQuotaConsumed ?? 0,
       kapsoQuotaReserved: input.billing?.kapsoQuotaReserved ?? 0,
       kapsoQuotaInFlight: input.billing?.kapsoQuotaInFlight ?? 0,
+      kapsoFundingReason: input.billing?.kapsoFundingReason ?? null,
+      kapsoFundingStatus: input.billing?.kapsoFundingStatus ?? null,
+      kapsoPaidMessagesPaused: input.billing?.kapsoPaidMessagesPaused ?? null,
       lastError: input.billing?.lastError ?? null,
       lastSyncedAt: input.billing?.lastSyncedAt ?? null,
       metaChargesCents: input.billing?.metaChargesCents ?? null,

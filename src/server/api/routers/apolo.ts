@@ -620,7 +620,8 @@ export const apoloRouter = {
         const billing = latestReadiness.billing;
         if (
           billing.status !== "ready" ||
-          billing.creditCents <= (billing.creditReserveCents ?? 0) ||
+          (billing.creditBalanceKnown !== false &&
+            billing.creditCents <= (billing.creditReserveCents ?? 0)) ||
           (circuit.cause === "quota-exhausted" &&
             billing.kapsoMonthlyQuota !== null &&
             (billing.kapsoQuotaConsumed ?? 0) +
@@ -647,9 +648,7 @@ export const apoloRouter = {
             store: drizzleWhatsAppReadinessStore,
           },
         );
-        if (
-          !isWhatsAppNumberMessagingAvailable(latestReadiness.numberHealth)
-        ) {
+        if (!isWhatsAppNumberMessagingAvailable(latestReadiness.numberHealth)) {
           throw new Error("La salud del número todavía no está recuperada");
         }
       }

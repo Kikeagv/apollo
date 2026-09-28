@@ -192,118 +192,54 @@ export function createKapsoReadinessProvider(
       const payload = await requestJson(
         fetchImpl,
         options.apiKey,
-        `/whatsapp/phone_numbers/${encodeURIComponent(input.phoneNumberId)}/billing?waba_id=${encodeURIComponent(input.businessAccountId)}`,
+        `/whatsapp/accounts/${encodeURIComponent(input.businessAccountId)}/funding`,
         { method: "GET" },
       );
       const data = unwrapData(payload);
-      const creditCents = readUsdCents(data, [
-        "credit_balance_usd",
-        "credit_balance",
-        "remaining_credit_usd",
-      ]);
-      const creditLimitCents = readOptionalUsdCents(data, [
-        "credit_limit_usd",
-        "monthly_credit_limit_usd",
-        "credit_limit",
-      ]);
-      const creditReserveCents = readOptionalUsdCents(data, [
-        "credit_reserve_usd",
-        "send_reserve_usd",
-        "reserve_usd",
-      ]);
-      const consumedCents = readUsdCents(data, [
-        "attributed_consumption_usd",
-        "attributed_consumed_usd",
-      ]);
-      const metaChargesCents = readOptionalUsdCents(data, [
-        "meta_charges_usd",
-        "meta_cost_usd",
-      ]);
-      const platformChargesCents = readOptionalUsdCents(data, [
-        "platform_charges_usd",
-        "kapso_platform_charges_usd",
-        "kapso_cost_usd",
-      ]);
-      const alertThresholdCents = readOptionalUsdCents(data, [
-        "alert_threshold_usd",
-        "alert_threshold",
-      ]);
-      const estimatedDailyConsumptionCents = readOptionalUsdCents(data, [
-        "estimated_daily_consumption_usd",
-        "daily_consumption_usd",
-      ]);
-      const warningBalancePercent = readOptionalInteger(data, [
-        "warning_balance_percent",
-        "warning_threshold_percent",
-      ]);
-      const criticalBalancePercent = readOptionalInteger(data, [
-        "critical_balance_percent",
-        "critical_threshold_percent",
-      ]);
-      const warningAutonomyDays = readOptionalInteger(data, [
-        "warning_autonomy_days",
-      ]);
-      const criticalAutonomyDays = readOptionalInteger(data, [
-        "critical_autonomy_days",
-      ]);
-      const kapsoMonthlyQuota = readOptionalInteger(data, [
-        "monthly_message_quota",
-        "monthly_quota",
-        "message_quota",
-      ]);
-      const kapsoQuotaPeriod = readOptionalQuotaPeriod(data, [
-        "quota_period",
-        "billing_period",
-        "period",
-        "period_start",
-      ]);
-      const kapsoQuotaConsumed = readOptionalInteger(data, [
-        "messages_used",
-        "quota_consumed",
-        "monthly_messages_used",
-      ]);
-      const kapsoQuotaReserved = readOptionalInteger(data, [
-        "messages_reserved",
-        "quota_reserved",
-      ]);
-      const mode = readBillingMode(data);
-      const chargesSeparated = readBoolean(data, [
-        "charges_separated",
-        "separate_charges",
-      ]);
-      const hasBalanceFields =
-        hasAny(data, [
-          "credit_balance_usd",
-          "credit_balance",
-          "remaining_credit_usd",
-        ]) &&
-        hasAny(data, ["attributed_consumption_usd", "attributed_consumed_usd"]);
+      if (readString(data, "waba_id") !== input.businessAccountId) {
+        throw new KapsoReadinessProviderError(
+          0,
+          "Kapso devolvió funding para otro WhatsApp Business Account",
+        );
+      }
+      const kapsoFundingStatus = normalizeKapsoFundingStatus(
+        readString(data, "status"),
+      );
+      if (kapsoFundingStatus === null) {
+        throw new KapsoReadinessProviderError(
+          0,
+          "Kapso devolvió un estado de funding no reconocido",
+        );
+      }
+      const paidMessages = isRecord(data.paid_messages)
+        ? data.paid_messages
+        : null;
+      const kapsoPaidMessagesPaused =
+        typeof paidMessages?.paused === "boolean" ? paidMessages.paused : null;
+      if (kapsoPaidMessagesPaused === null) {
+        throw new KapsoReadinessProviderError(
+          0,
+          "Kapso no confirmó si los mensajes pagados están pausados",
+        );
+      }
 
       return {
-        alertThresholdCents,
-        chargesSeparated,
-        consumedCents,
-        creditCents,
-        ...(creditLimitCents === null ? {} : { creditLimitCents }),
-        ...(creditReserveCents === null ? {} : { creditReserveCents }),
-        ...(estimatedDailyConsumptionCents === null
-          ? {}
-          : { estimatedDailyConsumptionCents }),
-        ...(warningBalancePercent === null ? {} : { warningBalancePercent }),
-        ...(criticalBalancePercent === null ? {} : { criticalBalancePercent }),
-        ...(warningAutonomyDays === null ? {} : { warningAutonomyDays }),
-        ...(criticalAutonomyDays === null ? {} : { criticalAutonomyDays }),
-        ...(kapsoMonthlyQuota === null ? {} : { kapsoMonthlyQuota }),
-        ...(kapsoQuotaPeriod === null ? {} : { kapsoQuotaPeriod }),
-        ...(kapsoQuotaConsumed === null ? {} : { kapsoQuotaConsumed }),
-        ...(kapsoQuotaReserved === null ? {} : { kapsoQuotaReserved }),
-        metaChargesCents,
-        mode,
-        platformChargesCents,
-        status:
-          hasBalanceFields && alertThresholdCents !== null && mode !== "unknown"
-            ? "ready"
-            : "pending",
+        alertThresholdCents: null,
+        chargesSeparated: false,
+        consumedCents: 0,
+        creditBalanceKnown: false,
+        creditCents: 0,
+        kapsoFundingReason: readString(data, "reason"),
+        kapsoFundingStatus,
+        kapsoPaidMessagesPaused,
+        mode:
+          kapsoFundingStatus === "funded"
+            ? "partner_managed"
+            : kapsoFundingStatus === "not_funded" &&
+                readString(data, "reason") === "existing_payment_method"
+              ? "customer_managed"
+              : "unknown",
+        status: "ready",
       };
     },
 
@@ -831,68 +767,20 @@ function canonicalTemplateVariables(
   });
 }
 
-function readBillingMode(data: Record<string, unknown>) {
-  const value = readString(data, ["meta_billing_mode", "billing_mode"])
-    ?.trim()
-    .toLowerCase();
-  if (value === "partner_managed") return "partner_managed" as const;
-  if (value === "customer_managed") return "customer_managed" as const;
-  return "unknown" as const;
-}
-
-function readUsdCents(data: Record<string, unknown>, keys: string[]) {
-  return readOptionalUsdCents(data, keys) ?? 0;
-}
-
-function readOptionalUsdCents(
-  data: Record<string, unknown>,
-  keys: string[],
-): number | null {
-  for (const key of keys) {
-    const value = data[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return Math.round(value * 100);
-    }
-    if (typeof value === "string" && value.trim() !== "") {
-      const parsed = Number(value);
-      if (Number.isFinite(parsed)) return Math.round(parsed * 100);
-    }
+function normalizeKapsoFundingStatus(
+  value: string | null,
+): "funded" | "pending" | "unknown" | "not_funded" | "revoked" | null {
+  switch (value?.toLowerCase()) {
+    case "funded":
+    case "pending":
+    case "unknown":
+    case "not_funded":
+    case "revoked":
+      return value.toLowerCase() as
+        "funded" | "pending" | "unknown" | "not_funded" | "revoked";
+    default:
+      return null;
   }
-  return null;
-}
-
-function readOptionalInteger(
-  data: Record<string, unknown>,
-  keys: string[],
-): number | null {
-  for (const key of keys) {
-    const value = data[key];
-    if (
-      typeof value === "number" &&
-      Number.isSafeInteger(value) &&
-      value >= 0
-    ) {
-      return value;
-    }
-    if (typeof value === "string" && value.trim() !== "") {
-      const parsed = Number(value);
-      if (Number.isSafeInteger(parsed) && parsed >= 0) return parsed;
-    }
-  }
-  return null;
-}
-
-function readOptionalQuotaPeriod(
-  data: Record<string, unknown>,
-  keys: string[],
-): string | null {
-  const value = readString(data, keys)?.trim();
-  if (value === undefined || value === null) return null;
-  const match = /^(\d{4})-(\d{1,2})(?:-\d{1,2})?(?:T.*)?$/.exec(value);
-  if (match === null) return null;
-  const month = Number(match[2]);
-  if (month < 1 || month > 12) return null;
-  return `${match[1]}-${String(month).padStart(2, "0")}`;
 }
 
 function readBoolean(data: Record<string, unknown>, keys: string[]) {
@@ -900,10 +788,6 @@ function readBoolean(data: Record<string, unknown>, keys: string[]) {
     if (typeof data[key] === "boolean") return data[key];
   }
   return false;
-}
-
-function hasAny(data: Record<string, unknown>, keys: string[]) {
-  return keys.some((key) => data[key] !== undefined && data[key] !== null);
 }
 
 function readArray(payload: unknown, key: string): Record<string, unknown>[] {
