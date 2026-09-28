@@ -34,10 +34,11 @@ function createdTemplateResponse(
         components: [
           {
             example: {
-              body_text_named_params: definition.variables.map((paramName) => ({
-                example: definition.examples[paramName],
-                param_name: paramName,
-              })),
+              body_text: [
+                definition.variables.map(
+                  (variable) => definition.examples[variable],
+                ),
+              ],
             },
             text: definition.content,
             type: "BODY",
@@ -54,7 +55,7 @@ function createdTemplateResponse(
 }
 
 describe("provisionamiento de plantillas de Kapso", () => {
-  it("consulta el WABA y crea sólo las definiciones faltantes con ejemplos nombrados", async () => {
+  it("consulta el WABA y crea sólo las definiciones faltantes con ejemplos posicionales", async () => {
     const missing = whatsappCriticalTemplateCatalog.slice(1);
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -116,12 +117,11 @@ describe("provisionamiento de plantillas de Kapso", () => {
           components: [
             {
               example: {
-                body_text_named_params: definition.variables.map(
-                  (paramName) => ({
-                    example: definition.examples[paramName],
-                    param_name: paramName,
-                  }),
-                ),
+                body_text: [
+                  definition.variables.map(
+                    (variable) => definition.examples[variable],
+                  ),
+                ],
               },
               text: definition.content,
               type: "BODY",
@@ -129,7 +129,7 @@ describe("provisionamiento de plantillas de Kapso", () => {
           ],
           language: definition.locale,
           name: definition.name,
-          parameter_format: "NAMED",
+          parameter_format: "POSITIONAL",
         },
         method: "POST",
         url: `https://api.kapso.ai/meta/whatsapp/v24.0/waba-1/message_templates`,

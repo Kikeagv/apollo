@@ -121,11 +121,13 @@ export function buildTransactionalTemplateParameters(
     timeStyle: "short",
     timeZone: CLINIC_TIMEZONE,
   }).format(input.startsAt);
+  const appointmentDateTime = `${date} a las ${time}`;
   const values: Record<string, string> = {
     clinic: input.clinicName,
     clinic_name: input.clinicName,
     date,
     appointment_date: date,
+    appointment_datetime: appointmentDateTime,
     appointment_time: time,
     doctor: input.doctorName ?? "",
     doctor_name: input.doctorName ?? "",

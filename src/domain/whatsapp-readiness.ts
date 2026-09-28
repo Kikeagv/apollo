@@ -90,8 +90,7 @@ export function currentWhatsAppNumberHealth(input: {
 const appointmentTemplateVariables = [
   "patient_name",
   "clinic_name",
-  "appointment_date",
-  "appointment_time",
+  "appointment_datetime",
   "doctor_name",
 ] as const;
 
@@ -100,69 +99,61 @@ export const whatsappCriticalTemplateCatalog = [
   {
     kind: "confirmation",
     category: "UTILITY",
-    content:
-      "Hola {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
+    content: `Hola {{1}}. Desde {{2}} confirmamos que tienes una cita programada para el {{3}}. Te atenderá {{4}}. Si necesitas hacer algún cambio o tienes alguna pregunta, responde a este mensaje para comunicarte con la clínica.`,
     locale: "es",
     name: "appointment_confirmation",
     examples: {
-      appointment_date: "25 de septiembre de 2026",
-      appointment_time: "08:30",
+      appointment_datetime: "25 de septiembre de 2026 a las 08:30",
       clinic_name: "Clínica Central",
       doctor_name: "Dra. Ana López",
       patient_name: "María Hernández",
     },
-    version: 1,
+    version: 2,
     variables: appointmentTemplateVariables,
   },
   {
     kind: "reminder",
     category: "UTILITY",
-    content:
-      "Recordatorio: {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
+    content: `Hola {{1}}. Este es un recordatorio de {{2}}: tienes una cita programada para el {{3}} con {{4}}. Si necesitas confirmar o cambiar el horario, responde a este mensaje para recibir ayuda de la clínica.`,
     locale: "es",
     name: "appointment_reminder",
     examples: {
-      appointment_date: "25 de septiembre de 2026",
-      appointment_time: "08:30",
+      appointment_datetime: "25 de septiembre de 2026 a las 08:30",
       clinic_name: "Clínica Central",
       doctor_name: "Dra. Ana López",
       patient_name: "María Hernández",
     },
-    version: 1,
+    version: 2,
     variables: appointmentTemplateVariables,
   },
   {
     kind: "cancellation",
     category: "UTILITY",
-    content:
-      "{{patient_name}}, tu cita en {{clinic_name}} del {{appointment_date}} a las {{appointment_time}} con {{doctor_name}} fue cancelada.",
+    content: `Hola {{1}}. Te informamos que {{2}} canceló la cita que tenías programada para el {{3}} con {{4}}. Si tienes preguntas o deseas solicitar otra fecha, responde a este mensaje para recibir ayuda de la clínica.`,
     locale: "es",
     name: "appointment_cancellation",
     examples: {
-      appointment_date: "25 de septiembre de 2026",
-      appointment_time: "08:30",
+      appointment_datetime: "25 de septiembre de 2026 a las 08:30",
       clinic_name: "Clínica Central",
       doctor_name: "Dra. Ana López",
       patient_name: "María Hernández",
     },
-    version: 1,
+    version: 2,
     variables: appointmentTemplateVariables,
   },
   {
     kind: "reschedule",
     category: "UTILITY",
-    content:
-      "{{patient_name}}, tu cita en {{clinic_name}} fue reprogramada para el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
+    content: `Hola {{1}}. Te informamos que {{2}} reprogramó tu cita para el {{3}} con {{4}}. Si el nuevo horario no te funciona o tienes preguntas, responde a este mensaje para consultar otras opciones con la clínica.`,
     locale: "es",
     name: "appointment_reschedule",
     examples: {
-      appointment_date: "25 de septiembre de 2026",
-      appointment_time: "08:30",
+      appointment_datetime: "25 de septiembre de 2026 a las 08:30",
       clinic_name: "Clínica Central",
       doctor_name: "Dra. Ana López",
       patient_name: "María Hernández",
     },
-    version: 1,
+    version: 2,
     variables: appointmentTemplateVariables,
   },
 ] as const satisfies ReadonlyArray<{

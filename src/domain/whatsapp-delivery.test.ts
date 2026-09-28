@@ -35,13 +35,7 @@ describe("decisión de Entrega transaccional de WhatsApp", () => {
   it("prepara las variables canónicas aprobadas para mensajes de Cita", () => {
     expect(
       buildTransactionalTemplateParameters(
-        [
-          "patient_name",
-          "clinic_name",
-          "appointment_date",
-          "appointment_time",
-          "doctor_name",
-        ],
+        ["patient_name", "clinic_name", "appointment_datetime", "doctor_name"],
         {
           clinicName: "Clínica Central",
           doctorName: "Dra. Ana Pérez",
@@ -52,8 +46,7 @@ describe("decisión de Entrega transaccional de WhatsApp", () => {
     ).toEqual([
       "Ana López",
       "Clínica Central",
-      "9 de septiembre de 2026",
-      "6:00 p. m.",
+      "9 de septiembre de 2026 a las 6:00 p. m.",
       "Dra. Ana Pérez",
     ]);
   });

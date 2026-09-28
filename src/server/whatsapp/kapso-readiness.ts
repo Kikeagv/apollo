@@ -484,10 +484,11 @@ function templateCreatePayload(definition: WhatsAppTemplateDefinition) {
     components: [
       {
         example: {
-          body_text_named_params: definition.variables.map((variable) => ({
-            example: definition.examples[variable] ?? variable,
-            param_name: variable,
-          })),
+          body_text: [
+            definition.variables.map(
+              (variable) => definition.examples[variable] ?? variable,
+            ),
+          ],
         },
         text: definition.content,
         type: "BODY",
@@ -495,7 +496,7 @@ function templateCreatePayload(definition: WhatsAppTemplateDefinition) {
     ],
     language: definition.locale,
     name: definition.name,
-    parameter_format: "NAMED",
+    parameter_format: "POSITIONAL",
   };
 }
 
@@ -589,7 +590,10 @@ function toTemplateSnapshot(
   provisioningStatus?: WhatsAppTemplateProvisioningStatus,
 ): WhatsAppTemplateSnapshot {
   const status = normalizeTemplateStatus(readString(remote, "status"));
-  const remoteVariables = extractVariables(remote);
+  const remoteVariables = canonicalTemplateVariables(
+    extractVariables(remote),
+    definition,
+  );
   return {
     category: normalizeTemplateCategory(readString(remote, "category")),
     catalogVersion: definition.version,
@@ -814,6 +818,19 @@ function extractVariables(remote: Record<string, unknown>) {
   return [...variables];
 }
 
+function canonicalTemplateVariables(
+  remoteVariables: string[],
+  definition: WhatsAppTemplateDefinition,
+) {
+  if (!remoteVariables.every((variable) => /^\d+$/.test(variable))) {
+    return remoteVariables;
+  }
+  return remoteVariables.map((variable) => {
+    const position = Number(variable) - 1;
+    return definition.variables[position] ?? variable;
+  });
+}
+
 function readBillingMode(data: Record<string, unknown>) {
   const value = readString(data, ["meta_billing_mode", "billing_mode"])
     ?.trim()
@@ -978,14 +995,26 @@ async function requestJson(
     }
     const data = isRecord(payload) ? unwrapData(payload) : {};
     const nestedError = isRecord(data.error) ? data.error : null;
-    const reason =
-      (nestedError === null
+    const errorTitle =
+      nestedError === null ? null : readString(nestedError, "error_user_title");
+    const errorUserMessage =
+      nestedError === null
         ? null
-        : readString(nestedError, [
-            "message",
-            "error_user_msg",
-            "error_description",
-          ])) ??
+        : readString(nestedError, ["error_user_msg", "error_description"]);
+    const errorMessage =
+      nestedError === null ? null : readString(nestedError, "message");
+    const subcode =
+      nestedError !== null &&
+      (typeof nestedError.error_subcode === "number" ||
+        typeof nestedError.error_subcode === "string")
+        ? String(nestedError.error_subcode)
+        : null;
+    const nestedReason =
+      errorTitle !== null && errorUserMessage !== null
+        ? `${errorTitle}: ${errorUserMessage}`
+        : (errorUserMessage ?? errorTitle ?? errorMessage);
+    const reason =
+      nestedReason ??
       readString(data, [
         "error",
         "error_message",
@@ -998,7 +1027,9 @@ async function requestJson(
       response.status,
       reason === null
         ? "Kapso rechazó la verificación de readiness"
-        : sanitizeWhatsAppOperationalText(reason),
+        : sanitizeWhatsAppOperationalText(
+            subcode === null ? reason : `${reason} (Meta subcode ${subcode})`,
+          ),
     );
   }
   if (response.status === 204) return {};

@@ -53,11 +53,16 @@ describe("cobertura del catálogo común de plantillas", () => {
 
     for (const definition of whatsappCriticalTemplateCatalog) {
       expect(definition.version).toBeGreaterThan(0);
-      expect(definition.content).toContain("{{patient_name}}");
-      expect(definition.content).toContain("{{clinic_name}}");
-      expect(definition.content).toContain("{{appointment_date}}");
-      expect(definition.content).toContain("{{appointment_time}}");
-      expect(definition.content).toContain("{{doctor_name}}");
+      expect(definition.content).toContain("{{1}}");
+      expect(definition.content).toContain("{{2}}");
+      expect(definition.content).toContain("{{3}}");
+      expect(definition.content).toContain("{{4}}");
+      expect(definition.variables).toEqual([
+        "patient_name",
+        "clinic_name",
+        "appointment_datetime",
+        "doctor_name",
+      ]);
       for (const variable of definition.variables) {
         expect(typeof definition.examples[variable]).toBe("string");
       }
@@ -70,7 +75,7 @@ describe("cobertura del catálogo común de plantillas", () => {
 
     expect(result.definitions).toHaveLength(4);
     expect(result.definitions[0]).toMatchObject({
-      version: 1,
+      version: 2,
       name: "appointment_confirmation",
       category: "UTILITY",
     });

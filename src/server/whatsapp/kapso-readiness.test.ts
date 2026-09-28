@@ -30,7 +30,7 @@ describe("adaptador de readiness de Kapso", () => {
                 category: "UTILITY",
                 components: [
                   {
-                    text: "Hola {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
+                    text: "Hola {{1}}. Desde {{2}} confirmamos que tienes una cita programada para el {{3}}. Te atenderá {{4}}. Si necesitas hacer algún cambio o tienes alguna pregunta, responde a este mensaje para comunicarte con la clínica.",
                     type: "BODY",
                   },
                 ],
@@ -108,8 +108,7 @@ describe("adaptador de readiness de Kapso", () => {
           variables: [
             "patient_name",
             "clinic_name",
-            "appointment_date",
-            "appointment_time",
+            "appointment_datetime",
             "doctor_name",
           ],
         }),
@@ -335,12 +334,11 @@ describe("adaptador de readiness de Kapso", () => {
       result.templates.find((template) => template.kind === "confirmation"),
     ).toMatchObject({
       category: "UTILITY",
-      catalogVersion: 1,
+      catalogVersion: 2,
       content:
-        "Hola {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.",
+        "Hola {{1}}. Desde {{2}} confirmamos que tienes una cita programada para el {{3}}. Te atenderá {{4}}. Si necesitas hacer algún cambio o tienes alguna pregunta, responde a este mensaje para comunicarte con la clínica.",
       examples: {
-        appointment_date: "25 de septiembre de 2026",
-        appointment_time: "08:30",
+        appointment_datetime: "25 de septiembre de 2026 a las 08:30",
         clinic_name: "Clínica Central",
         doctor_name: "Dra. Ana López",
         patient_name: "María Hernández",
@@ -350,8 +348,7 @@ describe("adaptador de readiness de Kapso", () => {
       variables: [
         "patient_name",
         "clinic_name",
-        "appointment_date",
-        "appointment_time",
+        "appointment_datetime",
         "doctor_name",
       ],
     });
@@ -433,7 +430,7 @@ describe("adaptador de readiness de Kapso", () => {
 
   it("recupera una plantilla creada concurrentemente tras un conflicto de nombre", async () => {
     const confirmation =
-      "Hola {{patient_name}}, tu cita en {{clinic_name}} es el {{appointment_date}} a las {{appointment_time}} con {{doctor_name}}.";
+      "Hola {{1}}. Desde {{2}} confirmamos que tienes una cita programada para el {{3}}. Te atenderá {{4}}. Si necesitas hacer algún cambio o tienes alguna pregunta, responde a este mensaje para comunicarte con la clínica.";
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
