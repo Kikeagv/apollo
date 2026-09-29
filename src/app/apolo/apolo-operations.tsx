@@ -96,6 +96,8 @@ export function ApoloOperations() {
     });
   };
   const [smokeTestPhone, setSmokeTestPhone] = useState("");
+  const [testContactName, setTestContactName] = useState("");
+  const [testContactPhone, setTestContactPhone] = useState("");
   const [activationRefreshToken, setActivationRefreshToken] = useState(0);
   const [reactivationEvidenceNow, setReactivationEvidenceNow] = useState(
     () => new Date(),
@@ -326,6 +328,13 @@ export function ApoloOperations() {
       refreshSupervisionSummary();
     },
   });
+  const createTestContact = api.apolo.createWhatsAppTestContact.useMutation({
+    onSuccess: (contact) => {
+      setSmokeTestPhone(contact.phoneE164);
+      setTestContactName("");
+      setTestContactPhone("");
+    },
+  });
   const enableRealTraffic = api.apolo.enableWhatsAppRealTraffic.useMutation({
     onSuccess: () => {
       setRealTrafficConfirmation(false);
@@ -359,6 +368,8 @@ export function ApoloOperations() {
 
   const resetClinicOperationState = useCallback(() => {
     setSmokeTestPhone("");
+    setTestContactName("");
+    setTestContactPhone("");
     setReactivationEvidenceNow(new Date());
     setAmountUsd("");
     setReference("");
@@ -396,6 +407,7 @@ export function ApoloOperations() {
     readSupport.reset();
     recordTrafficGate.reset();
     runSyntheticSmoke.reset();
+    createTestContact.reset();
     enableRealTraffic.reset();
     revertRealTraffic.reset();
     offboardConnection.reset();
@@ -413,6 +425,7 @@ export function ApoloOperations() {
     retryReadiness,
     revertRealTraffic,
     runSyntheticSmoke,
+    createTestContact,
     setSubscription,
   ]);
   useEffect(() => {
@@ -1695,6 +1708,79 @@ export function ApoloOperations() {
                   Prueba controlada de WhatsApp
                 </summary>
                 <div className="bg-muted mt-3 rounded-lg p-4">
+                  <div className="border-border bg-card mb-4 rounded-lg border p-4">
+                    <h3 className="font-semibold">Crear contacto de prueba</h3>
+                    <p className="text-foreground mt-1 text-sm">
+                      Se agregará a la Clínica seleccionada sin vincularlo a un
+                      Paciente. Crear el contacto no ejecuta el smoke ni envía
+                      mensajes; usa un número que controles o tengas autorizado
+                      para pruebas.
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-end gap-3">
+                      <label className="grid min-w-56 gap-1 text-sm">
+                        <span>Nombre</span>
+                        <input
+                          autoComplete="off"
+                          className="border-border bg-background text-foreground rounded border px-3 py-2"
+                          maxLength={120}
+                          onChange={(event) =>
+                            setTestContactName(event.target.value)
+                          }
+                          value={testContactName}
+                        />
+                      </label>
+                      <label className="grid min-w-56 gap-1 text-sm">
+                        <span>Teléfono E.164</span>
+                        <input
+                          autoComplete="off"
+                          className="border-border bg-background text-foreground rounded border px-3 py-2"
+                          inputMode="tel"
+                          onChange={(event) =>
+                            setTestContactPhone(event.target.value)
+                          }
+                          placeholder="+50370000000"
+                          type="tel"
+                          value={testContactPhone}
+                        />
+                      </label>
+                      <button
+                        className="bg-primary text-primary-foreground rounded px-3 py-2 font-medium disabled:opacity-50"
+                        disabled={
+                          createTestContact.isPending ||
+                          testContactName.trim().length === 0 ||
+                          !isValidE164PhoneNumber(testContactPhone.trim())
+                        }
+                        onClick={() =>
+                          createTestContact.mutate({
+                            clinicId,
+                            name: testContactName.trim(),
+                            phoneE164: testContactPhone.trim(),
+                          })
+                        }
+                        type="button"
+                      >
+                        {createTestContact.isPending
+                          ? "Creando…"
+                          : "Crear contacto"}
+                      </button>
+                    </div>
+                    {createTestContact.error ? (
+                      <p
+                        className="text-warning-foreground mt-2 text-sm"
+                        role="alert"
+                      >
+                        {createTestContact.error.message}
+                      </p>
+                    ) : null}
+                    {createTestContact.data ? (
+                      <p className="text-primary mt-2 text-sm" role="status">
+                        Contacto {createTestContact.data.name} creado (
+                        {createTestContact.data.maskedPhone}). Si la conexión
+                        usa Kapso, su teléfono quedó seleccionado para el smoke;
+                        ejecútelo por separado si corresponde.
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h3 className="font-semibold">Smoke E2E sintético</h3>

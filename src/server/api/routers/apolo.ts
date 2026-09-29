@@ -16,6 +16,7 @@ import {
 import { manageKapsoWhatsAppSetupLink } from "~/server/application/whatsapp-setup-links";
 import { createSubscriptionSupport } from "~/server/application/subscription-support";
 import {
+  createWhatsAppTestContact,
   enableWhatsAppRealTraffic,
   getWhatsAppOperations,
   offboardWhatsAppConnection,
@@ -429,6 +430,21 @@ export const apoloRouter = {
         },
       );
     }),
+
+  createWhatsAppTestContact: superadminProcedure
+    .input(
+      z.object({
+        clinicId: z.string().uuid(),
+        name: z.string().trim().min(1).max(120),
+        phoneE164: z.string().trim().refine(isValidE164PhoneNumber),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      createWhatsAppTestContact(
+        { ...input, actorIdentityId: ctx.session.user.id },
+        drizzleWhatsAppOperationsStore,
+      ),
+    ),
 
   enableWhatsAppRealTraffic: superadminProcedure
     .input(

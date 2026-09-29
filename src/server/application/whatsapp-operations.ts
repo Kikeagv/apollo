@@ -135,6 +135,17 @@ export type WhatsAppOperationsStore = {
     clinicId: string;
     phoneE164: string;
   }): Promise<{ id: string; maskedPhone: string }>;
+  createWhatsAppTestContact(input: {
+    actorIdentityId: string;
+    clinicId: string;
+    name: string;
+    phoneE164: string;
+  }): Promise<{
+    id: string;
+    name: string;
+    maskedPhone: string;
+    phoneE164: string;
+  }>;
   authorizeOffboarding(input: {
     actorIdentityId: string;
     clinicId: string;
@@ -454,6 +465,31 @@ async function resolveSmokeTestContact(
   return store.resolveSyntheticSmokeContact({
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
+    phoneE164,
+  });
+}
+
+export async function createWhatsAppTestContact(
+  input: {
+    actorIdentityId: string;
+    clinicId: string;
+    name: string;
+    phoneE164: string;
+  },
+  store: Pick<WhatsAppOperationsStore, "createWhatsAppTestContact">,
+) {
+  const name = input.name.trim();
+  const phoneE164 = input.phoneE164.trim();
+  if (name.length === 0 || name.length > 120) {
+    throw new Error("Indique un nombre de hasta 120 caracteres");
+  }
+  if (!isValidE164PhoneNumber(phoneE164)) {
+    throw new Error("Indique un teléfono E.164 válido");
+  }
+  return store.createWhatsAppTestContact({
+    actorIdentityId: input.actorIdentityId,
+    clinicId: input.clinicId,
+    name,
     phoneE164,
   });
 }

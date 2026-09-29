@@ -149,6 +149,57 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
     );
   },
 
+  async createWhatsAppTestContact(input) {
+    return inSuperadminTransaction(
+      input.actorIdentityId,
+      async (transaction) => {
+        await setClinicContext(transaction, input.clinicId);
+        const duplicate = await transaction.query.contacts.findFirst({
+          columns: { id: true },
+          where: and(
+            eq(contacts.clinicId, input.clinicId),
+            eq(contacts.phoneE164, input.phoneE164),
+          ),
+        });
+        if (duplicate !== undefined) {
+          throw new Error(
+            "Ya existe un Contacto con ese teléfono en la Clínica seleccionada",
+          );
+        }
+        const [contact] = await transaction
+          .insert(contacts)
+          .values({
+            clinicId: input.clinicId,
+            name: input.name,
+            phoneE164: input.phoneE164,
+          })
+          .returning({
+            id: contacts.id,
+            name: contacts.name,
+            phoneE164: contacts.phoneE164,
+          });
+        if (contact === undefined) {
+          throw new Error("No se pudo crear el Contacto de prueba");
+        }
+        const phoneE164 = contact.phoneE164;
+        if (phoneE164 === null) {
+          throw new Error("El Contacto de prueba no tiene un teléfono");
+        }
+        await insertApoloAudit(transaction, {
+          action: "whatsapp-test-contact-created",
+          actorIdentityId: input.actorIdentityId,
+          clinicId: input.clinicId,
+          occurredAt: new Date(),
+        });
+        return {
+          ...contact,
+          phoneE164,
+          maskedPhone: maskPhone(phoneE164),
+        };
+      },
+    );
+  },
+
   async authorizeOffboarding(input) {
     return inClinicTransaction(
       { clinicId: input.clinicId, identityId: input.actorIdentityId },

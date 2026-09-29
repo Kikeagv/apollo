@@ -142,6 +142,14 @@ function makeStore(initial = makeSnapshot()) {
     async resolveSyntheticSmokeContact() {
       return { id: "controlled-contact-92", maskedPhone: "+••••••0092" };
     },
+    async createWhatsAppTestContact(input) {
+      return {
+        id: "created-contact-92",
+        maskedPhone: "+••••••0092",
+        name: input.name,
+        phoneE164: input.phoneE164,
+      };
+    },
     async authorizeOffboarding(input) {
       snapshot = {
         ...snapshot,
