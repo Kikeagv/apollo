@@ -1,4 +1,4 @@
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 
 import {
   assertSupportSessionIsUsable,
@@ -255,6 +255,48 @@ export const drizzleSubscriptionSupportStore: SubscriptionSupportStore = {
     );
   },
 };
+
+export async function listRecentTransferPayments(input: {
+  clinicId: string;
+  superadminIdentityId: string;
+}) {
+  return inSuperadminTransaction(input.superadminIdentityId, (transaction) =>
+    transaction.query.transferPayments.findMany({
+      columns: {
+        amountUsd: true,
+        id: true,
+        recordedAt: true,
+        reference: true,
+      },
+      limit: 5,
+      orderBy: [desc(transferPayments.recordedAt), desc(transferPayments.id)],
+      where: eq(transferPayments.clinicId, input.clinicId),
+    }),
+  );
+}
+
+export async function listSuperadminSupportSessions(input: {
+  clinicId: string;
+  superadminIdentityId: string;
+}) {
+  return inSuperadminTransaction(input.superadminIdentityId, (transaction) =>
+    transaction.query.clinicSupportSessions.findMany({
+      columns: {
+        createdAt: true,
+        expiresAt: true,
+        id: true,
+        reason: true,
+        superadminIdentityId: true,
+      },
+      limit: 10,
+      orderBy: [
+        desc(clinicSupportSessions.createdAt),
+        desc(clinicSupportSessions.id),
+      ],
+      where: eq(clinicSupportSessions.clinicId, input.clinicId),
+    }),
+  );
+}
 
 type AtomicAuditInput = {
   action:

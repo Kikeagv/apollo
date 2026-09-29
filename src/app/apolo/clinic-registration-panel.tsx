@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import type {
   ClinicInvitationNextAction,
@@ -10,10 +12,12 @@ import type {
   ClinicRegistration,
   ClinicRegistrationMode,
 } from "~/server/application/clinic-registration";
+import { supervisionTabs } from "~/domain/supervision-navigation";
 import { api } from "~/trpc/react";
 
 /** Alta explícita de Clínicas con estado recuperable de la invitación. */
 export function ClinicRegistrationPanel() {
+  const searchParams = useSearchParams();
   const [clinicName, setClinicName] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
@@ -44,6 +48,20 @@ export function ClinicRegistrationPanel() {
     registration ??
     (selectedClinicId ? persistedRegistration.data : null) ??
     null;
+  const returnParams = new URLSearchParams();
+  const returnClinicId = selectedClinicId || searchParams.get("clinicId");
+  const returnTab =
+    supervisionTabs.find((tab) => tab.id === searchParams.get("tab"))?.id ??
+    "overview";
+  if (returnClinicId) returnParams.set("clinicId", returnClinicId);
+  if (returnTab !== "overview") returnParams.set("tab", returnTab);
+  const returnQuery = returnParams.toString();
+  const returnHref = returnQuery ? `/apolo?${returnQuery}` : "/apolo";
+  const activationParams = new URLSearchParams({
+    clinicId: visibleRegistration?.clinic.id ?? "",
+    tab: "whatsapp",
+  });
+  const activationHref = `/apolo?${activationParams.toString()}`;
 
   const startNewRegistration = () => {
     setClinicName("");
@@ -61,6 +79,22 @@ export function ClinicRegistrationPanel() {
       className="bg-card border-border space-y-5 rounded-xl border p-5 shadow-sm sm:p-6"
       data-clinic-registration-panel="true"
     >
+      <nav aria-label="Navegación de alta" className="flex flex-wrap gap-3">
+        <Link
+          className="text-primary underline underline-offset-4"
+          href={returnHref}
+        >
+          Volver a supervisión
+        </Link>
+        {visibleRegistration ? (
+          <Link
+            className="text-primary underline underline-offset-4"
+            href={activationHref}
+          >
+            Continuar con activación de WhatsApp
+          </Link>
+        ) : null}
+      </nav>
       <div>
         <p className="text-primary text-xs font-semibold tracking-[0.14em] uppercase">
           Alta comercial

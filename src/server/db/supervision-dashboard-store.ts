@@ -256,8 +256,11 @@ async function readGlobalProblems(
         clinicName: clinics.name,
         createdAt: whatsappConnectionAlerts.createdAt,
         id: whatsappConnectionAlerts.id,
+        gateCode: whatsappConnectionAlerts.gateCode,
         nextAction: whatsappConnectionAlerts.nextAction,
         reason: whatsappConnectionAlerts.reason,
+        lastSeenAt: whatsappConnectionAlerts.updatedAt,
+        resourceReference: whatsappConnectionAlerts.provisioningEventId,
       })
       .from(whatsappConnectionAlerts)
       .innerJoin(clinics, eq(whatsappConnectionAlerts.clinicId, clinics.id))
@@ -268,10 +271,12 @@ async function readGlobalProblems(
       .select({
         clinicId: clinics.id,
         clinicName: clinics.name,
-        createdAt: whatsappCircuitBreakerAlerts.createdAt,
+        createdAt: whatsappCircuitBreakerAlerts.openedAt,
         id: whatsappCircuitBreakerAlerts.clinicId,
+        cause: whatsappCircuitBreakerAlerts.cause,
         nextAction: whatsappCircuitBreakerAlerts.nextAction,
         reason: whatsappCircuitBreakerAlerts.reason,
+        lastSeenAt: whatsappCircuitBreakerAlerts.updatedAt,
       })
       .from(whatsappCircuitBreakerAlerts)
       .innerJoin(clinics, eq(whatsappCircuitBreakerAlerts.clinicId, clinics.id))
@@ -283,7 +288,9 @@ async function readGlobalProblems(
         createdAt: whatsappInboundAlerts.createdAt,
         id: whatsappInboundAlerts.id,
         nextAction: whatsappInboundAlerts.nextAction,
+        phoneNumberId: whatsappInboundAlerts.phoneNumberId,
         reason: whatsappInboundAlerts.reason,
+        lastSeenAt: whatsappInboundAlerts.updatedAt,
       })
       .from(whatsappInboundAlerts)
       .where(eq(whatsappInboundAlerts.status, "open"))
@@ -297,6 +304,7 @@ async function readGlobalProblems(
         id: whatsappReadiness.clinicId,
         nextAction: whatsappReadiness.nextAction,
         reason: whatsappReadiness.reconciliationLastError,
+        lastSeenAt: whatsappReadiness.updatedAt,
       })
       .from(whatsappReadiness)
       .innerJoin(clinics, eq(whatsappReadiness.clinicId, clinics.id))
@@ -309,6 +317,7 @@ async function readGlobalProblems(
         clinicName: clinics.name,
         createdAt: transactionalDeliveryAlerts.createdAt,
         id: transactionalDeliveryAlerts.id,
+        resourceReference: transactionalDeliveryAlerts.deliveryId,
       })
       .from(transactionalDeliveryAlerts)
       .innerJoin(clinics, eq(transactionalDeliveryAlerts.clinicId, clinics.id))
@@ -321,38 +330,75 @@ async function readGlobalProblems(
     ...connectionProblems.map((problem) => ({
       ...problem,
       area: "Preparación de WhatsApp",
+      causeKey: problem.gateCode,
+      lastSeenAt: problem.lastSeenAt,
       reason: sanitizeWhatsAppOperationalText(problem.reason),
+      resourceKey: "whatsapp-connection",
+      resourceLabel: "Conexión de WhatsApp",
+      severity: "high" as const,
+      source: "connection" as const,
     })),
     ...circuitProblems.map((problem) => ({
       ...problem,
       area: "Capacidad de WhatsApp",
+      causeKey: problem.cause,
+      lastSeenAt: problem.lastSeenAt,
       reason: sanitizeWhatsAppOperationalText(problem.reason),
+      resourceKey: "whatsapp-capacity",
+      resourceLabel: "Capacidad de mensajería",
+      severity: "critical" as const,
+      source: "circuit-breaker" as const,
     })),
-    ...inboundProblems.map((problem) => ({
-      ...problem,
-      area: "Recepción de WhatsApp",
-      clinicId: null,
-      clinicName: null,
-      reason: sanitizeWhatsAppOperationalText(problem.reason),
-    })),
+    ...inboundProblems.map((problem) => {
+      const reason = sanitizeWhatsAppOperationalText(problem.reason);
+      return {
+        ...problem,
+        area: "Recepción de WhatsApp",
+        clinicId: null,
+        clinicName: null,
+        causeKey: normalizedProblemKey(reason),
+        lastSeenAt: problem.lastSeenAt,
+        reason,
+        resourceKey: `whatsapp-number:${problem.phoneNumberId}`,
+        resourceLabel: `Número de WhatsApp · ${problem.phoneNumberId}`,
+        resourceReference: problem.phoneNumberId,
+        severity: "medium" as const,
+        source: "inbound" as const,
+      };
+    }),
     ...blockedReadiness.map((problem) => ({
       ...problem,
       area: "Reconciliación de WhatsApp",
+      causeKey: "blocked-reconciliation",
       nextAction:
         problem.nextAction ?? "Revisar la reconciliación de WhatsApp.",
       reason: sanitizeWhatsAppOperationalText(
         problem.reason ?? "La reconciliación requiere intervención.",
       ),
+      resourceKey: "whatsapp-reconciliation",
+      resourceLabel: "Reconciliación de WhatsApp",
+      severity: "high" as const,
+      source: "readiness" as const,
     })),
     ...deliveryProblems.map((problem) => ({
       ...problem,
       area: "Entregas de citas",
+      causeKey: "failed-transactional-delivery",
       nextAction: "Resolver la alerta en la Clínica.",
       reason: "Una entrega transaccional necesita resolución humana.",
+      lastSeenAt: problem.createdAt,
+      resourceKey: "transactional-deliveries",
+      resourceLabel: "Entregas transaccionales",
+      severity: "high" as const,
+      source: "delivery" as const,
     })),
   ]
     .sort((left, right) => right.createdAt.valueOf() - left.createdAt.valueOf())
     .slice(0, 60);
+}
+
+function normalizedProblemKey(value: string) {
+  return value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
 }
 
 async function setClinicContext(

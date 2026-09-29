@@ -13,13 +13,21 @@ export function getSupervisionOperationStatusLabel(
 export function SupervisionTechnicalDetails({
   summary,
   children,
+  id,
+  open,
 }: {
   summary: string;
   children?: ReactNode;
+  id?: string;
+  open?: boolean;
 }) {
   return (
-    <details className="rounded-xl border border-slate-700 p-4">
-      <summary className="cursor-pointer font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-200">
+    <details
+      className="border-border rounded-xl border p-4"
+      id={id}
+      open={open}
+    >
+      <summary className="focus-visible:outline-ring cursor-pointer font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
         {summary}
       </summary>
       <div className="mt-3 space-y-3 text-sm">{children}</div>
@@ -29,7 +37,7 @@ export function SupervisionTechnicalDetails({
 
 export function InboundAlertResolutionStatus({ message }: { message: string }) {
   return (
-    <p aria-live="polite" className="text-sm text-teal-200" role="status">
+    <p aria-live="polite" className="text-primary text-sm" role="status">
       {message}
     </p>
   );

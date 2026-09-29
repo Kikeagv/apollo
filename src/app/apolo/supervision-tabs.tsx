@@ -20,17 +20,17 @@ export function SupervisionTabs({
   return (
     <div
       aria-label="Secciones de supervisión"
-      className="flex flex-wrap gap-2 border-b border-slate-700 pb-3"
+      className="border-border flex flex-wrap gap-2 border-b pb-3"
       role="tablist"
     >
       {supervisionTabs.map((tab) => (
         <button
           aria-controls={`supervision-panel-${tab.id}`}
           aria-selected={value === tab.id}
-          className={`rounded px-3 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-200 ${
+          className={`focus-visible:outline-ring rounded px-3 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
             value === tab.id
-              ? "bg-teal-300 text-slate-950"
-              : "border border-slate-600 text-slate-200 hover:bg-slate-800"
+              ? "bg-primary text-primary-foreground"
+              : "border-border text-foreground hover:bg-secondary border"
           }`}
           id={`supervision-tab-${tab.id}`}
           key={tab.id}

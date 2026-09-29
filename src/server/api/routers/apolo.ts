@@ -49,6 +49,8 @@ import {
 import { superadminProcedure } from "~/server/api/trpc";
 import {
   drizzleSubscriptionSupportStore,
+  listRecentTransferPayments,
+  listSuperadminSupportSessions,
   listCommercialClinics,
   readAuditedSupportClinicSummary,
 } from "~/server/db/subscription-support-store";
@@ -763,6 +765,28 @@ export const apoloRouter = {
         recordedByIdentityId: ctx.session.user.id,
       }),
     ),
+
+  listRecentTransferPayments: superadminProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .query(({ ctx, input }) =>
+      listRecentTransferPayments({
+        clinicId: input.clinicId,
+        superadminIdentityId: ctx.session.user.id,
+      }),
+    ),
+
+  listSuperadminSupportSessions: superadminProcedure
+    .input(z.object({ clinicId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const sessions = await listSuperadminSupportSessions({
+        clinicId: input.clinicId,
+        superadminIdentityId: ctx.session.user.id,
+      });
+      return sessions.map((session) => ({
+        ...session,
+        canOpen: session.superadminIdentityId === ctx.session.user.id,
+      }));
+    }),
 
   changeSubscriptionStatus: superadminProcedure
     .input(

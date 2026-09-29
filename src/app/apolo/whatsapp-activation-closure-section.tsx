@@ -72,11 +72,11 @@ export function WhatsAppActivationClosureSection({
   return (
     <section
       aria-labelledby="whatsapp-activation-closure-title"
-      className="space-y-4 rounded-xl border border-indigo-400/70 p-5"
+      className="border-primary/30 space-y-4 rounded-xl border p-5"
       data-whatsapp-activation-closure="true"
     >
       <div>
-        <p className="text-xs tracking-[0.14em] text-indigo-200 uppercase">
+        <p className="text-primary text-xs tracking-[0.14em] uppercase">
           APO-94 · Contrato de cierre
         </p>
         <h2
@@ -85,22 +85,22 @@ export function WhatsAppActivationClosureSection({
         >
           Alcance y evidencia de Activación
         </h2>
-        <p className="mt-1 text-sm text-slate-300">
+        <p className="text-foreground mt-1 text-sm">
           La matriz combina cobertura local con evidencia de Kapso y del entorno
           desplegado. Un pendiente no cambia ningún gate de tráfico real.
         </p>
       </div>
 
       {!clinicId ? (
-        <p className="text-sm text-slate-400">
+        <p className="text-muted-foreground text-sm">
           Seleccione una Clínica para consultar su contrato de cierre.
         </p>
       ) : contract.isLoading ? (
-        <p className="text-sm text-slate-300" role="status">
+        <p className="text-foreground text-sm" role="status">
           Consultando contrato de cierre…
         </p>
       ) : contract.error ? (
-        <p className="text-sm text-amber-200" role="alert">
+        <p className="text-warning-foreground text-sm" role="alert">
           {contract.error.message}
         </p>
       ) : contract.data ? (
@@ -136,12 +136,12 @@ export function WhatsAppActivationClosureSection({
             />
           </dl>
 
-          <div className="overflow-x-auto rounded-lg border border-slate-700">
+          <div className="border-border overflow-x-auto rounded-lg border">
             <table className="w-full min-w-[900px] text-left text-sm">
               <caption className="sr-only">
                 Matriz de criterios, comportamiento, pruebas y evidencia externa
               </caption>
-              <thead className="bg-slate-900/80 text-xs tracking-wide text-slate-300 uppercase">
+              <thead className="bg-muted text-foreground text-xs tracking-wide uppercase">
                 <tr>
                   <th className="p-3" scope="col">
                     Criterio
@@ -160,25 +160,25 @@ export function WhatsAppActivationClosureSection({
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700">
+              <tbody className="divide-border divide-y">
                 {contract.data.criteria.map((criterion) => (
                   <tr key={criterion.code}>
                     <th
-                      className="p-3 align-top font-medium text-slate-100"
+                      className="text-foreground p-3 align-top font-medium"
                       scope="row"
                     >
                       {criterion.label}
-                      <span className="mt-1 block text-xs font-normal text-slate-400">
+                      <span className="text-muted-foreground mt-1 block text-xs font-normal">
                         {criterion.issue}
                       </span>
                     </th>
-                    <td className="max-w-sm p-3 align-top text-slate-300">
+                    <td className="text-foreground max-w-sm p-3 align-top">
                       {criterion.behavior}
                     </td>
-                    <td className="p-3 align-top font-mono text-xs text-slate-400">
+                    <td className="text-muted-foreground p-3 align-top font-mono text-xs">
                       {criterion.testPath}
                     </td>
-                    <td className="p-3 align-top text-xs text-slate-300">
+                    <td className="text-foreground p-3 align-top text-xs">
                       {criterion.requiredExternalEvidence.length === 0 ? (
                         <span>Decisión local documentada</span>
                       ) : (
@@ -189,7 +189,7 @@ export function WhatsAppActivationClosureSection({
                                 criterion.evidence[requiredSource];
                               return (
                                 <li key={requiredSource}>
-                                  <span className="text-slate-400">
+                                  <span className="text-muted-foreground">
                                     {sourceLabels[requiredSource]}:
                                   </span>{" "}
                                   {evidence?.evidenceReference ?? "Pendiente"}
@@ -204,8 +204,8 @@ export function WhatsAppActivationClosureSection({
                       <span
                         className={
                           criterion.status === "verified"
-                            ? "text-emerald-300"
-                            : "text-amber-200"
+                            ? "text-success-foreground"
+                            : "text-warning-foreground"
                         }
                       >
                         {criterion.status === "verified"
@@ -213,7 +213,7 @@ export function WhatsAppActivationClosureSection({
                           : "Pendiente"}
                       </span>
                       {criterion.pending ? (
-                        <span className="mt-1 block text-xs text-slate-400">
+                        <span className="text-muted-foreground mt-1 block text-xs">
                           {criterion.pending}
                         </span>
                       ) : null}
@@ -224,21 +224,21 @@ export function WhatsAppActivationClosureSection({
             </table>
           </div>
 
-          <div className="space-y-3 rounded-lg border border-slate-700 bg-slate-900/50 p-4">
+          <div className="border-border bg-muted space-y-3 rounded-lg border p-4">
             <div>
-              <h3 className="font-medium text-slate-100">
+              <h3 className="text-foreground font-medium">
                 Registrar evidencia externa
               </h3>
-              <p className="mt-1 text-xs text-slate-400">
+              <p className="text-muted-foreground mt-1 text-xs">
                 Para un mismo criterio y fuente se conserva la última evidencia
                 o razón de pendiente, con identidad y fecha de registro.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
-              <label className="space-y-1 text-sm text-slate-300">
+              <label className="text-foreground space-y-1 text-sm">
                 <span>Criterio</span>
                 <select
-                  className="w-full rounded border border-slate-700 bg-slate-950 p-2"
+                  className="border-border bg-background w-full rounded border p-2"
                   onChange={(event) =>
                     setCriterionCode(
                       event.target.value as WhatsAppActivationCriterionCode,
@@ -253,10 +253,10 @@ export function WhatsAppActivationClosureSection({
                   ))}
                 </select>
               </label>
-              <label className="space-y-1 text-sm text-slate-300">
+              <label className="text-foreground space-y-1 text-sm">
                 <span>Fuente</span>
                 <select
-                  className="w-full rounded border border-slate-700 bg-slate-950 p-2"
+                  className="border-border bg-background w-full rounded border p-2"
                   onChange={(event) =>
                     setSource(
                       event.target.value as WhatsAppActivationEvidenceSource,
@@ -275,7 +275,7 @@ export function WhatsAppActivationClosureSection({
               </label>
               <div className="flex items-end">
                 <button
-                  className="w-full rounded bg-indigo-300 px-3 py-2 font-medium text-slate-950 disabled:opacity-50"
+                  className="bg-primary text-primary-foreground w-full rounded px-3 py-2 font-medium disabled:opacity-50"
                   disabled={
                     recordEvidence.isPending ||
                     hasReference === hasPendingReason ||
@@ -301,12 +301,12 @@ export function WhatsAppActivationClosureSection({
               </div>
             </div>
             <label
-              className="block space-y-1 text-sm text-slate-300"
+              className="text-foreground block space-y-1 text-sm"
               htmlFor="whatsapp-activation-evidence-reference"
             >
               <span>Referencia de evidencia</span>
               <input
-                className="w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm"
+                className="border-border bg-background w-full rounded border p-2 text-sm"
                 id="whatsapp-activation-evidence-reference"
                 onChange={(event) => setEvidenceReference(event.target.value)}
                 placeholder="URL, run o ticket; no secretos"
@@ -314,12 +314,12 @@ export function WhatsAppActivationClosureSection({
               />
             </label>
             <label
-              className="block space-y-1 text-sm text-slate-300"
+              className="text-foreground block space-y-1 text-sm"
               htmlFor="whatsapp-activation-pending-reason"
             >
               <span>Razón de pendiente</span>
               <input
-                className="w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm"
+                className="border-border bg-background w-full rounded border p-2 text-sm"
                 id="whatsapp-activation-pending-reason"
                 onChange={(event) => setPendingReason(event.target.value)}
                 placeholder="Explica qué evidencia falta"
@@ -327,7 +327,7 @@ export function WhatsAppActivationClosureSection({
               />
             </label>
             {recordEvidence.error ? (
-              <p className="text-sm text-amber-200" role="alert">
+              <p className="text-warning-foreground text-sm" role="alert">
                 {recordEvidence.error.message}
               </p>
             ) : null}
@@ -340,11 +340,11 @@ export function WhatsAppActivationClosureSection({
 
 function StateValue({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-900/60 p-3">
-      <dt className="text-xs tracking-wide text-slate-400 uppercase">
+    <div className="border-border bg-muted rounded-lg border p-3">
+      <dt className="text-muted-foreground text-xs tracking-wide uppercase">
         {label}
       </dt>
-      <dd className="mt-1 font-medium text-slate-100">{value}</dd>
+      <dd className="text-foreground mt-1 font-medium">{value}</dd>
     </div>
   );
 }
@@ -370,9 +370,7 @@ function closureStatusLabel(status: "blocked" | "pending" | "ready") {
   return { blocked: "Bloqueado", pending: "Pendiente", ready: "Listo" }[status];
 }
 
-function scopeStatusLabel(
-  status: "deferred" | "pending" | "v1",
-) {
+function scopeStatusLabel(status: "deferred" | "pending" | "v1") {
   return {
     deferred: "Diferida",
     pending: "Por definir",

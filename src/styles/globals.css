@@ -91,64 +91,64 @@ body {
  * while those screens move incrementally to the generated primitives.
  */
 @layer utilities {
-  .bg-slate-950,
-  .bg-slate-900 {
+  body:not(:has(.supervision-console)) .bg-slate-950,
+  body:not(:has(.supervision-console)) .bg-slate-900 {
     background-color: color-mix(in oklch, var(--input), transparent 50%);
   }
 
-  .bg-teal-300,
-  .bg-teal-400 {
+  body:not(:has(.supervision-console)) .bg-teal-300,
+  body:not(:has(.supervision-console)) .bg-teal-400 {
     background-color: var(--primary);
   }
 
-  .bg-amber-950\/30 {
+  body:not(:has(.supervision-console)) .bg-amber-950\/30 {
     background-color: #fffbeb;
   }
 
-  .text-slate-950 {
+  body:not(:has(.supervision-console)) .text-slate-950 {
     color: var(--primary-foreground);
   }
 
-  .text-slate-100,
-  .text-slate-200 {
+  body:not(:has(.supervision-console)) .text-slate-100,
+  body:not(:has(.supervision-console)) .text-slate-200 {
     color: var(--foreground);
   }
 
-  .text-slate-300,
-  .text-slate-400 {
+  body:not(:has(.supervision-console)) .text-slate-300,
+  body:not(:has(.supervision-console)) .text-slate-400 {
     color: var(--muted-foreground);
   }
 
-  .text-teal-300 {
+  body:not(:has(.supervision-console)) .text-teal-300 {
     color: var(--primary);
   }
 
-  .text-rose-200,
-  .text-rose-300 {
+  body:not(:has(.supervision-console)) .text-rose-200,
+  body:not(:has(.supervision-console)) .text-rose-300 {
     color: var(--destructive);
   }
 
-  .text-amber-100,
-  .text-amber-300 {
+  body:not(:has(.supervision-console)) .text-amber-100,
+  body:not(:has(.supervision-console)) .text-amber-300 {
     color: #78350f;
   }
 
-  .border-slate-600,
-  .border-slate-700,
-  .border-slate-800 {
+  body:not(:has(.supervision-console)) .border-slate-600,
+  body:not(:has(.supervision-console)) .border-slate-700,
+  body:not(:has(.supervision-console)) .border-slate-800 {
     border-color: var(--border);
   }
 
-  .border-teal-300 {
+  body:not(:has(.supervision-console)) .border-teal-300 {
     border-color: var(--primary);
   }
 
-  .border-rose-300 {
+  body:not(:has(.supervision-console)) .border-rose-300 {
     border-color: var(--destructive);
   }
 
-  .border-amber-500\/70,
-  .border-amber-700\/60 {
+  body:not(:has(.supervision-console)) .border-amber-500\/70,
+  body:not(:has(.supervision-console)) .border-amber-700\/60 {
     border-color: #fde68a;
   }
 }
