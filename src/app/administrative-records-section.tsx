@@ -25,6 +25,7 @@ import {
 import {
   Field,
   FieldContent,
+  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "~/components/ui/field";
@@ -452,6 +453,12 @@ export function AdministrativeRecordsSection() {
               value={registrationBirthDate}
             />
             <h3 className="font-medium">Contacto</h3>
+            <FieldDescription>
+              Al guardar, se concederá a este Contacto permiso para recibir por
+              WhatsApp mensajes administrativos de citas (confirmaciones,
+              recordatorios, cancelaciones y reprogramaciones). El permiso cubre
+              a todos sus Pacientes actuales y futuros.
+            </FieldDescription>
             <FieldGroup className="gap-4">
               <RecordField
                 id="registration-contact-phone"

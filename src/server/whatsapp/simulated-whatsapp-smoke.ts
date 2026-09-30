@@ -483,16 +483,19 @@ function createInboundSmokeHarness(input: {
       latestConsent = {
         acceptedAt: record.acceptedAt,
         acceptedRole: "contact",
+        actorIdentityId: null,
         clinicId: record.clinicId,
         contactId: record.contactId,
         declaration: record.declaration,
         id: `synthetic-consent:${consentWrites}`,
         identityId: record.identityId,
         interactionId: record.interactionId,
+        origin: "whatsapp_inbound",
         patientId: null,
         phoneE164: record.phoneE164,
         privacyVersion: record.policy.privacyVersion,
         provider: "kapso",
+        sourcePatientId: null,
         scope: "contact",
         status: record.status ?? "accepted",
         termsVersion: record.policy.termsVersion,
@@ -1321,7 +1324,9 @@ async function runPendingTutorContactSmoke(
       pendingSelection.patients.length === 0 &&
       pendingOperation.kind === "patient-selection-required" &&
       pendingConsentAttempt.kind === "invalid-request" &&
-      pendingTutorStore.consents.every((evidence) => evidence.scope === "contact"),
+      pendingTutorStore.consents.every(
+        (evidence) => evidence.scope === "contact",
+      ),
   );
 }
 
@@ -1480,16 +1485,19 @@ function createConsentHarness(
       latest = {
         acceptedAt: input.acceptedAt,
         acceptedRole: "contact",
+        actorIdentityId: null,
         clinicId: input.clinicId,
         contactId: input.contactId,
         declaration: input.declaration,
         id: `synthetic-consent:${recordCount}`,
         identityId: input.identityId,
         interactionId: input.interactionId,
+        origin: "whatsapp_inbound",
         patientId: null,
         phoneE164: input.phoneE164,
         privacyVersion: input.policy.privacyVersion,
         provider: "kapso",
+        sourcePatientId: null,
         scope: "contact",
         status: input.status ?? "accepted",
         termsVersion: input.policy.termsVersion,

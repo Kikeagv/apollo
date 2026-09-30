@@ -29,6 +29,7 @@ import type { DemoRequestRateLimitScope } from "~/server/application/demo-reques
 import type { WhatsAppIdentityStatus } from "~/domain/whatsapp-identity";
 import type {
   WhatsAppConsentAcceptedRole,
+  WhatsAppConsentOrigin,
   WhatsAppConsentScope,
   WhatsAppConsentStatus,
 } from "~/domain/whatsapp-consent";
@@ -2701,7 +2702,15 @@ export const whatsappContactConsents = createTable(
     id: uuid("id").defaultRandom().primaryKey(),
     clinicId: uuid("clinic_id").notNull(),
     contactId: uuid("contact_id").notNull(),
-    identityId: uuid("identity_id").notNull(),
+    identityId: uuid("identity_id"),
+    origin: text("origin")
+      .$type<WhatsAppConsentOrigin>()
+      .default("whatsapp_inbound")
+      .notNull(),
+    actorIdentityId: text("actor_identity_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    sourcePatientId: uuid("source_patient_id"),
     patientId: uuid("patient_id"),
     phoneE164: text("phone_e164"),
     declaration: text("declaration").notNull(),
@@ -2735,6 +2744,10 @@ export const whatsappContactConsents = createTable(
       table.scope,
       table.acceptedAt,
     ),
+    index("whatsapp_contact_consent_source_patient_idx").on(
+      table.clinicId,
+      table.sourcePatientId,
+    ),
     foreignKey({
       columns: [table.clinicId, table.contactId],
       foreignColumns: [contacts.clinicId, contacts.id],
@@ -2754,6 +2767,32 @@ export const whatsappContactConsents = createTable(
       foreignColumns: [patients.clinicId, patients.id],
       name: "whatsapp_contact_consent_patient_same_clinic_fk",
     }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.clinicId, table.sourcePatientId],
+      foreignColumns: [patients.clinicId, patients.id],
+      name: "whatsapp_contact_consent_source_patient_same_clinic_fk",
+    }).onDelete("restrict"),
+    check(
+      "whatsapp_contact_consent_origin",
+      sql`${table.origin} IN ('whatsapp_inbound', 'manual_patient_registration')`,
+    ),
+    check(
+      "whatsapp_contact_consent_origin_evidence",
+      sql`(
+        (
+          ${table.origin} = 'whatsapp_inbound'
+          AND ${table.identityId} IS NOT NULL
+          AND ${table.actorIdentityId} IS NULL
+          AND ${table.sourcePatientId} IS NULL
+        )
+        OR (
+          ${table.origin} = 'manual_patient_registration'
+          AND ${table.identityId} IS NULL
+          AND ${table.actorIdentityId} IS NOT NULL
+          AND ${table.sourcePatientId} IS NOT NULL
+        )
+      )`,
+    ),
     check(
       "whatsapp_contact_consent_scope",
       sql`(

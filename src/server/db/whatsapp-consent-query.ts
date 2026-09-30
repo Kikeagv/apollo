@@ -46,16 +46,19 @@ export async function readWhatsAppConsentSnapshot(
   const [consent] = await transaction
     .select({
       acceptedAt: whatsappContactConsents.acceptedAt,
+      actorIdentityId: whatsappContactConsents.actorIdentityId,
       contactId: whatsappContactConsents.contactId,
       declaration: whatsappContactConsents.declaration,
       id: whatsappContactConsents.id,
       identityId: whatsappContactConsents.identityId,
       interactionId: whatsappContactConsents.interactionId,
+      origin: whatsappContactConsents.origin,
       patientId: whatsappContactConsents.patientId,
       phoneE164: whatsappContactConsents.phoneE164,
       privacyVersion: whatsappContactConsents.privacyVersion,
       provider: whatsappContactConsents.provider,
       scope: whatsappContactConsents.scope,
+      sourcePatientId: whatsappContactConsents.sourcePatientId,
       status: whatsappContactConsents.status,
       termsVersion: whatsappContactConsents.termsVersion,
       textReference: whatsappContactConsents.textReference,
@@ -83,6 +86,7 @@ export async function readWhatsAppConsentSnapshot(
     consent.provider === WHATSAPP_CONSENT_PROVIDER &&
     isWhatsAppConsentCurrent(consent, policy);
   let patientRole: "adult-patient" | "tutor" | null = null;
+  let pendingTutorMayReceiveAdministrativeMessages = false;
   if (input.patientId !== undefined && input.patientId !== null) {
     const [link] = await transaction
       .select({
@@ -117,6 +121,11 @@ export async function readWhatsAppConsentSnapshot(
         isWhatsAppGuardianDeclaration(link.guardianDeclaration ?? "")
           ? "tutor"
           : null;
+      pendingTutorMayReceiveAdministrativeMessages =
+        consent?.origin === "manual_patient_registration" &&
+        link.guardianshipVerificationStatus === "pending" &&
+        link.guardianDui !== null &&
+        /^\d{8}-\d$/.test(link.guardianDui);
     } else if (
       link?.relationship === "contact" &&
       link.birthDate !== null &&
@@ -128,7 +137,8 @@ export async function readWhatsAppConsentSnapshot(
   const patientAllowed =
     input.patientId === undefined
       ? true
-      : input.patientId !== null && patientRole !== null;
+      : input.patientId !== null &&
+        (patientRole !== null || pendingTutorMayReceiveAdministrativeMessages);
   return {
     acceptedAt: consent?.acceptedAt ?? null,
     decision: allowed && patientAllowed ? "allowed" : "blocked",

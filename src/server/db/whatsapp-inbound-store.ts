@@ -228,16 +228,19 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         .values({
           acceptedAt: input.acceptedAt,
           acceptedRole: "contact",
+          actorIdentityId: null,
           clinicId: input.clinicId,
           contactId: input.contactId,
           declaration: input.declaration,
           identityId: input.identityId,
           interactionId: input.interactionId,
+          origin: "whatsapp_inbound",
           patientId: null,
           phoneE164: input.phoneE164 ?? contact.phoneE164,
           privacyVersion: input.policy.privacyVersion,
           provider: WHATSAPP_CONSENT_PROVIDER,
           scope: "contact",
+          sourcePatientId: null,
           status: input.status ?? "accepted",
           termsVersion: input.policy.termsVersion,
           textReference: input.policy.immutableTextReference,
@@ -1479,16 +1482,19 @@ function toWhatsAppConsentEvidence(
   return {
     acceptedAt: row.acceptedAt,
     acceptedRole: row.acceptedRole,
+    actorIdentityId: row.actorIdentityId,
     clinicId: row.clinicId,
     contactId: row.contactId,
     declaration: row.declaration,
     id: row.id,
     identityId: row.identityId,
     interactionId: row.interactionId,
+    origin: row.origin,
     patientId: row.patientId,
     phoneE164: row.phoneE164,
     privacyVersion: row.privacyVersion,
     provider: row.provider,
+    sourcePatientId: row.sourcePatientId,
     scope: row.scope,
     status: row.status,
     termsVersion: row.termsVersion,
@@ -1503,9 +1509,12 @@ function matchesWhatsAppConsentInput(
   return (
     evidence.clinicId === input.clinicId &&
     evidence.contactId === input.contactId &&
+    evidence.origin === "whatsapp_inbound" &&
     evidence.declaration === input.declaration &&
     evidence.identityId === input.identityId &&
+    evidence.actorIdentityId === null &&
     evidence.patientId === null &&
+    evidence.sourcePatientId === null &&
     evidence.scope === "contact" &&
     evidence.status === (input.status ?? "accepted") &&
     evidence.acceptedRole === "contact" &&

@@ -3,6 +3,8 @@ import { CLINIC_TERMS_URL } from "./clinic-setup";
 export const WHATSAPP_CONSENT_PROVIDER = "kapso" as const;
 export const WHATSAPP_CONSENT_BUTTON_LABEL = "CONTINUAR" as const;
 export const WHATSAPP_CONSENT_TEXTUAL_RESPONSE = "CONTINUAR" as const;
+export const WHATSAPP_MANUAL_PATIENT_REGISTRATION_DECLARATION =
+  "REGISTRO_MANUAL_DE_PACIENTE" as const;
 export const WHATSAPP_PRIVACY_URL = "https://www.usepraxia.com/privacidad";
 export const WHATSAPP_PRIVACY_VERSION = "1.0";
 export const WHATSAPP_GUARDIAN_DECLARATION =
@@ -15,6 +17,8 @@ export type WhatsAppConsentSafeRoute =
   "frustration" | "human-request" | "urgency";
 
 export type WhatsAppConsentAcceptedRole = "adult-patient" | "contact" | "tutor";
+export type WhatsAppConsentOrigin =
+  "manual_patient_registration" | "whatsapp_inbound";
 export type WhatsAppConsentStatus = "accepted" | "revoked";
 
 export type WhatsAppConsentPolicy = {
@@ -34,12 +38,15 @@ export type WhatsAppConsentEvidence = {
   contactId: string;
   declaration: string;
   id: string;
-  identityId: string;
+  identityId: string | null;
   interactionId: string;
+  origin: WhatsAppConsentOrigin;
   patientId: string | null;
   phoneE164: string | null;
   privacyVersion: string;
   provider: typeof WHATSAPP_CONSENT_PROVIDER;
+  actorIdentityId: string | null;
+  sourcePatientId: string | null;
   scope: WhatsAppConsentScope;
   status: WhatsAppConsentStatus;
   termsVersion: string;
@@ -116,13 +123,24 @@ export function isWhatsAppConsentCurrent(
   evidence: WhatsAppConsentEvidence,
   policy: WhatsAppConsentPolicy,
 ) {
+  const hasValidOriginEvidence =
+    (evidence.origin === "whatsapp_inbound" &&
+      evidence.declaration === WHATSAPP_CONSENT_TEXTUAL_RESPONSE &&
+      evidence.actorIdentityId === null &&
+      evidence.sourcePatientId === null) ||
+    (evidence.origin === "manual_patient_registration" &&
+      evidence.declaration ===
+        WHATSAPP_MANUAL_PATIENT_REGISTRATION_DECLARATION &&
+      evidence.actorIdentityId !== null &&
+      evidence.sourcePatientId !== null);
+
   return (
     evidence.provider === WHATSAPP_CONSENT_PROVIDER &&
     evidence.status === "accepted" &&
     evidence.scope === "contact" &&
     evidence.acceptedRole === "contact" &&
     evidence.patientId === null &&
-    evidence.declaration === WHATSAPP_CONSENT_TEXTUAL_RESPONSE &&
+    hasValidOriginEvidence &&
     evidence.privacyVersion === policy.privacyVersion
   );
 }

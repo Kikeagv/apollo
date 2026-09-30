@@ -5,12 +5,18 @@ import {
   type ContactPatientRelationship,
   type GuardianshipVerificationStatus,
 } from "~/server/application/administrative-records";
+import {
+  buildWhatsAppConsentPolicy,
+  WHATSAPP_CONSENT_PROVIDER,
+  WHATSAPP_MANUAL_PATIENT_REGISTRATION_DECLARATION,
+} from "~/domain/whatsapp-consent";
 import type { AppointmentTransactionalMessageType } from "~/server/application/manual-appointments";
 import { inClinicTransaction } from "~/server/db/clinic-context";
 import type { db } from "~/server/db";
 import {
   appointments,
   appointmentEvents,
+  clinicTermsContract,
   contactPatientLinks,
   contacts,
   doctors,
@@ -18,9 +24,49 @@ import {
   serviceOffers,
   services,
   transactionalDeliveries,
+  whatsappContactConsents,
 } from "~/server/db/schema";
 
 type ClinicTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function grantManualPatientRegistrationConsent(
+  transaction: ClinicTransaction,
+  input: {
+    clinicId: string;
+    contactId: string;
+    identityId: string;
+    patientId: string;
+    phoneE164: string | null;
+  },
+) {
+  const contract = await transaction.query.clinicTermsContract.findFirst({
+    columns: { currentVersion: true },
+    where: eq(clinicTermsContract.id, true),
+  });
+  const policy = buildWhatsAppConsentPolicy(
+    contract?.currentVersion ?? "unknown",
+  );
+  await transaction.insert(whatsappContactConsents).values({
+    acceptedAt: new Date(),
+    acceptedRole: "contact",
+    actorIdentityId: input.identityId,
+    clinicId: input.clinicId,
+    contactId: input.contactId,
+    declaration: WHATSAPP_MANUAL_PATIENT_REGISTRATION_DECLARATION,
+    identityId: null,
+    interactionId: `manual-patient-registration:${input.patientId}`,
+    origin: "manual_patient_registration",
+    patientId: null,
+    phoneE164: input.phoneE164,
+    privacyVersion: policy.privacyVersion,
+    provider: WHATSAPP_CONSENT_PROVIDER,
+    scope: "contact",
+    sourcePatientId: input.patientId,
+    status: "accepted",
+    termsVersion: policy.termsVersion,
+    textReference: policy.immutableTextReference,
+  });
+}
 
 function appointmentDeliveryType(
   kind: string,
@@ -589,6 +635,14 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
         .returning(linkFields);
       if (link === undefined) throw new Error("No se pudo crear el Vínculo");
 
+      await grantManualPatientRegistrationConsent(transaction, {
+        clinicId: input.clinicId,
+        contactId: contact.id,
+        identityId: input.identityId,
+        patientId: patient.id,
+        phoneE164: contact.phoneE164,
+      });
+
       return { contact, link, patient, reusedContact };
     });
   },
@@ -635,6 +689,14 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
         })
         .returning(linkFields);
       if (link === undefined) throw new Error("No se pudo crear el Vínculo");
+
+      await grantManualPatientRegistrationConsent(transaction, {
+        clinicId: input.clinicId,
+        contactId: contact.id,
+        identityId: input.identityId,
+        patientId: patient.id,
+        phoneE164: contact.phoneE164,
+      });
 
       return { contact, link, patient };
     });
