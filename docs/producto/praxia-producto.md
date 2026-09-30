@@ -4,6 +4,11 @@
 > **Praxia**; los nombres internos de implementación (panel, asistente,
 > herramienta de operación) y el vocabulario técnico viven en `CONTEXT.md`.
 > Estado: piloto en producción con datos sintéticos (agosto de 2026).
+>
+> El flujo vigente de Activación de WhatsApp y el consentimiento por Contacto
+> quedaron definidos en ADR 0044 (29 de septiembre de 2026); las referencias a
+> gates extensos de WhatsApp en la hoja de ruta de este documento son el
+> baseline histórico del piloto.
 
 ---
 

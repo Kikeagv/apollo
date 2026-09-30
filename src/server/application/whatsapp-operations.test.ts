@@ -6,7 +6,7 @@ import {
   offboardWhatsAppConnection,
   recordWhatsAppTrafficGate,
   revertWhatsAppRealTraffic,
-  runWhatsAppSyntheticSmoke,
+  startWhatsAppInboundRoundtrip,
   type WhatsAppOperationsOffboardingStep,
   type WhatsAppOperationsSnapshot,
   type WhatsAppOperationsStore,
@@ -61,12 +61,16 @@ function makeSnapshot(
       status: "passed",
       steps: whatsappSyntheticSmokeStepCodes.map((code) => ({
         code,
-        evidence: `synthetic:${code}`,
-        eventId: null,
+        evidence:
+          code === "real-template-delivery"
+            ? "Plantilla aprobada entregada y lectura confirmada"
+            : `synthetic:${code}`,
+        eventId:
+          code === "real-template-delivery" ? "template-message-92" : null,
         message: null,
-        observedAt: null,
+        observedAt: code === "real-template-delivery" ? now : null,
         passed: true,
-        source: null,
+        source: code === "real-template-delivery" ? "provider" : null,
         status: "passed",
       })),
       syntheticContact: true,
@@ -315,21 +319,89 @@ function makeStore(initial = makeSnapshot()) {
 }
 
 describe("operaciones finales de WhatsApp", () => {
-  it("no habilita tráfico cuando falta evidencia legal o el smoke falló", async () => {
+  it("ignora gates manuales y habilita después de la entrega y lectura de la plantilla", async () => {
+    const snapshot = makeSnapshot();
     const { store } = makeStore({
-      ...makeSnapshot(),
-      gates: {
-        ...makeSnapshot().gates,
-        consent: { evidenceReference: null, ready: false, recordedAt: null },
-        billing: { evidenceReference: null, ready: false, recordedAt: null },
+      ...snapshot,
+      gates: Object.fromEntries(
+        whatsappRealTrafficGateCodes.map((code) => [
+          code,
+          { evidenceReference: null, ready: false, recordedAt: null },
+        ]),
+      ),
+    });
+
+    const enabled = await enableWhatsAppRealTraffic(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: snapshot.clinicId,
+        manualConfirmation: true,
+        now,
       },
-      latestSmoke: { ...makeSnapshot().latestSmoke!, status: "failed" },
+      { store },
+    );
+
+    expect(enabled.trafficStatus).toBe("enabled");
+  });
+
+  it.each([
+    { passed: false, status: "pending" as const },
+    { passed: false, status: "passed" as const },
+    { passed: true, status: "failed" as const },
+  ])(
+    "bloquea si la plantilla no quedó entregada y leída (%s)",
+    async (templateStep) => {
+      const snapshot = makeSnapshot();
+      const latestSmoke = snapshot.latestSmoke!;
+      const { store } = makeStore({
+        ...snapshot,
+        latestSmoke: {
+          ...latestSmoke,
+          steps: latestSmoke.steps.map((step) =>
+            step.code === "real-template-delivery"
+              ? { ...step, ...templateStep }
+              : step,
+          ),
+        },
+      });
+
+      const error = await enableWhatsAppRealTraffic(
+        {
+          actorIdentityId: "superadmin-92",
+          clinicId: snapshot.clinicId,
+          manualConfirmation: true,
+          now,
+        },
+        { store },
+      ).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBeInstanceOf(WhatsAppRealTrafficBlockedError);
+      if (!(error instanceof WhatsAppRealTrafficBlockedError)) return;
+      expect(error.blockers.map((blocker) => blocker.code)).toContain(
+        "template-delivery",
+      );
+    },
+  );
+
+  it("bloquea tráfico cuando el smoke no incluye el paso de plantilla", async () => {
+    const snapshot = makeSnapshot();
+    const { store } = makeStore({
+      ...snapshot,
+      latestSmoke: {
+        ...snapshot.latestSmoke!,
+        steps: snapshot.latestSmoke!.steps.filter(
+          (step) => step.code !== "real-template-delivery",
+        ),
+      },
     });
 
     const error = await enableWhatsAppRealTraffic(
       {
         actorIdentityId: "superadmin-92",
-        clinicId: makeSnapshot().clinicId,
+        clinicId: snapshot.clinicId,
         manualConfirmation: true,
         now,
       },
@@ -338,10 +410,118 @@ describe("operaciones finales de WhatsApp", () => {
       () => undefined,
       (caught: unknown) => caught,
     );
+
     expect(error).toBeInstanceOf(WhatsAppRealTrafficBlockedError);
     if (!(error instanceof WhatsAppRealTrafficBlockedError)) return;
-    expect(error.blockers.map((blocker) => blocker.code)).toEqual(
-      expect.arrayContaining(["consent", "billing", "smoke"]),
+    expect(error.blockers.map((blocker) => blocker.code)).toContain(
+      "template-delivery",
+    );
+  });
+
+  it("mantiene el circuit breaker como bloqueo tras la prueba de plantilla", async () => {
+    const snapshot = makeSnapshot({ circuitStatus: "open" });
+    const { store } = makeStore(snapshot);
+
+    const error = await enableWhatsAppRealTraffic(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: snapshot.clinicId,
+        manualConfirmation: true,
+        now,
+      },
+      { store },
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(WhatsAppRealTrafficBlockedError);
+    if (!(error instanceof WhatsAppRealTrafficBlockedError)) return;
+    expect(error.blockers.map((blocker) => blocker.code)).toContain(
+      "circuit-breaker",
+    );
+  });
+
+  it("mantiene readiness de conexión como bloqueo tras la prueba de plantilla", async () => {
+    const snapshot = makeSnapshot({
+      technicalReadiness: {
+        blockers: ["Número sandbox"],
+        status: "blocked",
+      },
+    });
+    const { store } = makeStore(snapshot);
+
+    const error = await enableWhatsAppRealTraffic(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: snapshot.clinicId,
+        manualConfirmation: true,
+        now,
+      },
+      { store },
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(WhatsAppRealTrafficBlockedError);
+    if (!(error instanceof WhatsAppRealTrafficBlockedError)) return;
+    expect(error.blockers.map((blocker) => blocker.code)).toContain(
+      "technical-readiness",
+    );
+  });
+
+  it("mantiene bloqueada una generación obsoleta de la Conexión", async () => {
+    const snapshot = makeSnapshot();
+    const { store } = makeStore({
+      ...snapshot,
+      latestSmoke: {
+        ...snapshot.latestSmoke!,
+        provisioningEventId: "generation-previous-92",
+      },
+    });
+
+    const error = await enableWhatsAppRealTraffic(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: snapshot.clinicId,
+        manualConfirmation: true,
+        now,
+      },
+      { store },
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(WhatsAppRealTrafficBlockedError);
+    if (!(error instanceof WhatsAppRealTrafficBlockedError)) return;
+    expect(error.blockers.map((blocker) => blocker.code)).toContain(
+      "smoke-generation",
+    );
+  });
+
+  it("no habilita una Clínica sintética aunque la plantilla esté entregada y leída", async () => {
+    const snapshot = makeSnapshot({ clinicIsSynthetic: true });
+    const { store } = makeStore(snapshot);
+
+    const error = await enableWhatsAppRealTraffic(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: snapshot.clinicId,
+        manualConfirmation: true,
+        now,
+      },
+      { store },
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(WhatsAppRealTrafficBlockedError);
+    if (!(error instanceof WhatsAppRealTrafficBlockedError)) return;
+    expect(error.blockers.map((blocker) => blocker.code)).toContain(
+      "clinic-synthetic",
     );
   });
 
@@ -361,7 +541,7 @@ describe("operaciones finales de WhatsApp", () => {
       }),
     };
 
-    const failed = await runWhatsAppSyntheticSmoke(
+    const failed = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
@@ -395,7 +575,7 @@ describe("operaciones finales de WhatsApp", () => {
       ),
       syntheticContact: true,
     });
-    const passed = await runWhatsAppSyntheticSmoke(
+    const passed = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
@@ -427,7 +607,7 @@ describe("operaciones finales de WhatsApp", () => {
       }),
     };
 
-    const result = await runWhatsAppSyntheticSmoke(
+    const result = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
@@ -449,7 +629,7 @@ describe("operaciones finales de WhatsApp", () => {
         .mockRejectedValue(new Error("Kapso no confirmó el preflight")),
     };
 
-    const result = await runWhatsAppSyntheticSmoke(
+    const result = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
@@ -488,7 +668,7 @@ describe("operaciones finales de WhatsApp", () => {
       }),
     };
 
-    const result = await runWhatsAppSyntheticSmoke(
+    const result = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
@@ -510,7 +690,7 @@ describe("operaciones finales de WhatsApp", () => {
     const runner = { run: vi.fn() };
 
     await expect(
-      runWhatsAppSyntheticSmoke(
+      startWhatsAppInboundRoundtrip(
         {
           actorIdentityId: "superadmin-92",
           clinicId: makeSnapshot().clinicId,
@@ -522,7 +702,7 @@ describe("operaciones finales de WhatsApp", () => {
     expect(runner.run).not.toHaveBeenCalled();
   });
 
-  it("inicia un E2E real pendiente con Contacto controlado y timeout por Clínica", async () => {
+  it("inicia el roundtrip real sin llamar el preflight de Kapso", async () => {
     const { smokeRuns, store } = makeStore();
     const runner = {
       run: vi.fn().mockResolvedValue({
@@ -546,7 +726,7 @@ describe("operaciones finales de WhatsApp", () => {
       }),
     };
 
-    const result = await runWhatsAppSyntheticSmoke(
+    const result = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: makeSnapshot().clinicId,
@@ -574,11 +754,10 @@ describe("operaciones finales de WhatsApp", () => {
     expect(
       result.steps.find((step) => step.code === "real-reception"),
     ).toMatchObject({ status: "pending", passed: false });
-    expect(runner.run).toHaveBeenCalledWith(
-      expect.objectContaining({
-        syntheticContactId: "synthetic-smoke:controlled-contact-92",
-      }),
-    );
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(
+      result.steps.find((step) => step.code === "webhook-preflight"),
+    ).toMatchObject({ status: "skipped", passed: false });
     expect(smokeRuns).toHaveLength(1);
     expect(smokeRuns[0]).toMatchObject({
       runId: "a268e988-cddc-47c8-8b7a-a40da1060016",
@@ -588,20 +767,6 @@ describe("operaciones finales de WhatsApp", () => {
         testContactId: "controlled-contact-92",
       },
     });
-  });
-
-  it("habilita tráfico cuando el smoke y los gates están completos", async () => {
-    const { store } = makeStore();
-    const enabled = await enableWhatsAppRealTraffic(
-      {
-        actorIdentityId: "superadmin-92",
-        clinicId: makeSnapshot().clinicId,
-        manualConfirmation: true,
-        now,
-      },
-      { store },
-    );
-    expect(enabled.trafficStatus).toBe("enabled");
   });
 
   it("marca como obsoleto un smoke si la Conexión cambia de generación durante la ejecución", async () => {
@@ -629,7 +794,7 @@ describe("operaciones finales de WhatsApp", () => {
       }),
     };
 
-    const result = await runWhatsAppSyntheticSmoke(
+    const result = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: initial.clinicId,
@@ -671,7 +836,7 @@ describe("operaciones finales de WhatsApp", () => {
       }),
     };
 
-    const result = await runWhatsAppSyntheticSmoke(
+    const result = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: snapshot.clinicId,
@@ -707,7 +872,7 @@ describe("operaciones finales de WhatsApp", () => {
     const { store } = makeStore(snapshot);
     const runner = { run: vi.fn() };
 
-    const result = await runWhatsAppSyntheticSmoke(
+    const result = await startWhatsAppInboundRoundtrip(
       {
         actorIdentityId: "superadmin-92",
         clinicId: snapshot.clinicId,

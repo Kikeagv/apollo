@@ -60,6 +60,7 @@ export type ClinicActivationJourneyInput = {
   } | null;
   setupLinkId: string | null;
   setupLinkStatus: WhatsAppSetupLinkStatus | null;
+  realTrafficStatus?: "blocked" | "enabled" | "offboarded";
   latestSmoke?: ClinicActivationSmokeRun | null;
   currentProvisioningEventId?: string | null;
   now?: Date;
@@ -89,10 +90,12 @@ export function buildClinicActivationJourney(
     healthCheckedAt: input.providerHealthCheckedAt,
     now: input.now,
   });
-  const inboundRoundtrip = buildInboundRoundtrip({
+  const currentSmoke = getCurrentSmoke({
     currentProvisioningEventId: input.currentProvisioningEventId ?? null,
     latestSmoke: input.latestSmoke ?? null,
   });
+  const inboundRoundtrip = buildInboundRoundtrip(currentSmoke);
+  const templateDelivery = buildTemplateDelivery(currentSmoke);
 
   return {
     enrollmentProgress:
@@ -112,7 +115,10 @@ export function buildClinicActivationJourney(
             ? "issue"
             : "unverified",
     },
-    realTrafficReady: false,
+    realTrafficReady:
+      input.realTrafficStatus === "enabled" &&
+      inboundRoundtrip.status === "completed" &&
+      templateDelivery.status === "completed",
     inboundRoundtrip,
     steps: [
       {
@@ -130,20 +136,27 @@ export function buildClinicActivationJourney(
         status: inboundRoundtrip.status,
         updatedAt: inboundRoundtrip.updatedAt,
       },
-      { id: "template-delivery", status: "pending", updatedAt: null },
+      {
+        id: "template-delivery",
+        status: templateDelivery.status,
+        updatedAt: templateDelivery.updatedAt,
+      },
     ],
   };
 }
 
-function buildInboundRoundtrip(input: {
+function getCurrentSmoke(input: {
   currentProvisioningEventId: string | null;
   latestSmoke: ClinicActivationSmokeRun | null;
 }) {
-  const smoke =
-    input.latestSmoke?.requireRealRoundtrip === true &&
+  return input.latestSmoke?.requireRealRoundtrip === true &&
+    input.currentProvisioningEventId !== null &&
     input.latestSmoke.provisioningEventId === input.currentProvisioningEventId
-      ? input.latestSmoke
-      : null;
+    ? input.latestSmoke
+    : null;
+}
+
+function buildInboundRoundtrip(smoke: ClinicActivationSmokeRun | null) {
   const steps = whatsappSyntheticSmokeRoundtripStepCodes.map(
     (code): WhatsAppSyntheticSmokeStep =>
       smoke?.steps.find((step) => step.code === code) ??
@@ -156,14 +169,12 @@ function buildInboundRoundtrip(input: {
     smoke.controlledTestContact === true &&
     (smoke.testContactId?.trim() ?? "") !== "" &&
     smoke.syntheticContact === false &&
-    smoke.realPatientsEnabled === false &&
-    smoke.status === "passed";
-  const status: ClinicActivationStepStatus =
-    smoke?.status === "failed" || hasFailedStep
-      ? "failed"
-      : hasCompleteEvidence
-        ? "completed"
-        : "pending";
+    smoke.realPatientsEnabled === false;
+  const status: ClinicActivationStepStatus = hasFailedStep
+    ? "failed"
+    : hasCompleteEvidence
+      ? "completed"
+      : "pending";
   const observedAt = steps
     .flatMap((step) => (step.observedAt ? [step.observedAt] : []))
     .reduce<Date | null>(
@@ -181,6 +192,30 @@ function buildInboundRoundtrip(input: {
     status,
     steps,
     updatedAt: observedAt ?? smoke?.finishedAt ?? smoke?.startedAt ?? null,
+  };
+}
+
+function buildTemplateDelivery(smoke: ClinicActivationSmokeRun | null) {
+  const step =
+    smoke?.steps.find(
+      (candidate) => candidate.code === "real-template-delivery",
+    ) ?? null;
+  const hasCompleteEvidence =
+    step?.status === "passed" &&
+    step.passed &&
+    step.source === "provider" &&
+    step.eventId !== null &&
+    step.observedAt !== null &&
+    smoke?.status === "passed";
+  const status: ClinicActivationStepStatus =
+    step?.status === "failed"
+      ? "failed"
+      : hasCompleteEvidence
+        ? "completed"
+        : "pending";
+  return {
+    status,
+    updatedAt: step?.observedAt ?? null,
   };
 }
 

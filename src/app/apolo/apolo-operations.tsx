@@ -13,15 +13,7 @@ import {
   whatsappSetupLinkStatusLabel,
   type WhatsAppSetupLink,
 } from "~/domain/whatsapp-setup-link";
-import {
-  whatsappRealTrafficGateCodes,
-  whatsappRealTrafficGateLabel,
-  type WhatsAppRealTrafficBlocker,
-} from "~/domain/whatsapp-traffic";
-import {
-  isValidE164PhoneNumber,
-  type WhatsAppOnboardingMode,
-} from "~/domain/whatsapp-preflight";
+import type { WhatsAppOnboardingMode } from "~/domain/whatsapp-preflight";
 import {
   supervisionTabs,
   type SupervisionTabId,
@@ -97,8 +89,6 @@ export function ApoloOperations() {
     });
   };
   const [smokeTestPhone, setSmokeTestPhone] = useState("");
-  const [testContactName, setTestContactName] = useState("");
-  const [testContactPhone, setTestContactPhone] = useState("");
   const [activationRefreshToken, setActivationRefreshToken] = useState(0);
   const [reactivationEvidenceNow, setReactivationEvidenceNow] = useState(
     () => new Date(),
@@ -145,9 +135,15 @@ export function ApoloOperations() {
   );
   const latestSmoke = whatsappOperations.data?.latestSmoke ?? null;
   const operationConnection = whatsappOperations.data?.connection ?? null;
+  const approvedTemplateKind =
+    operationConnection?.provider === "kapso"
+      ? (readiness.data?.templates.find(
+          (template) =>
+            template.category === "UTILITY" && template.status === "APPROVED",
+        )?.kind ?? null)
+      : null;
   const connectionReady = onboarding.data?.connection?.status === "ready";
   const readinessReady = readiness.data?.readiness.status === "ready";
-  const smokePassed = latestSmoke?.status === "passed";
   const trafficEnabled = whatsappOperations.data?.trafficStatus === "enabled";
   useEffect(() => {
     if (latestSmoke?.finishedAt === null || latestSmoke === null) return;
@@ -196,9 +192,9 @@ export function ApoloOperations() {
   const [qrDeviceAvailable, setQrDeviceAvailable] = useState(false);
   const [causeFixed, setCauseFixed] = useState(false);
   const [manualConfirmation, setManualConfirmation] = useState(false);
-  const [realTrafficConfirmation, setRealTrafficConfirmation] = useState(false);
+  const [revertTrafficConfirmation, setRevertTrafficConfirmation] =
+    useState(false);
   const [offboardingConfirmation, setOffboardingConfirmation] = useState(false);
-  const [gateEvidence, setGateEvidence] = useState<Record<string, string>>({});
   const [openCause, setOpenCause] = useState<
     | "webhook-paused"
     | "high-failure-rate"
@@ -304,41 +300,33 @@ export function ApoloOperations() {
     { clinicId },
     { enabled: Boolean(clinicId) && activeTab === "support" },
   );
-  const recordTrafficGate = api.apolo.recordWhatsAppTrafficGate.useMutation({
-    onSuccess: () => {
-      void whatsappOperations.refetch();
-      refreshActivationContract();
-      refreshSupervisionSummary();
-    },
-  });
-  const runSyntheticSmoke = api.apolo.runWhatsAppSyntheticSmoke.useMutation({
-    onSuccess: () => {
-      void whatsappOperations.refetch();
-      void readiness.refetch();
-      void circuitBreaker.refetch();
-      refreshActivationContract();
-      refreshSupervisionSummary();
-    },
-  });
+  const startInboundRoundtrip =
+    api.apolo.startWhatsAppInboundRoundtrip.useMutation({
+      onSuccess: () => {
+        void whatsappOperations.refetch();
+        void readiness.refetch();
+        void circuitBreaker.refetch();
+        refreshActivationContract();
+        refreshSupervisionSummary();
+      },
+    });
+  const runApprovedTemplateSmoke =
+    api.apolo.runWhatsAppApprovedTemplateSmoke.useMutation({
+      onSuccess: () => {
+        void whatsappOperations.refetch();
+        void readiness.refetch();
+        refreshActivationContract();
+        refreshSupervisionSummary();
+      },
+    });
   const createTestContact = api.apolo.createWhatsAppTestContact.useMutation({
     onSuccess: (contact) => {
       setSmokeTestPhone(contact.phoneE164);
-      setTestContactName("");
-      setTestContactPhone("");
-    },
-  });
-  const enableRealTraffic = api.apolo.enableWhatsAppRealTraffic.useMutation({
-    onSuccess: () => {
-      setRealTrafficConfirmation(false);
-      void whatsappOperations.refetch();
-      void readiness.refetch();
-      refreshActivationContract();
-      refreshSupervisionSummary();
     },
   });
   const revertRealTraffic = api.apolo.revertWhatsAppRealTraffic.useMutation({
     onSuccess: () => {
-      setRealTrafficConfirmation(false);
+      setRevertTrafficConfirmation(false);
       void whatsappOperations.refetch();
       void readiness.refetch();
       void circuitBreaker.refetch();
@@ -360,8 +348,6 @@ export function ApoloOperations() {
 
   const resetClinicOperationState = useCallback(() => {
     setSmokeTestPhone("");
-    setTestContactName("");
-    setTestContactPhone("");
     setReactivationEvidenceNow(new Date());
     setAmountUsd("");
     setReference("");
@@ -380,9 +366,8 @@ export function ApoloOperations() {
     setQrDeviceAvailable(false);
     setCauseFixed(false);
     setManualConfirmation(false);
-    setRealTrafficConfirmation(false);
+    setRevertTrafficConfirmation(false);
     setOffboardingConfirmation(false);
-    setGateEvidence({});
     setOpenCause("provider-error");
     setOpenReason("");
     setPaymentAttempt(null);
@@ -398,14 +383,12 @@ export function ApoloOperations() {
     setSubscription.reset();
     openSupport.reset();
     readSupport.reset();
-    recordTrafficGate.reset();
-    runSyntheticSmoke.reset();
+    startInboundRoundtrip.reset();
     createTestContact.reset();
-    enableRealTraffic.reset();
+    runApprovedTemplateSmoke.reset();
     revertRealTraffic.reset();
     offboardConnection.reset();
   }, [
-    enableRealTraffic,
     manageSetupLink,
     offboardConnection,
     openCircuitBreaker,
@@ -414,11 +397,11 @@ export function ApoloOperations() {
     readSupport,
     sendSetupLink,
     recordPayment,
-    recordTrafficGate,
+    runApprovedTemplateSmoke,
     reactivateCircuitBreaker,
     retryReadiness,
     revertRealTraffic,
-    runSyntheticSmoke,
+    startInboundRoundtrip,
     createTestContact,
     setSubscription,
   ]);
@@ -619,22 +602,62 @@ export function ApoloOperations() {
                 whatsappOperations.isLoading
               }
               isSending={sendSetupLink.isPending}
+              isKapso={operationConnection?.provider === "kapso"}
+              isRunningSmoke={startInboundRoundtrip.isPending}
+              isCreatingTestContact={createTestContact.isPending}
+              isSendingTemplateTest={runApprovedTemplateSmoke.isPending}
               latestSmoke={latestSmoke}
               numberHealth={readiness.data?.numberHealth ?? "unknown"}
               numberHealthCheckedAt={
                 readiness.data?.numberHealthCheckedAt ?? null
               }
-              onContinueWhatsApp={() => {
-                updateSupervisionContext({ tab: "whatsapp" });
-              }}
+              approvedTemplateKind={approvedTemplateKind}
+              onCreateTestContact={() =>
+                createTestContact.mutate({
+                  clinicId,
+                  name: "Contacto de prueba",
+                  phoneE164: smokeTestPhone.trim(),
+                })
+              }
               onRegister={() => router.push(registrationHref)}
+              onRunSmoke={() =>
+                startInboundRoundtrip.mutate({
+                  clinicId,
+                  testContactPhoneE164: smokeTestPhone.trim(),
+                })
+              }
+              onRunTemplateTest={() => {
+                if (approvedTemplateKind === null) return;
+                runApprovedTemplateSmoke.mutate({
+                  clinicId,
+                  templateKind: approvedTemplateKind,
+                });
+              }}
               onSendSetupLink={() =>
                 sendSetupLink.mutate({ action: "send", clinicId })
               }
+              onSmokeTestPhoneChange={setSmokeTestPhone}
               registration={registration.data ?? null}
               sendError={sendSetupLink.error?.message ?? null}
               sendMessage={sendSetupLink.data?.message ?? null}
               sendStatus={sendSetupLink.data?.deliveryStatus ?? null}
+              templateTestError={
+                runApprovedTemplateSmoke.error?.message ?? null
+              }
+              templateTestMessage={
+                runApprovedTemplateSmoke.data?.message ?? null
+              }
+              smokeTestPhone={smokeTestPhone}
+              smokeError={startInboundRoundtrip.error?.message ?? null}
+              createContactError={createTestContact.error?.message ?? null}
+              createdTestContactMessage={
+                createTestContact.data?.phoneE164 === smokeTestPhone
+                  ? `Contacto ${createTestContact.data.name} creado (${createTestContact.data.maskedPhone}).`
+                  : null
+              }
+              realTrafficStatus={
+                whatsappOperations.data?.trafficStatus ?? "blocked"
+              }
               onboarding={onboarding.data ?? null}
             />
             <ClinicSupervisionSummary
@@ -690,22 +713,56 @@ export function ApoloOperations() {
             whatsappOperations.isLoading
           }
           isSending={sendSetupLink.isPending}
+          isKapso={operationConnection?.provider === "kapso"}
+          isRunningSmoke={startInboundRoundtrip.isPending}
+          isCreatingTestContact={createTestContact.isPending}
+          isSendingTemplateTest={runApprovedTemplateSmoke.isPending}
           latestSmoke={latestSmoke}
           numberHealth={readiness.data?.numberHealth ?? "unknown"}
           numberHealthCheckedAt={readiness.data?.numberHealthCheckedAt ?? null}
-          onContinueWhatsApp={() => {
-            const preflight = document.getElementById("whatsapp-onboarding");
-            if (preflight instanceof HTMLDetailsElement) preflight.open = true;
-            preflight?.scrollIntoView({ behavior: "smooth", block: "start" });
-          }}
+          approvedTemplateKind={approvedTemplateKind}
+          onCreateTestContact={() =>
+            createTestContact.mutate({
+              clinicId,
+              name: "Contacto de prueba",
+              phoneE164: smokeTestPhone.trim(),
+            })
+          }
           onRegister={() => router.push(registrationHref)}
+          onRunSmoke={() =>
+            startInboundRoundtrip.mutate({
+              clinicId,
+              testContactPhoneE164: smokeTestPhone.trim(),
+            })
+          }
+          onRunTemplateTest={() => {
+            if (approvedTemplateKind === null) return;
+            runApprovedTemplateSmoke.mutate({
+              clinicId,
+              templateKind: approvedTemplateKind,
+            });
+          }}
           onSendSetupLink={() =>
             sendSetupLink.mutate({ action: "send", clinicId })
           }
+          onSmokeTestPhoneChange={setSmokeTestPhone}
           registration={registration.data ?? null}
           sendError={sendSetupLink.error?.message ?? null}
           sendMessage={sendSetupLink.data?.message ?? null}
           sendStatus={sendSetupLink.data?.deliveryStatus ?? null}
+          templateTestError={runApprovedTemplateSmoke.error?.message ?? null}
+          templateTestMessage={runApprovedTemplateSmoke.data?.message ?? null}
+          smokeTestPhone={smokeTestPhone}
+          smokeError={startInboundRoundtrip.error?.message ?? null}
+          createContactError={createTestContact.error?.message ?? null}
+          createdTestContactMessage={
+            createTestContact.data?.phoneE164 === smokeTestPhone
+              ? `Contacto ${createTestContact.data.name} creado (${createTestContact.data.maskedPhone}).`
+              : null
+          }
+          realTrafficStatus={
+            whatsappOperations.data?.trafficStatus ?? "blocked"
+          }
           onboarding={onboarding.data ?? null}
         />
         {circuitBreaker.data?.status === "open" ? (
@@ -1286,10 +1343,10 @@ export function ApoloOperations() {
                   Readiness técnico de WhatsApp
                 </h2>
                 <p className="text-foreground mt-1 text-sm">
-                  Solo una Conexión con número, webhooks, plantillas, billing y
-                  E2E correctos pasa a <code>ready</code>. Estos gates no
-                  autorizan datos reales ni sustituyen Consentimiento,
-                  privacidad o el gate legal.
+                  La preparación técnica verifica número, webhooks, plantillas y
+                  billing. El E2E de webhook queda como diagnóstico; la
+                  activación se comprueba con las dos pruebas reales del
+                  recorrido.
                 </p>
               </div>
               {!clinicId ? (
@@ -1664,9 +1721,6 @@ export function ApoloOperations() {
                       </li>
                     ))}
                   </ul>
-                  <p className="border-warning-border bg-warning-muted text-warning-foreground rounded-lg border p-3 text-sm">
-                    {readiness.data.readiness.legalAuthorization.message}
-                  </p>
                   {retryReadiness.error ? (
                     <p className="text-warning-foreground text-sm" role="alert">
                       {retryReadiness.error.message}
@@ -1692,13 +1746,13 @@ export function ApoloOperations() {
               className="text-xl font-semibold"
               id="whatsapp-final-operations-title"
             >
-              Prueba y habilitación de tráfico
+              Estado de tráfico y diagnóstico
             </h2>
             <p className="text-foreground mt-1 text-sm">
-              El smoke de Kapso usa un Contacto existente sin vínculo a
-              Paciente. El roundtrip vence en cinco minutos, registra pasos por
-              Clínica y no habilita Pacientes reales. La autorización de tráfico
-              real permanece sujeta a sus gates y confirmación explícita.
+              El recorrido de arriba prueba el roundtrip y la entrega de una
+              plantilla aprobada. Esa entrega habilita el tráfico real
+              automáticamente; aquí puedes revisar el estado operativo y el
+              diagnóstico técnico.
             </p>
           </div>
           {!clinicId ? (
@@ -1723,11 +1777,14 @@ export function ApoloOperations() {
                   )}
                 />
                 <DiagnosticValue
-                  label="Smoke sintético"
+                  label="Última prueba de transporte"
                   value={
                     whatsappOperations.data.latestSmoke?.status === "passed"
-                      ? "Aprobado"
-                      : "Pendiente o fallido"
+                      ? "Completa"
+                      : whatsappOperations.data.latestSmoke?.status ===
+                          "pending"
+                        ? "Pendiente"
+                        : "Pendiente o fallida"
                   }
                 />
                 <DiagnosticValue
@@ -1751,153 +1808,11 @@ export function ApoloOperations() {
               <details
                 className="border-border bg-card rounded-lg border p-4"
                 id="whatsapp-smoke"
-                open={readinessReady && !smokePassed}
               >
                 <summary className="cursor-pointer font-semibold">
-                  Prueba controlada de WhatsApp
+                  Detalles de transporte
                 </summary>
                 <div className="bg-muted mt-3 rounded-lg p-4">
-                  <div className="border-border bg-card mb-4 rounded-lg border p-4">
-                    <h3 className="font-semibold">Crear contacto de prueba</h3>
-                    <p className="text-foreground mt-1 text-sm">
-                      Se agregará a la Clínica seleccionada sin vincularlo a un
-                      Paciente. Crear el contacto no ejecuta el smoke ni envía
-                      mensajes; usa un número que controles o tengas autorizado
-                      para pruebas.
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-end gap-3">
-                      <label className="grid min-w-56 gap-1 text-sm">
-                        <span>Nombre</span>
-                        <input
-                          autoComplete="off"
-                          className="border-border bg-background text-foreground rounded border px-3 py-2"
-                          maxLength={120}
-                          onChange={(event) =>
-                            setTestContactName(event.target.value)
-                          }
-                          value={testContactName}
-                        />
-                      </label>
-                      <label className="grid min-w-56 gap-1 text-sm">
-                        <span>Teléfono E.164</span>
-                        <input
-                          autoComplete="off"
-                          className="border-border bg-background text-foreground rounded border px-3 py-2"
-                          inputMode="tel"
-                          onChange={(event) =>
-                            setTestContactPhone(event.target.value)
-                          }
-                          placeholder="+50370000000"
-                          type="tel"
-                          value={testContactPhone}
-                        />
-                      </label>
-                      <button
-                        className="bg-primary text-primary-foreground rounded px-3 py-2 font-medium disabled:opacity-50"
-                        disabled={
-                          createTestContact.isPending ||
-                          testContactName.trim().length === 0 ||
-                          !isValidE164PhoneNumber(testContactPhone.trim())
-                        }
-                        onClick={() =>
-                          createTestContact.mutate({
-                            clinicId,
-                            name: testContactName.trim(),
-                            phoneE164: testContactPhone.trim(),
-                          })
-                        }
-                        type="button"
-                      >
-                        {createTestContact.isPending
-                          ? "Creando…"
-                          : "Crear contacto"}
-                      </button>
-                    </div>
-                    {createTestContact.error ? (
-                      <p
-                        className="text-warning-foreground mt-2 text-sm"
-                        role="alert"
-                      >
-                        {createTestContact.error.message}
-                      </p>
-                    ) : null}
-                    {createTestContact.data ? (
-                      <p className="text-primary mt-2 text-sm" role="status">
-                        Contacto {createTestContact.data.name} creado (
-                        {createTestContact.data.maskedPhone}). Si la conexión
-                        usa Kapso, su teléfono quedó seleccionado para el smoke;
-                        ejecútelo por separado si corresponde.
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h3 className="font-semibold">
-                        {whatsappOperations.data.connection?.provider ===
-                        "kapso"
-                          ? "Roundtrip real de WhatsApp"
-                          : "Smoke sintético de WhatsApp"}
-                      </h3>
-                      <p className="text-foreground mt-1 text-sm">
-                        {whatsappOperations.data.connection?.provider ===
-                        "kapso"
-                          ? "Un Contacto controlado inicia el roundtrip. El preflight se registra aparte y la prueba queda pendiente hasta confirmar la entrega de la respuesta."
-                          : "Ejecuta los contratos de Praxia con el proveedor simulado; no constituye evidencia de transporte real con Kapso."}
-                      </p>
-                    </div>
-                    {whatsappOperations.data.connection?.provider ===
-                    "kapso" ? (
-                      <label className="grid min-w-64 gap-1 text-sm">
-                        <span>Teléfono E.164 del Contacto de prueba</span>
-                        <input
-                          autoComplete="off"
-                          className="border-border bg-background text-foreground rounded border px-3 py-2"
-                          inputMode="tel"
-                          onChange={(event) =>
-                            setSmokeTestPhone(event.target.value)
-                          }
-                          placeholder="+50370000000"
-                          type="tel"
-                          value={smokeTestPhone}
-                        />
-                        <span className="text-muted-foreground text-xs">
-                          Debe existir en esta Clínica y no estar vinculado a un
-                          Paciente.
-                        </span>
-                      </label>
-                    ) : null}
-                    <button
-                      className="bg-primary text-primary-foreground rounded px-3 py-2 font-medium disabled:opacity-50"
-                      disabled={
-                        runSyntheticSmoke.isPending ||
-                        whatsappOperations.data.latestSmoke?.status ===
-                          "pending" ||
-                        (whatsappOperations.data.connection?.provider ===
-                          "kapso" &&
-                          !isValidE164PhoneNumber(smokeTestPhone.trim()))
-                      }
-                      onClick={() =>
-                        runSyntheticSmoke.mutate({
-                          clinicId,
-                          ...(whatsappOperations.data.connection?.provider ===
-                          "kapso"
-                            ? { testContactPhoneE164: smokeTestPhone.trim() }
-                            : {}),
-                        })
-                      }
-                      type="button"
-                    >
-                      {runSyntheticSmoke.isPending
-                        ? "Ejecutando…"
-                        : whatsappOperations.data.latestSmoke?.status ===
-                            "pending"
-                          ? "Smoke en curso"
-                          : whatsappOperations.data.connection?.provider ===
-                              "kapso"
-                            ? "Ejecutar smoke de transporte"
-                            : "Ejecutar smoke sintético"}
-                    </button>
-                  </div>
                   {whatsappOperations.data.latestSmoke ? (
                     <>
                       <p className="mt-3 text-sm">
@@ -2028,136 +1943,66 @@ export function ApoloOperations() {
                     </>
                   ) : (
                     <p className="text-warning-foreground mt-3 text-sm">
-                      Todavía no existe evidencia de smoke sintético.
+                      Todavía no existe evidencia de una prueba de transporte.
                     </p>
                   )}
-                  {runSyntheticSmoke.error ? (
+                  {startInboundRoundtrip.error ? (
                     <p
                       className="text-warning-foreground mt-2 text-sm"
                       role="alert"
                     >
-                      {runSyntheticSmoke.error.message}
+                      {startInboundRoundtrip.error.message}
                     </p>
                   ) : null}
                 </div>
               </details>
               <details
                 className="border-warning-border bg-warning-muted space-y-3 rounded-lg border p-4"
-                open={smokePassed && !trafficEnabled}
+                open={
+                  (latestSmoke?.status === "passed" && !trafficEnabled) ||
+                  latestSmoke?.status === "pending"
+                }
                 id="whatsapp-real-traffic"
               >
                 <summary className="cursor-pointer font-semibold">
-                  Autorización y habilitación de tráfico real
+                  Estado del tráfico real
                 </summary>
-                <div id="whatsapp-traffic-gates">
-                  <h3 className="font-semibold">Evidencia de los gates</h3>
-                  <p className="text-foreground mt-1 text-sm">
-                    Registre una referencia operativa breve por gate. No
-                    introduzca PII, tokens, QR ni credenciales.
-                  </p>
-                  <ul className="mt-3 space-y-3">
-                    {whatsappRealTrafficGateCodes.map((code) => {
-                      const gate = whatsappOperations.data.gates[code];
-                      const evidence =
-                        gateEvidence[code] ?? gate?.evidenceReference ?? "";
-                      return (
-                        <li
-                          className="flex flex-col gap-2 sm:flex-row sm:items-center"
-                          key={code}
-                        >
-                          <label className="flex-1 text-sm">
-                            <span className="text-foreground block">
-                              {whatsappRealTrafficGateLabel(code)}
-                            </span>
-                            <input
-                              className="border-border bg-background mt-1 w-full rounded border p-2"
-                              onChange={(event) =>
-                                setGateEvidence((current) => ({
-                                  ...current,
-                                  [code]: event.target.value,
-                                }))
-                              }
-                              placeholder="Referencia de evidencia"
-                              value={evidence}
-                            />
-                          </label>
-                          <button
-                            className="border-primary/30 text-primary rounded border px-3 py-2 text-sm disabled:opacity-50"
-                            disabled={recordTrafficGate.isPending}
-                            onClick={() =>
-                              recordTrafficGate.mutate({
-                                clinicId,
-                                code,
-                                evidenceReference: evidence.trim() || null,
-                                ready: evidence.trim() !== "",
-                              })
-                            }
-                            type="button"
-                          >
-                            {gate?.ready ? "Actualizar" : "Registrar"}
-                          </button>
+                <p className="text-foreground text-sm" role="status">
+                  {trafficEnabled
+                    ? "Tráfico real habilitado automáticamente tras confirmar la entrega de la plantilla aprobada."
+                    : whatsappOperations.data.trafficStatus === "offboarded"
+                      ? "La Conexión de WhatsApp fue retirada."
+                      : "La entrega de una plantilla aprobada al Contacto de prueba habilitará el tráfico real automáticamente."}
+                </p>
+                {whatsappOperations.data.trafficEvaluation.blockers.length >
+                0 ? (
+                  <ul className="text-foreground list-disc space-y-1 pl-5 text-sm">
+                    {whatsappOperations.data.trafficEvaluation.blockers.map(
+                      (blocker) => (
+                        <li key={blocker.code + "-" + blocker.message}>
+                          {blocker.message}
                         </li>
-                      );
-                    })}
-                  </ul>
-                  {recordTrafficGate.error ? (
-                    <p
-                      className="text-warning-foreground mt-2 text-sm"
-                      role="alert"
-                    >
-                      {recordTrafficGate.error.message}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="border-warning-border bg-warning-muted rounded-lg border p-4">
-                  <h3 className="font-semibold">Habilitación explícita</h3>
-                  <ul className="text-foreground mt-2 list-disc space-y-1 pl-5 text-sm">
-                    {whatsappOperations.data.trafficEvaluation.blockers
-                      .length === 0 ? (
-                      <li>Todos los gates necesarios están presentes.</li>
-                    ) : (
-                      whatsappOperations.data.trafficEvaluation.blockers.map(
-                        (blocker: WhatsAppRealTrafficBlocker) => (
-                          <li key={blocker.code + "-" + blocker.message}>
-                            {blocker.message}
-                          </li>
-                        ),
-                      )
+                      ),
                     )}
                   </ul>
-                  <label className="mt-3 flex items-center gap-2 text-sm">
-                    <input
-                      checked={realTrafficConfirmation}
-                      onChange={(event) =>
-                        setRealTrafficConfirmation(event.target.checked)
-                      }
-                      type="checkbox"
-                    />
-                    Confirmo que la Clínica está autorizada para tráfico real.
-                  </label>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                ) : null}
+                {trafficEnabled ? (
+                  <div className="border-destructive/30 bg-destructive/10 rounded-lg border p-4">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        checked={revertTrafficConfirmation}
+                        onChange={(event) =>
+                          setRevertTrafficConfirmation(event.target.checked)
+                        }
+                        type="checkbox"
+                      />
+                      Confirmo revertir el tráfico real y abrir el circuit
+                      breaker.
+                    </label>
                     <button
-                      className="bg-warning text-primary-foreground rounded px-3 py-2 font-medium disabled:opacity-50"
+                      className="border-destructive/30 text-destructive mt-3 rounded border px-3 py-2 disabled:opacity-50"
                       disabled={
-                        !whatsappOperations.data.trafficEvaluation.allowed ||
-                        !realTrafficConfirmation ||
-                        enableRealTraffic.isPending
-                      }
-                      onClick={() =>
-                        enableRealTraffic.mutate({
-                          clinicId,
-                          manualConfirmation: true,
-                        })
-                      }
-                      type="button"
-                    >
-                      Habilitar tráfico real
-                    </button>
-                    <button
-                      className="border-destructive/30 text-destructive rounded border px-3 py-2 disabled:opacity-50"
-                      disabled={
-                        whatsappOperations.data.trafficStatus !== "enabled" ||
-                        !realTrafficConfirmation ||
+                        !revertTrafficConfirmation ||
                         revertRealTraffic.isPending
                       }
                       onClick={() =>
@@ -2172,18 +2017,12 @@ export function ApoloOperations() {
                       Revertir y abrir circuit breaker
                     </button>
                   </div>
-                  {enableRealTraffic.error || revertRealTraffic.error ? (
-                    <p
-                      className="text-warning-foreground mt-2 text-sm"
-                      role="alert"
-                    >
-                      {
-                        (enableRealTraffic.error ?? revertRealTraffic.error)
-                          ?.message
-                      }
-                    </p>
-                  ) : null}
-                </div>
+                ) : null}
+                {revertRealTraffic.error ? (
+                  <p className="text-warning-foreground text-sm" role="alert">
+                    {revertRealTraffic.error.message}
+                  </p>
+                ) : null}
               </details>
               <details className="border-destructive/30 bg-destructive/10 rounded-xl border p-4">
                 <summary className="text-destructive cursor-pointer font-semibold">
@@ -2920,7 +2759,6 @@ function SetupLinkOperations({
   onManage: (action: "revoke", reason?: string) => void;
   onSend: (action: "send" | "regenerate", reason?: string) => void;
   snapshot: {
-    preflight: { status: string } | null;
     setupLink: WhatsAppSetupLink | null;
     setupLinkProviderError: string | null;
     setupLinkProviderStatus: string | null;
@@ -2938,7 +2776,6 @@ function SetupLinkOperations({
   const [actionReason, setActionReason] = useState("");
   const setupLink = snapshot.setupLink;
   const status = setupLink === null ? null : whatsappSetupLinkStatus(setupLink);
-  const preflightPassed = snapshot.preflight?.status === "passed";
 
   return (
     <section
@@ -3028,7 +2865,7 @@ function SetupLinkOperations({
             </a>
             <button
               className="border-warning-border rounded border px-3 py-2 disabled:opacity-50"
-              disabled={!preflightPassed || isPending}
+              disabled={isPending}
               onClick={() => setPendingAction("revoke")}
               type="button"
             >
@@ -3038,9 +2875,7 @@ function SetupLinkOperations({
         ) : null}
         <button
           className="bg-primary text-primary-foreground rounded px-3 py-2 font-medium disabled:opacity-50"
-          disabled={
-            !clinicId || !preflightPassed || isPending || status === "used"
-          }
+          disabled={!clinicId || isPending || status === "used"}
           onClick={() => onSend("send")}
           type="button"
         >
@@ -3179,7 +3014,7 @@ function apoloReadinessGateLabel(
 ) {
   return {
     billing: "Billing y crédito",
-    e2e: "Prueba extremo a extremo",
+    e2e: "Diagnóstico E2E (opcional)",
     number: "Número y WABA",
     templates: "Plantillas críticas",
     webhooks: "Webhooks",

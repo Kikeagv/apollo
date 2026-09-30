@@ -134,6 +134,8 @@ export async function runPraxiaWhatsAppSyntheticSmoke(input: {
   record("timeout", timeoutRetry > SMOKE_NOW);
 
   await runConsentSmoke(input, record, inbound);
+  // Mantiene estable el código persistido en runs históricos; el escenario
+  // ahora verifica el permiso del Contacto, no un permiso por Paciente.
   record("patient-consent-inbound", await runContactConsentInboundSmoke(input));
 
   const legalEvaluation = evaluateWhatsAppRealTraffic({
@@ -145,13 +147,19 @@ export async function runPraxiaWhatsAppSyntheticSmoke(input: {
       realPatientsEnabled: false,
       status: "passed",
       syntheticContact: true,
+      templateDeliveryVerified: false,
     },
     technicalReadiness: "ready",
     trafficStatus: "blocked",
   });
+  // Conserva la clave del smoke histórico; el bloqueo actual de activación es
+  // la falta de entrega de plantilla, mientras el consentimiento se valida
+  // por Contacto en cada mensaje.
   record(
     "legal-block",
-    legalEvaluation.blockers.some((blocker) => blocker.code === "consent"),
+    legalEvaluation.blockers.some(
+      (blocker) => blocker.code === "template-delivery",
+    ),
   );
 
   // Estas comprobaciones ejercitan el contrato de transporte dentro de la

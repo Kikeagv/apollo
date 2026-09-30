@@ -18,13 +18,12 @@ import { sendWhatsAppSetupLinkToOwner } from "~/server/application/send-whatsapp
 import { createSubscriptionSupport } from "~/server/application/subscription-support";
 import {
   createWhatsAppTestContact,
-  enableWhatsAppRealTraffic,
   getWhatsAppOperations,
   offboardWhatsAppConnection,
-  recordWhatsAppTrafficGate,
   revertWhatsAppRealTraffic,
-  runWhatsAppSyntheticSmoke,
+  startWhatsAppInboundRoundtrip,
 } from "~/server/application/whatsapp-operations";
+import { runWhatsAppApprovedTemplateSmoke } from "~/server/application/whatsapp-template-smoke";
 import {
   getWhatsAppActivationContract,
   recordWhatsAppActivationEvidence,
@@ -61,6 +60,8 @@ import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store"
 import { drizzleWhatsAppReadinessStore } from "~/server/db/whatsapp-readiness-store";
 import { drizzleWhatsAppCircuitBreakerStore } from "~/server/db/whatsapp-circuit-breaker-store";
 import { drizzleWhatsAppOperationsStore } from "~/server/db/whatsapp-operations-store";
+import { drizzleWhatsAppTemplateSmokeStore } from "~/server/db/whatsapp-smoke-template-store";
+import { drizzleWhatsAppBillingCapacityStore } from "~/server/db/whatsapp-billing-capacity-store";
 import { drizzleWhatsAppActivationEvidenceStore } from "~/server/db/whatsapp-activation-evidence-store";
 import { drizzleSupervisionDashboardStore } from "~/server/db/supervision-dashboard-store";
 import {
@@ -72,13 +73,16 @@ import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboardin
 import { createSimulatedKapsoOnboardingProvider } from "~/server/whatsapp/simulated-kapso-onboarding";
 import { createKapsoWebhookOffboardingProvider } from "~/server/whatsapp/kapso-provisioning";
 import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
+import { createKapsoWhatsAppSenders } from "~/server/whatsapp/kapso-whatsapp";
 import { createSimulatedWhatsAppSyntheticSmokeRunner } from "~/server/whatsapp/simulated-whatsapp-smoke";
 import {
   isValidE164PhoneNumber,
   whatsappOnboardingModes,
 } from "~/domain/whatsapp-preflight";
-import { whatsappRealTrafficGateCodes } from "~/domain/whatsapp-traffic";
-import { isWhatsAppNumberMessagingAvailable } from "~/domain/whatsapp-readiness";
+import {
+  isWhatsAppNumberMessagingAvailable,
+  whatsappCriticalTemplateKinds,
+} from "~/domain/whatsapp-readiness";
 import {
   whatsappActivationCriterionCodes,
   whatsappActivationEvidenceSources,
@@ -96,6 +100,10 @@ const kapsoReadinessProvider = createKapsoReadinessProvider({
 });
 const kapsoWebhookOffboardingProvider = createKapsoWebhookOffboardingProvider({
   apiKey: env.KAPSO_API_KEY,
+});
+const kapsoTemplateSmokeSender = createKapsoWhatsAppSenders({
+  apiKey: env.KAPSO_API_KEY,
+  reserveCapacity: drizzleWhatsAppBillingCapacityStore,
 });
 
 function sendClinicOwnerInvitation(
@@ -372,27 +380,7 @@ export const apoloRouter = {
       ),
     ),
 
-  recordWhatsAppTrafficGate: superadminProcedure
-    .input(
-      z.object({
-        clinicId: z.string().uuid(),
-        code: z.enum(whatsappRealTrafficGateCodes),
-        evidenceReference: z.string().trim().max(160).nullable().optional(),
-        ready: z.boolean(),
-      }),
-    )
-    .mutation(({ ctx, input }) =>
-      recordWhatsAppTrafficGate(
-        {
-          ...input,
-          actorIdentityId: ctx.session.user.id,
-          evidenceReference: input.evidenceReference ?? null,
-        },
-        drizzleWhatsAppOperationsStore,
-      ),
-    ),
-
-  runWhatsAppSyntheticSmoke: superadminProcedure
+  startWhatsAppInboundRoundtrip: superadminProcedure
     .input(
       z.object({
         clinicId: z.string().uuid(),
@@ -405,7 +393,7 @@ export const apoloRouter = {
     )
     .mutation(async ({ ctx, input }) => {
       const actorIdentityId = ctx.session.user.id;
-      return runWhatsAppSyntheticSmoke(
+      return startWhatsAppInboundRoundtrip(
         {
           actorIdentityId,
           clinicId: input.clinicId,
@@ -434,6 +422,26 @@ export const apoloRouter = {
       );
     }),
 
+  runWhatsAppApprovedTemplateSmoke: superadminProcedure
+    .input(
+      z.object({
+        clinicId: z.string().uuid(),
+        templateKind: z.enum(whatsappCriticalTemplateKinds),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      if (env.WHATSAPP_DELIVERY !== "kapso") {
+        throw new Error("La prueba outbound de plantilla requiere Kapso");
+      }
+      return runWhatsAppApprovedTemplateSmoke(
+        { ...input, actorIdentityId: ctx.session.user.id },
+        {
+          sender: kapsoTemplateSmokeSender,
+          store: drizzleWhatsAppTemplateSmokeStore,
+        },
+      );
+    }),
+
   createWhatsAppTestContact: superadminProcedure
     .input(
       z.object({
@@ -446,20 +454,6 @@ export const apoloRouter = {
       createWhatsAppTestContact(
         { ...input, actorIdentityId: ctx.session.user.id },
         drizzleWhatsAppOperationsStore,
-      ),
-    ),
-
-  enableWhatsAppRealTraffic: superadminProcedure
-    .input(
-      z.object({
-        clinicId: z.string().uuid(),
-        manualConfirmation: z.literal(true),
-      }),
-    )
-    .mutation(({ ctx, input }) =>
-      enableWhatsAppRealTraffic(
-        { ...input, actorIdentityId: ctx.session.user.id },
-        { store: drizzleWhatsAppOperationsStore },
       ),
     ),
 

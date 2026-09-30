@@ -317,19 +317,9 @@ export type WhatsAppTechnicalReadinessStatus =
 
 export type WhatsAppReadinessResult = {
   gates: WhatsAppReadinessGate[];
-  legalAuthorization: {
-    allowed: false;
-    message: string;
-  };
   nextAction: string | null;
   status: WhatsAppTechnicalReadinessStatus;
   statusReason: string;
-};
-
-const legalAuthorization = {
-  allowed: false as const,
-  message:
-    "El readiness técnico no autoriza datos reales; consentimiento y gates legales siguen siendo obligatorios.",
 };
 
 export function evaluateWhatsAppReadiness(
@@ -342,18 +332,22 @@ export function evaluateWhatsAppReadiness(
     evaluateBilling(input),
     evaluateE2E(input),
   ];
-  const firstIncomplete = gates.find((gate) => gate.status !== "ready");
-  const status = gates.some((gate) => gate.status === "blocked")
+  // El E2E/preflight sigue siendo diagnóstico. El transporte se acredita con
+  // los roundtrips reales controlados del recorrido de operaciones.
+  const activationGates = gates.filter((gate) => gate.code !== "e2e");
+  const firstIncomplete = activationGates.find(
+    (gate) => gate.status !== "ready",
+  );
+  const status = activationGates.some((gate) => gate.status === "blocked")
     ? "blocked"
-    : gates.some((gate) => gate.status === "failed")
+    : activationGates.some((gate) => gate.status === "failed")
       ? "degraded"
-      : gates.every((gate) => gate.status === "ready")
+      : activationGates.every((gate) => gate.status === "ready")
         ? "ready"
         : "pending";
 
   return {
     gates,
-    legalAuthorization,
     nextAction: firstIncomplete?.action ?? null,
     status,
     statusReason:

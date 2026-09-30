@@ -24,7 +24,7 @@ const password = "Contraseña-segura-E2E";
 const otp = "246810";
 test.setTimeout(60_000);
 
-test("Apolo registra una Clínica, envía el enlace al propietario y muestra evidencia Praxia simulada", async ({
+test("Apolo registra una Clínica y envía el enlace sin ejecutar el preflight", async ({
   page,
 }) => {
   const fixture = await createFixture();
@@ -86,23 +86,6 @@ test("Apolo registra una Clínica, envía el enlace al propietario y muestra evi
     await expect(
       journey.getByText("Registrar la Clínica y asociar a su propietario"),
     ).toBeVisible();
-    await page.locator("#whatsapp-owner-name").fill("Dra. Elena APO-113");
-    await page.getByLabel("Número de WhatsApp propio").fill("+50370000000");
-    await page
-      .getByLabel("Médico propietario confirmado para este flujo")
-      .check();
-    await page.getByLabel("El número es propio de la Clínica").check();
-    await page.getByLabel("Autoridad Meta").selectOption("confirmed");
-    await page
-      .getByLabel("Hay un dispositivo para mostrar y completar el QR")
-      .check();
-    await page
-      .getByRole("button", { name: "Confirmar customer y ejecutar preflight" })
-      .click();
-    await expect(
-      page.getByText("Sin bloqueos conocidos", { exact: true }),
-    ).toBeVisible();
-
     await journey
       .getByRole("button", { name: "Enviar enlace al propietario" })
       .click();
@@ -112,21 +95,28 @@ test("Apolo registra una Clínica, envía el enlace al propietario y muestra evi
       ),
     ).toBeVisible();
     await expect(
-      journey.getByText("Evidencia de Praxia, no de Kapso real."),
-    ).toBeVisible();
-    await expect(
-      journey.getByText("Proveedor simulado", { exact: false }),
-    ).toBeVisible();
-    await expect(
       journey.getByText(
-        "Recepción y respuesta: pendiente · sin evidencia de roundtrip.",
+        "Pendiente de la prueba real con un Contacto controlado.",
+        { exact: true },
       ),
     ).toBeVisible();
     await expect(
+      journey.getByText("Roundtrip entrante: Pendiente", { exact: true }),
+    ).toBeVisible();
+    await expect(
       journey.getByText(
-        "Inicio con plantilla y entrega: pendiente · sin evidencia registrada.",
+        "Aún no hay una ejecución real con un Contacto controlado. Un preflight no cuenta como roundtrip.",
+        { exact: true },
       ),
     ).toBeVisible();
+    await expect(
+      journey.getByText("Inicio con plantilla y entrega: Pendiente.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      journey.getByText("Evidencia aún no registrada.", { exact: true }),
+    ).toHaveCount(2);
     await expect(
       journey.getByText(
         "La Clínica no se marca lista para tráfico real hasta completar la prueba de plantilla.",

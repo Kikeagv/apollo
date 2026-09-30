@@ -174,25 +174,26 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
     expect(provider.listSetupLinks).not.toHaveBeenCalled();
   });
 
-  it("rechaza una configuración persistida cuyo preflight cambió de número", async () => {
+  it("reconecta al número productivo persistido sin depender del preflight", async () => {
     const store = storeFixture({
       connection: kapsoConnectionFixture(),
       preflightPhoneNumber: "+50370000001",
     });
     const provider = providerFixture();
 
-    await expect(
-      manageKapsoWhatsAppSetupLink(
-        {
-          action: "generate",
-          actorIdentityId: "superadmin-1",
-          actorType: "superadmin",
-          clinicId: "clinic-1",
-        },
-        { appUrl: "https://app.praxia.test", now: () => now, provider, store },
-      ),
-    ).rejects.toThrow("mismo número");
-    expect(provider.listSetupLinks).not.toHaveBeenCalled();
+    await manageKapsoWhatsAppSetupLink(
+      {
+        action: "generate",
+        actorIdentityId: "superadmin-1",
+        actorType: "superadmin",
+        clinicId: "clinic-1",
+      },
+      { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+    );
+
+    expect(provider.createSetupLink).toHaveBeenCalledWith(
+      expect.objectContaining({ reconnectPhoneNumber: "+50370000000" }),
+    );
   });
 
   it("reutiliza el único enlace activo al generar de nuevo sin regenerar", async () => {
@@ -421,22 +422,56 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
     expect(store.saveAccesses).toContain("clinic-owner");
   });
 
-  it("no llama a Kapso si el preflight no está aprobado", async () => {
+  it("genera el enlace aunque el preflight esté bloqueado", async () => {
     const store = storeFixture({ preflightStatus: "blocked" });
     const provider = providerFixture();
 
-    await expect(
-      manageKapsoWhatsAppSetupLink(
-        {
-          action: "generate",
-          actorIdentityId: "superadmin-1",
-          actorType: "superadmin",
-          clinicId: "clinic-1",
-        },
-        { appUrl: "https://app.praxia.test", now: () => now, provider, store },
-      ),
-    ).rejects.toThrow("preflight");
-    expect(provider.listSetupLinks).not.toHaveBeenCalled();
+    const result = await manageKapsoWhatsAppSetupLink(
+      {
+        action: "generate",
+        actorIdentityId: "superadmin-1",
+        actorType: "superadmin",
+        clinicId: "clinic-1",
+      },
+      { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+    );
+
+    expect(result.setupLink?.status).toBe("active");
+    expect(provider.createSetupLink).toHaveBeenCalledTimes(1);
+  });
+
+  it("crea el customer idempotentemente y genera el enlace sin preflight", async () => {
+    const store = storeFixture({ customerId: null, preflight: null });
+    const provider = providerFixture();
+
+    const input = {
+      action: "generate" as const,
+      actorIdentityId: "superadmin-1",
+      actorType: "superadmin" as const,
+      clinicId: "clinic-1",
+    };
+    const dependencies = {
+      appUrl: "https://app.praxia.test",
+      now: () => now,
+      provider,
+      store,
+    };
+    const first = await manageKapsoWhatsAppSetupLink(input, dependencies);
+    const second = await manageKapsoWhatsAppSetupLink(input, dependencies);
+
+    expect(provider.findCustomerByExternalId).toHaveBeenCalledWith(
+      "praxia-clinic:clinic-1",
+    );
+    expect(provider.createCustomer).toHaveBeenCalledTimes(1);
+    expect(first.customerId).toBe("kapso-customer-1");
+    expect(second.customerId).toBe("kapso-customer-1");
+    expect(store.auditEvents).toContainEqual(
+      expect.objectContaining({
+        action: "customer-created",
+        customerId: "kapso-customer-1",
+        result: "succeeded",
+      }),
+    );
   });
 
   it("audita el fallo de Kapso y no expone secretos", async () => {
@@ -554,14 +589,32 @@ function providerFixture(
 } {
   const newLink = kapsoLinkFixture(setupLinkFixture());
   const remoteLinks = options.remoteLinks ?? [];
+  const customers = new Map<
+    string,
+    { externalCustomerId: string; id: string; name: string }
+  >();
   return {
-    createCustomer: vi.fn(),
+    createCustomer: vi.fn(
+      async (
+        input: Parameters<KapsoOnboardingProvider["createCustomer"]>[0],
+      ) => {
+        const customer = {
+          externalCustomerId: input.externalCustomerId,
+          id: "kapso-customer-1",
+          name: input.name,
+        };
+        customers.set(input.externalCustomerId, customer);
+        return customer;
+      },
+    ),
     createSetupLink: vi.fn(async () => {
       if (options.unavailable) throw new KapsoProviderUnavailableError();
       remoteLinks.push(newLink);
       return newLink;
     }),
-    findCustomerByExternalId: vi.fn(),
+    findCustomerByExternalId: vi.fn(async (externalCustomerId: string) =>
+      customers.get(externalCustomerId),
+    ),
     listPhoneNumbers: vi.fn(),
     listSetupLinks: vi.fn(async () => {
       if (options.unavailable) throw new KapsoProviderUnavailableError();
@@ -581,7 +634,9 @@ function providerFixture(
 function storeFixture(
   options: {
     connection?: WhatsAppConnection;
+    customerId?: string | null;
     onboardingMode?: "coexistence" | "dedicated";
+    preflight?: KapsoWhatsAppOnboardingSnapshot["preflight"];
     preflightPhoneNumber?: string;
     preflightStatus?: "blocked" | "passed";
     simulateActiveConflict?: boolean;
@@ -598,26 +653,32 @@ function storeFixture(
     clinicId: "clinic-1",
     clinicName: "Clínica Aurora",
     connection: options.connection ?? null,
-    customerId: "kapso-customer-1",
+    customerId:
+      options.customerId === undefined
+        ? "kapso-customer-1"
+        : options.customerId,
     ownerName: "Dra. Ana Reyes",
-    preflight: {
-      blockers: [],
-      checkedAt: now,
-      onboardingMode: options.onboardingMode,
-      checks: {
-        metaAuthority: "confirmed",
-        numberAssociation: "available",
-        numberConnectionType: "unknown",
-        numberOwnedByClinic: true,
-        ownerConfirmed: true,
-        phoneNumberE164: options.preflightPhoneNumber ?? "+50370000000",
-        qrDeviceAvailable: true,
-        whatsappBusinessApp: "active",
-      },
-      nextAction: "Generar el Enlace de configuración de WhatsApp",
-      reason: null,
-      status: options.preflightStatus ?? "passed",
-    },
+    preflight:
+      options.preflight === undefined
+        ? {
+            blockers: [],
+            checkedAt: now,
+            onboardingMode: options.onboardingMode,
+            checks: {
+              metaAuthority: "confirmed",
+              numberAssociation: "available",
+              numberConnectionType: "unknown",
+              numberOwnedByClinic: true,
+              ownerConfirmed: true,
+              phoneNumberE164: options.preflightPhoneNumber ?? "+50370000000",
+              qrDeviceAvailable: true,
+              whatsappBusinessApp: "active",
+            },
+            nextAction: "Generar el Enlace de configuración de WhatsApp",
+            reason: null,
+            status: options.preflightStatus ?? "passed",
+          }
+        : options.preflight,
     setupLink: options.setupLink ?? null,
     setupLinkHistory: [],
     setupLinkProviderError: null,
@@ -645,6 +706,9 @@ function storeFixture(
         });
       }
       store.auditEvents.push(...input.auditEvents);
+      if (input.customerId !== null) {
+        snapshot = { ...snapshot, customerId: input.customerId };
+      }
       if (input.setupLink !== undefined) {
         if (input.customerId === null) throw new Error("customer required");
         snapshot = {

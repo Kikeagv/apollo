@@ -70,17 +70,32 @@ function renderPanel(
       instanceId: "whatsapp",
       isLoading: false,
       isSending: false,
+      isKapso: true,
+      isRunningSmoke: false,
+      isCreatingTestContact: false,
+      isSendingTemplateTest: false,
       latestSmoke,
       numberHealth: "healthy",
       numberHealthCheckedAt: observedAt,
-      onContinueWhatsApp: () => undefined,
+      approvedTemplateKind: "confirmation",
+      onCreateTestContact: () => undefined,
       onRegister: () => undefined,
+      onRunSmoke: () => undefined,
+      onRunTemplateTest: () => undefined,
       onSendSetupLink: () => undefined,
+      onSmokeTestPhoneChange: () => undefined,
       onboarding: null,
       registration: null,
       sendError: null,
       sendMessage: null,
       sendStatus: null,
+      templateTestError: null,
+      templateTestMessage: null,
+      realTrafficStatus: "blocked",
+      smokeTestPhone: "+50370000000",
+      smokeError: null,
+      createContactError: null,
+      createdTestContactMessage: null,
     }),
   );
 }
@@ -90,6 +105,8 @@ describe("panel del recorrido de Activación de WhatsApp", () => {
     const html = renderPanel(makeSmokeRun(), "generation-115");
 
     expect(html).toContain("Probar recepción y respuesta de la Clínica");
+    expect(html).toContain("Probar conversación con plantilla");
+    expect(html).toContain("Enviar enlace al propietario");
     expect(html).toContain("Completo");
     expect(html).toContain("Recepción del mensaje del Contacto");
     expect(html).toContain("Procesamiento del mensaje entrante");
@@ -99,6 +116,7 @@ describe("panel del recorrido de Activación de WhatsApp", () => {
     expect(html).toContain("falló");
     expect(html).toContain("+••••••0115");
     expect(html).toContain("La Clínica no se marca lista para tráfico real");
+    expect(html).not.toContain("Completa la verificación previa de WhatsApp");
   });
 
   it("no reutiliza evidencia de una generación anterior de la Conexión", () => {

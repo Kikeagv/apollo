@@ -1,9 +1,7 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 
-import { isAdultPatient } from "~/domain/patient";
 import {
   buildWhatsAppConsentPolicy,
-  isWhatsAppGuardianDeclaration,
   isWhatsAppConsentCurrent,
   WHATSAPP_CONSENT_PROVIDER,
 } from "~/domain/whatsapp-consent";
@@ -11,7 +9,6 @@ import type { ClinicTransaction } from "~/server/db/clinic-context";
 import {
   contactPatientLinks,
   clinicTermsContract,
-  patients,
   whatsappContactConsents,
 } from "~/server/db/schema";
 
@@ -85,26 +82,13 @@ export async function readWhatsAppConsentSnapshot(
     consent.acceptedAt <= input.now &&
     consent.provider === WHATSAPP_CONSENT_PROVIDER &&
     isWhatsAppConsentCurrent(consent, policy);
-  let patientRole: "adult-patient" | "tutor" | null = null;
-  let pendingTutorMayReceiveAdministrativeMessages = false;
+  let patientIsLinkedToContact = false;
   if (input.patientId !== undefined && input.patientId !== null) {
     const [link] = await transaction
       .select({
-        birthDate: patients.birthDate,
-        guardianDeclaration: contactPatientLinks.guardianDeclaration,
-        guardianDui: contactPatientLinks.guardianDui,
-        guardianshipVerificationStatus:
-          contactPatientLinks.guardianshipVerificationStatus,
-        relationship: contactPatientLinks.relationship,
+        id: contactPatientLinks.id,
       })
       .from(contactPatientLinks)
-      .innerJoin(
-        patients,
-        and(
-          eq(contactPatientLinks.clinicId, patients.clinicId),
-          eq(contactPatientLinks.patientId, patients.id),
-        ),
-      )
       .where(
         and(
           eq(contactPatientLinks.clinicId, input.clinicId),
@@ -113,32 +97,12 @@ export async function readWhatsAppConsentSnapshot(
         ),
       )
       .limit(1);
-    if (link?.relationship === "tutor") {
-      patientRole =
-        link.guardianshipVerificationStatus === "verified" &&
-        link.guardianDui !== null &&
-        /^\d{8}-\d$/.test(link.guardianDui) &&
-        isWhatsAppGuardianDeclaration(link.guardianDeclaration ?? "")
-          ? "tutor"
-          : null;
-      pendingTutorMayReceiveAdministrativeMessages =
-        consent?.origin === "manual_patient_registration" &&
-        link.guardianshipVerificationStatus === "pending" &&
-        link.guardianDui !== null &&
-        /^\d{8}-\d$/.test(link.guardianDui);
-    } else if (
-      link?.relationship === "contact" &&
-      link.birthDate !== null &&
-      isAdultPatient(link.birthDate, input.now)
-    ) {
-      patientRole = "adult-patient";
-    }
+    patientIsLinkedToContact = link !== undefined;
   }
   const patientAllowed =
     input.patientId === undefined
       ? true
-      : input.patientId !== null &&
-        (patientRole !== null || pendingTutorMayReceiveAdministrativeMessages);
+      : input.patientId !== null && patientIsLinkedToContact;
   return {
     acceptedAt: consent?.acceptedAt ?? null,
     decision: allowed && patientAllowed ? "allowed" : "blocked",

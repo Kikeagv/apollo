@@ -1,7 +1,11 @@
 # Operación de WhatsApp con capacidad limitada
 
-**Estado:** aceptado  
+**Estado:** aceptado; reemplazado en parte por ADR 0044
 **Fecha:** 2026-09-27
+
+ADR 0044 reemplaza el cierre manual y los gates de tráfico citados aquí. La
+interpretación técnica de `LIMITED`, los bloqueos de conexión y la aprobación
+de plantillas siguen vigentes.
 
 ## Contexto
 

@@ -358,7 +358,7 @@ export async function prepareKapsoWhatsAppOnboarding(
   let customer: KapsoCustomer | undefined;
   let customerAction: "customer-confirmed" | "customer-created";
   try {
-    const customerResult = await findOrCreateCustomer(
+    const customerResult = await findOrCreateKapsoCustomer(
       dependencies.provider,
       externalCustomerId,
       current.clinicName,
@@ -532,7 +532,7 @@ function normalizeOwnerName(name: string) {
   return name.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
-async function findOrCreateCustomer(
+export async function findOrCreateKapsoCustomer(
   provider: KapsoOnboardingProvider,
   externalCustomerId: string,
   name: string,

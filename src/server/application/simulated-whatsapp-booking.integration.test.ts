@@ -7,9 +7,7 @@ import {
   appointmentEventTypes,
   appointmentOutboundEventTypes,
 } from "~/domain/appointment-events";
-import {
-  buildWhatsAppConsentPolicy,
-} from "~/domain/whatsapp-consent";
+import { buildWhatsAppConsentPolicy } from "~/domain/whatsapp-consent";
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import type { WhatsAppInboundMessage } from "~/domain/whatsapp-inbound";
 import { createWhatsAppConsentGate } from "./whatsapp-consent";
@@ -114,45 +112,95 @@ const databaseTest =
 
 describe("Reserva simulada de WhatsApp persistente", () => {
   databaseTest(
-    "el consentimiento del Contacto cubre a un Paciente vinculado después sin crear consentimiento por Paciente",
+    "el consentimiento del Contacto cubre Pacientes futuros y Tutores pendientes vinculados, pero no Pacientes sin vínculo",
     async () => {
       const fixture = await createFixture();
       const now = new Date("2026-08-14T12:00:00.000Z");
       try {
-        const futurePatientId = await inClinicTransaction(
+        const linkedPatientIds = await inClinicTransaction(
           fixture,
           async (transaction) => {
-            const [patient] = await transaction
-              .insert(patients)
-              .values({
-                birthDate: "1988-05-01",
-                clinicId: fixture.clinicId,
-                name: "Paciente vinculado después",
-              })
-              .returning({ id: patients.id });
-            if (patient === undefined) {
-              throw new Error("No se creó el Paciente vinculado después");
+            const [futurePatient, pendingTutorPatient, unlinkedPatient] =
+              await transaction
+                .insert(patients)
+                .values([
+                  {
+                    birthDate: "1988-05-01",
+                    clinicId: fixture.clinicId,
+                    name: "Paciente vinculado después",
+                  },
+                  {
+                    birthDate: "2018-05-01",
+                    clinicId: fixture.clinicId,
+                    name: "Paciente con Tutor pendiente",
+                  },
+                  {
+                    birthDate: "2015-05-01",
+                    clinicId: fixture.clinicId,
+                    name: "Paciente sin vínculo",
+                  },
+                ])
+                .returning({ id: patients.id });
+            if (
+              futurePatient === undefined ||
+              pendingTutorPatient === undefined ||
+              unlinkedPatient === undefined
+            ) {
+              throw new Error("No se crearon los Pacientes de prueba");
             }
-            await transaction.insert(contactPatientLinks).values({
-              clinicId: fixture.clinicId,
-              contactId: fixture.contactId,
-              patientId: patient.id,
-            });
-            return patient.id;
+            await transaction.insert(contactPatientLinks).values([
+              {
+                clinicId: fixture.clinicId,
+                contactId: fixture.contactId,
+                patientId: futurePatient.id,
+              },
+              {
+                clinicId: fixture.clinicId,
+                contactId: fixture.contactId,
+                guardianDui: "01234567-8",
+                guardianshipVerificationStatus: "pending",
+                patientId: pendingTutorPatient.id,
+                relationship: "tutor",
+              },
+            ]);
+            return {
+              futurePatientId: futurePatient.id,
+              pendingTutorPatientId: pendingTutorPatient.id,
+              unlinkedPatientId: unlinkedPatient.id,
+            };
           },
         );
 
-        await expect(
+        const snapshotFor = (patientId: string) =>
           inClinicTransaction(fixture, (transaction) =>
             readWhatsAppConsentSnapshot(transaction, {
               clinicId: fixture.clinicId,
               contactId: fixture.contactId,
               now,
-              patientId: futurePatientId,
+              patientId,
             }),
-          ),
+          );
+
+        await expect(snapshotFor(fixture.patientId)).resolves.toMatchObject({
+          decision: "allowed",
+          patientReference: null,
+        });
+        await expect(
+          snapshotFor(linkedPatientIds.futurePatientId),
         ).resolves.toMatchObject({
           decision: "allowed",
+          patientReference: null,
+        });
+        await expect(
+          snapshotFor(linkedPatientIds.pendingTutorPatientId),
+        ).resolves.toMatchObject({
+          decision: "allowed",
+          patientReference: null,
+        });
+        await expect(
+          snapshotFor(linkedPatientIds.unlinkedPatientId),
+        ).resolves.toMatchObject({
+          decision: "blocked",
           patientReference: null,
         });
       } finally {

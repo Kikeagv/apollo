@@ -1,7 +1,12 @@
 # Puerto de WhatsApp y fuente de verdad de Praxia
 
-**Estado:** aceptado
+**Estado:** aceptado; reemplazado en parte por ADR 0044
 **Fecha:** 2026-09-05
+
+ADR 0044 reemplaza las reglas de activación por consentimiento y la concesión
+solo por aceptación explícita descritas aquí. El puerto de proveedor, la fuente
+de verdad, la ventana de servicio, la minimización de datos y las reglas de
+transporte de este ADR siguen vigentes.
 
 ## Contexto
 

@@ -1,5 +1,10 @@
 # Onboarding manual de Clínica (beta — 5 doctores)
 
+> Este documento conserva el procedimiento y estado del 5 de septiembre de
+> 2026. El flujo vigente de Activación de WhatsApp está en el
+> [runbook de producción](activacion-whatsapp-produccion.md) y el contrato del
+> dominio en [ADR 0044](../adr/0044-activacion-corta-y-consentimiento-por-contacto.md).
+
 Objetivo: dejar el producto listo para que el equipo de Apolo dé de alta
 clínicas manualmente (una Clínica = un Médico propietario) y cada doctor entre
 a operar Panacea. Documento vivo; actualizar al cambiar el flujo de alta.

@@ -501,7 +501,7 @@ export async function provisionWhatsAppReadiness(
   let retryableFailure: string | null = null;
   next = await saveProvisioningReadiness(next, input, dependencies.store);
 
-  for (const action of ["templates", "billing", "e2e"] as const) {
+  for (const action of ["templates", "billing"] as const) {
     try {
       assertConnectionForAction(next.connection, action);
       next = await applyAction(
@@ -770,7 +770,7 @@ export async function runWhatsAppReadinessReconciliation(
         );
       }
 
-      for (const action of ["templates", "billing", "e2e"] as const) {
+      for (const action of ["templates", "billing"] as const) {
         if (
           failure !== null ||
           next.connection?.phoneNumberId === null ||
@@ -1150,13 +1150,14 @@ async function syncReadinessAlerts(
   const evaluated = evaluateWhatsAppReadiness(
     toEvaluationInput(state, false, now),
   );
-  const firstIncompleteCode = evaluated.gates.find(
+  const activationGates = evaluated.gates.filter((gate) => gate.code !== "e2e");
+  const firstIncompleteCode = activationGates.find(
     (gate) => gate.status !== "ready",
   )?.code;
   await store.syncAlerts({
     ...access,
     clinicId: state.clinicId,
-    gates: evaluated.gates.map((gate) =>
+    gates: activationGates.map((gate) =>
       toAlertGate(gate, state, gate.code === firstIncompleteCode),
     ),
     now,

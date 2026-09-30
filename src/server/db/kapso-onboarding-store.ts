@@ -53,6 +53,7 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore &
         preflight,
         setupLink,
         setupLinkHistory,
+        customerHistory,
       ] = await Promise.all([
         transaction.query.whatsappConnections.findFirst({
           where: eq(whatsappConnections.clinicId, input.clinicId),
@@ -111,6 +112,18 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore &
             ]),
           ),
         }),
+        transaction.query.whatsappOnboardingAuditEvents.findFirst({
+          columns: { customerId: true },
+          orderBy: (events, { desc }) => [desc(events.occurredAt)],
+          where: and(
+            eq(whatsappOnboardingAuditEvents.clinicId, input.clinicId),
+            inArray(whatsappOnboardingAuditEvents.action, [
+              "customer-created",
+              "customer-confirmed",
+            ]),
+            eq(whatsappOnboardingAuditEvents.result, "succeeded"),
+          ),
+        }),
       ]);
 
       const ownerAccess: WhatsAppOwnerAccessStatus =
@@ -131,8 +144,11 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore &
                 metadata: publicWhatsAppConnectionMetadata(connection.metadata),
               },
         customerId:
+          (connection?.provider === "kapso" ? connection.customer : null) ??
+          setupLink?.customerId ??
           preflight?.customerId ??
-          (connection?.provider === "kapso" ? connection.customer : null),
+          customerHistory?.customerId ??
+          null,
         ownerAccess,
         ownerName:
           ownerInvitation?.recipientName ?? ownerMembership[0]?.name ?? null,

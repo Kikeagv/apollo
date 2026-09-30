@@ -131,6 +131,117 @@ describe("adaptador de envío Kapso", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("usa el bypass de readiness solo para la respuesta del smoke real", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ messages: [{ id: "wamid-smoke" }] }), {
+        status: 200,
+      }),
+    );
+    const requireConnection = vi.fn().mockResolvedValue(connection);
+    const requireSmokeReplyConnection = vi.fn().mockResolvedValue(connection);
+    const sender = createKapsoWhatsAppSenders({
+      apiKey: "kapso-secret",
+      fetchImpl,
+      requireConnection,
+      requireSmokeReplyConnection,
+      reserveSendSlot: async () => 0,
+    });
+    const runId = "3a1917e2-bd36-4b45-9b61-e3810fd28051";
+
+    await sender.sendConversationReply({
+      clinicId: "clinic-1",
+      idempotencyKey: `whatsapp-smoke:${runId}:reply`,
+      recipientPhoneE164: "+50370000001",
+      text: "Respuesta de prueba",
+    });
+
+    expect(requireSmokeReplyConnection).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      idempotencyKey: `whatsapp-smoke:${runId}:reply`,
+      provider: "kapso",
+      recipientPhoneE164: "+50370000001",
+    });
+    expect(requireConnection).not.toHaveBeenCalled();
+
+    await sender.sendConversationReply({
+      clinicId: "clinic-1",
+      idempotencyKey: "ordinary-reply-1",
+      recipientPhoneE164: "+50370000001",
+      text: "Respuesta normal",
+    });
+
+    expect(requireConnection).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      provider: "kapso",
+    });
+    expect(requireSmokeReplyConnection).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("envía la plantilla del smoke con correlación por intento y bypass técnico", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({ messages: [{ id: "wamid-template-smoke" }] }),
+        {
+          status: 200,
+        },
+      ),
+    );
+    const requireSmokeConnection = vi.fn().mockResolvedValue(connection);
+    const requireConnection = vi.fn().mockResolvedValue(connection);
+    const sender = createKapsoWhatsAppSenders({
+      apiKey: "kapso-secret",
+      fetchImpl,
+      requireConnection,
+      requireSmokeConnection,
+      reserveSendSlot: async () => 0,
+    });
+    const idempotencyKey =
+      "whatsapp-smoke:3a1917e2-bd36-4b45-9b61-e3810fd28051:template:f5d2cc37-646e-4298-a751-b348c4dc0333";
+
+    await expect(
+      sender.sendSmokeTemplate({
+        clinicId: "clinic-1",
+        contactId: "controlled-contact-1",
+        consentEvidence: {
+          acceptedAt: new Date("2026-09-30T11:00:00.000Z"),
+          privacyVersion: "1.0",
+          reference: "consent-1",
+          termsVersion: "1.0",
+          textReference: "wa-consent-v1",
+        },
+        idempotencyKey,
+        recipientPhoneE164: "+50370000001",
+        route: {
+          kind: "template",
+          locale: "es",
+          name: "appointment_confirmation",
+          parameters: ["Clínica Apolo", "Contacto de prueba", "mañana"],
+          providerTemplateId: "template-1",
+        },
+      }),
+    ).resolves.toEqual({
+      providerMessageId: "wamid-template-smoke",
+      status: "accepted",
+    });
+
+    expect(requireSmokeConnection).toHaveBeenCalledWith({
+      clinicId: "clinic-1",
+      provider: "kapso",
+    });
+    expect(requireConnection).not.toHaveBeenCalled();
+    const request = fetchImpl.mock.calls[0]?.[1];
+    expect(readRequestBody(request)).toMatchObject({
+      biz_opaque_callback_data: idempotencyKey,
+      template: {
+        language: { code: "es" },
+        name: "appointment_confirmation",
+      },
+      to: "50370000001",
+      type: "template",
+    });
+  });
+
   it("conserva el circuito cerrado cuando la reserva rechaza el envío", async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const reserve = vi

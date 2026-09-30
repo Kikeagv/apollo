@@ -189,6 +189,67 @@ describe("smoke sintético de WhatsApp", () => {
     expect(result.runId).toBe("smoke-run-106");
     expect(result.testContactId).toBe("controlled-contact-106");
     expect(result.timeoutAt).toEqual(new Date(startedAt.valueOf() + 300_000));
+    expect(
+      result.steps.find((step) => step.code === "real-template-delivery"),
+    ).toMatchObject({ status: "skipped", passed: false });
+  });
+
+  it("registra la entrega de plantilla por intento sobre el smoke real completo", () => {
+    const startedAt = new Date("2026-09-25T12:00:00.000Z");
+    const steps = passingSteps();
+    delete steps["real-template-delivery"];
+    for (const code of whatsappSyntheticSmokeRoundtripStepCodes) {
+      steps[code] = { passed: false, status: "pending" };
+    }
+    let result = evaluateWhatsAppSyntheticSmoke({
+      realPatientsEnabled: false,
+      requireRealRoundtrip: true,
+      runId: "smoke-run-template-delivery",
+      steps,
+      syntheticContact: false,
+      testContactId: "controlled-contact-template",
+      timeoutAt: new Date(startedAt.valueOf() + 300_000),
+    });
+
+    for (const [code, eventId, source] of [
+      ["real-reception", "inbound-template", "provider"],
+      ["real-processing", "inbound-template", "application"],
+      ["real-response", "outbound-template", "provider"],
+      ["real-delivery", "delivery-template", "provider"],
+    ] as const) {
+      result = recordWhatsAppSyntheticSmokeStep(result, {
+        code,
+        eventId,
+        evidence: `${code} observado`,
+        observedAt: startedAt,
+        source,
+        status: "passed",
+      });
+    }
+    expect(result.status).toBe("passed");
+
+    result = recordWhatsAppSyntheticSmokeStep(result, {
+      attemptId: "f5d2cc37-646e-4298-a751-b348c4dc0333",
+      code: "real-template-delivery",
+      eventId: "template-delivery-event",
+      evidence: "Kapso confirmó delivery de la plantilla Utility",
+      observedAt: new Date(startedAt.valueOf() + 5_000),
+      source: "provider",
+      status: "passed",
+      templateKind: "confirmation",
+      templateName: "appointment_confirmation",
+    });
+
+    expect(result.status).toBe("passed");
+    expect(
+      result.steps.find((step) => step.code === "real-template-delivery"),
+    ).toMatchObject({
+      attemptId: "f5d2cc37-646e-4298-a751-b348c4dc0333",
+      passed: true,
+      status: "passed",
+      templateKind: "confirmation",
+      templateName: "appointment_confirmation",
+    });
   });
 
   it("mantiene pendiente el roundtrip si un paso operativo está marcado como no ejecutado", () => {

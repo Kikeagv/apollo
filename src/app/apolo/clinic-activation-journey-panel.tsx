@@ -10,9 +10,13 @@ import {
   whatsappSyntheticSmokeStepLabels,
   type WhatsAppSyntheticSmokeStep,
 } from "~/domain/whatsapp-smoke";
+import { isValidE164PhoneNumber } from "~/domain/whatsapp-preflight";
 import type { ClinicRegistration } from "~/server/application/clinic-registration";
 import type { KapsoWhatsAppOnboardingSnapshot } from "~/server/application/kapso-onboarding";
-import type { WhatsAppNumberHealth } from "~/domain/whatsapp-readiness";
+import type {
+  WhatsAppCriticalTemplateKind,
+  WhatsAppNumberHealth,
+} from "~/domain/whatsapp-readiness";
 
 const stepLabels: Record<ClinicActivationStepId, string> = {
   "clinic-registration": "Registrar la Clínica y asociar a su propietario",
@@ -48,34 +52,64 @@ export function ClinicActivationJourneyPanel({
   clinicId,
   isLoading,
   isSending,
+  isKapso,
+  isRunningSmoke,
+  isCreatingTestContact,
+  isSendingTemplateTest,
   latestSmoke,
   currentProvisioningEventId,
   numberHealth,
   numberHealthCheckedAt,
-  onContinueWhatsApp,
+  approvedTemplateKind,
+  onCreateTestContact,
   onRegister,
+  onRunSmoke,
+  onRunTemplateTest,
   onSendSetupLink,
+  onSmokeTestPhoneChange,
   registration,
   sendError,
   sendMessage,
   sendStatus,
+  templateTestError,
+  templateTestMessage,
+  realTrafficStatus,
+  smokeTestPhone,
+  smokeError,
+  createContactError,
+  createdTestContactMessage,
   onboarding,
 }: {
   instanceId: string;
   clinicId: string;
   isLoading: boolean;
   isSending: boolean;
+  isKapso: boolean;
+  isRunningSmoke: boolean;
+  isCreatingTestContact: boolean;
+  isSendingTemplateTest: boolean;
   latestSmoke: ClinicActivationSmokeRun | null;
   currentProvisioningEventId: string | null;
   numberHealth: WhatsAppNumberHealth;
   numberHealthCheckedAt: Date | null;
-  onContinueWhatsApp: () => void;
+  approvedTemplateKind: WhatsAppCriticalTemplateKind | null;
+  onCreateTestContact: () => void;
   onRegister: () => void;
+  onRunSmoke: () => void;
+  onRunTemplateTest: () => void;
   onSendSetupLink: () => void;
+  onSmokeTestPhoneChange: (phone: string) => void;
   registration: ClinicRegistration | null;
   sendError: string | null;
   sendMessage: string | null;
   sendStatus: "failed" | "sent" | null;
+  templateTestError: string | null;
+  templateTestMessage: string | null;
+  realTrafficStatus: "blocked" | "enabled" | "offboarded";
+  smokeTestPhone: string;
+  smokeError: string | null;
+  createContactError: string | null;
+  createdTestContactMessage: string | null;
   onboarding: KapsoWhatsAppOnboardingSnapshot | null;
 }) {
   const ownerAssociated = Boolean(
@@ -107,19 +141,41 @@ export function ClinicActivationJourneyPanel({
           },
     setupLinkId: currentSetupLinkId,
     setupLinkStatus: onboarding?.setupLink?.status ?? null,
+    realTrafficStatus,
     latestSmoke,
     currentProvisioningEventId,
   });
-  const preflightPassed = onboarding?.preflight?.status === "passed";
   const setupLinkCanBeSent =
-    clinicId !== "" &&
-    preflightPassed &&
-    onboarding?.setupLink?.status !== "used";
+    clinicId !== "" && onboarding?.setupLink?.status !== "used";
   const registrationStep = journey.steps[0]!;
   const setupLinkStep = journey.steps[1]!;
   const templateDeliveryStep = journey.steps.find(
     (step) => step.id === "template-delivery",
   )!;
+  const currentSmoke =
+    latestSmoke?.requireRealRoundtrip === true &&
+    currentProvisioningEventId !== null &&
+    latestSmoke.provisioningEventId === currentProvisioningEventId
+      ? latestSmoke
+      : null;
+  const isTemplateTestPending = currentSmoke?.steps.some(
+    (step) =>
+      step.code === "real-template-delivery" && step.status === "pending",
+  );
+  const templateDeliveryEvidence = currentSmoke?.steps.find(
+    (step) => step.code === "real-template-delivery",
+  );
+  const canRunTemplateTest =
+    journey.inboundRoundtrip.status === "completed" &&
+    approvedTemplateKind !== null &&
+    realTrafficStatus !== "enabled" &&
+    realTrafficStatus !== "offboarded" &&
+    !isTemplateTestPending;
+  const canStartInboundSmoke =
+    isKapso &&
+    journey.inboundRoundtrip.status !== "completed" &&
+    realTrafficStatus === "blocked" &&
+    latestSmoke?.status !== "pending";
   const titleId = `clinic-activation-journey-${instanceId}-title`;
   const healthId = `activation-provider-health-${instanceId}-title`;
   const evidenceId = `activation-transport-evidence-${instanceId}-title`;
@@ -196,9 +252,7 @@ export function ClinicActivationJourneyPanel({
                       ? `Enlace enviado a ${registration?.invitation.email ?? "el propietario"} · ${formatDateTime(latestDelivery.occurredAt)}`
                       : latestDelivery?.action === "setup-link-email-failed"
                         ? "El enlace está activo, pero el correo no se entregó. Puedes reintentar el envío."
-                        : preflightPassed
-                          ? "La verificación previa está completa. Envía el enlace al correo registrado del propietario."
-                          : "Completa la verificación previa de WhatsApp para enviar el enlace de forma segura."}
+                        : "Envía el enlace al correo registrado del propietario para iniciar el enrolamiento."}
                 </p>
                 {onboarding?.setupLink?.status ===
                 "used" ? null : setupLinkStep.status === "completed" &&
@@ -224,14 +278,6 @@ export function ClinicActivationJourneyPanel({
                         ? "Reintentar envío"
                         : "Enviar enlace al propietario"}
                   </button>
-                ) : clinicId ? (
-                  <button
-                    className="border-border hover:bg-muted min-h-10 rounded-lg border px-3 py-2 text-sm font-medium"
-                    onClick={onContinueWhatsApp}
-                    type="button"
-                  >
-                    Completar verificación previa
-                  </button>
                 ) : null}
               </>
             ) : null}
@@ -241,6 +287,91 @@ export function ClinicActivationJourneyPanel({
                 <p className="text-muted-foreground text-sm">
                   {roundtripSummary(journey.inboundRoundtrip.status)}
                 </p>
+                {canStartInboundSmoke ? (
+                  <div className="space-y-2">
+                    <label className="grid gap-1 text-sm">
+                      <span>Teléfono del Contacto de prueba</span>
+                      <input
+                        autoComplete="off"
+                        className="border-border bg-background rounded border px-3 py-2"
+                        inputMode="tel"
+                        onChange={(event) =>
+                          onSmokeTestPhoneChange(event.target.value)
+                        }
+                        placeholder="+50370000000"
+                        type="tel"
+                        value={smokeTestPhone}
+                      />
+                    </label>
+                    <p className="text-muted-foreground text-xs">
+                      Usa un Contacto de esta Clínica sin vínculo a Paciente y
+                      con un número que controles. Si aún no existe, créalo
+                      aquí.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className="bg-primary text-primary-foreground hover:bg-primary/90 min-h-10 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50"
+                        disabled={
+                          isRunningSmoke ||
+                          !isValidE164PhoneNumber(smokeTestPhone.trim())
+                        }
+                        onClick={onRunSmoke}
+                        type="button"
+                      >
+                        {isRunningSmoke
+                          ? "Iniciando prueba…"
+                          : journey.inboundRoundtrip.status === "failed"
+                            ? "Reintentar recepción y respuesta"
+                            : "Probar recepción y respuesta"}
+                      </button>
+                      <button
+                        className="border-border hover:bg-muted min-h-10 rounded-lg border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                        disabled={
+                          isCreatingTestContact ||
+                          !isValidE164PhoneNumber(smokeTestPhone.trim())
+                        }
+                        onClick={onCreateTestContact}
+                        type="button"
+                      >
+                        {isCreatingTestContact
+                          ? "Creando Contacto…"
+                          : "Crear Contacto de prueba"}
+                      </button>
+                    </div>
+                    {smokeError ? (
+                      <p
+                        className="text-warning-foreground text-sm"
+                        role="alert"
+                      >
+                        {smokeError}
+                      </p>
+                    ) : null}
+                    {createContactError ? (
+                      <p
+                        className="text-warning-foreground text-sm"
+                        role="alert"
+                      >
+                        {createContactError}
+                      </p>
+                    ) : null}
+                    {createdTestContactMessage ? (
+                      <p className="text-primary text-sm" role="status">
+                        {createdTestContactMessage}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {journey.inboundRoundtrip.status === "pending" &&
+                latestSmoke?.status === "pending" &&
+                journey.inboundRoundtrip.runId ? (
+                  <p className="border-warning-border bg-warning-muted text-warning-foreground rounded border p-3 text-sm">
+                    Desde el Contacto controlado, envía a la Clínica este
+                    código:{" "}
+                    <code className="font-mono font-semibold">
+                      PRUEBA WHATSAPP {journey.inboundRoundtrip.runId}
+                    </code>
+                  </p>
+                ) : null}
                 {journey.inboundRoundtrip.runId ? (
                   <>
                     <p className="text-muted-foreground text-xs">
@@ -272,25 +403,77 @@ export function ClinicActivationJourneyPanel({
                       ))}
                     </ol>
                     <p className="text-muted-foreground text-xs">
-                      Preflight del webhook:{" "}
+                      Diagnóstico opcional del webhook:{" "}
                       {preflightSummary(journey.inboundRoundtrip.preflight)}. No
                       cuenta como roundtrip ni habilita tráfico real.
                     </p>
                   </>
                 ) : (
                   <p className="text-muted-foreground text-xs">
-                    Aún no hay una ejecución real con un Contacto controlado. Un
-                    preflight no cuenta como roundtrip.
+                    Aún no hay una ejecución real con un Contacto controlado. El
+                    diagnóstico de webhook es opcional y no cuenta como
+                    roundtrip.
                   </p>
                 )}
               </div>
             ) : null}
 
             {step.id === "template-delivery" ? (
-              <p className="text-muted-foreground text-sm">
-                Pendiente de una conversación iniciada con plantilla aprobada y
-                evidencia de entrega.
-              </p>
+              <div className="space-y-2">
+                <p className="text-muted-foreground text-sm">
+                  {realTrafficStatus === "enabled"
+                    ? "La entrega de la plantilla fue confirmada y el tráfico real se habilitó automáticamente."
+                    : realTrafficStatus === "offboarded"
+                      ? "La Conexión fue retirada."
+                      : templateDeliveryStep.status === "completed"
+                        ? "La entrega de la plantilla fue confirmada. Si el tráfico se pausó, repite esta prueba después de cerrar el circuito."
+                        : isTemplateTestPending
+                          ? "Se envió la plantilla; esperando la confirmación de entrega de Kapso."
+                          : approvedTemplateKind === null
+                            ? "Aprueba una plantilla Utility de citas para poder iniciar una conversación de prueba."
+                            : journey.inboundRoundtrip.status === "completed"
+                              ? "Inicia una conversación con el Contacto de prueba. La entrega confirmada habilitará el tráfico real automáticamente."
+                              : "Completa primero la prueba de recepción y respuesta con el Contacto controlado."}
+                </p>
+                {canRunTemplateTest ? (
+                  <button
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 min-h-10 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50"
+                    disabled={isSendingTemplateTest}
+                    onClick={onRunTemplateTest}
+                    type="button"
+                  >
+                    {isSendingTemplateTest
+                      ? "Enviando plantilla…"
+                      : templateDeliveryStep.status === "failed"
+                        ? "Reintentar prueba de plantilla"
+                        : templateDeliveryStep.status === "completed"
+                          ? "Repetir prueba para habilitar tráfico"
+                          : "Probar conversación con plantilla"}
+                  </button>
+                ) : null}
+                {templateDeliveryEvidence?.status === "passed" ? (
+                  <p className="text-muted-foreground text-xs">
+                    {templateDeliveryEvidence.evidence}
+                    {templateDeliveryEvidence.eventId
+                      ? ` · ${templateDeliveryEvidence.eventId}`
+                      : ""}
+                    {templateDeliveryEvidence.observedAt
+                      ? ` · ${formatDateTime(templateDeliveryEvidence.observedAt)}`
+                      : ""}
+                  </p>
+                ) : null}
+                {templateTestMessage &&
+                templateDeliveryStep.status !== "completed" ? (
+                  <p className="text-primary text-sm" role="status">
+                    {templateTestMessage}
+                  </p>
+                ) : null}
+                {templateTestError ? (
+                  <p className="text-warning-foreground text-sm" role="alert">
+                    {templateTestError}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
 
             {step.updatedAt ? (
@@ -354,7 +537,7 @@ export function ClinicActivationJourneyPanel({
             {stepStatusLabels[journey.inboundRoundtrip.status]}
           </p>
           <p className="text-muted-foreground text-sm">
-            Preflight del webhook:{" "}
+            Diagnóstico opcional del webhook:{" "}
             {preflightSummary(journey.inboundRoundtrip.preflight)} · no
             demuestra una conversación.
           </p>

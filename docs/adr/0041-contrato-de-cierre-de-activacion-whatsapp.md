@@ -1,7 +1,11 @@
 # Contrato de cierre de la Activación de WhatsApp
 
-**Estado:** aceptado
+**Estado:** aceptado; reemplazado en parte por ADR 0044
 **Fecha:** 2026-09-16
+
+ADR 0044 reemplaza el cierre manual y los gates independientes de tráfico
+definidos aquí. La separación entre conexión, readiness, evidencia de proveedor
+y operación del circuito sigue vigente como diagnóstico técnico.
 
 ## Contexto
 

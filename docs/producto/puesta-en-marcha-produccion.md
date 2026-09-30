@@ -3,11 +3,16 @@
 **Corte:** 27 de septiembre de 2026.  
 **Objetivo:** poder incorporar las primeras Clínicas y operar su atención administrativa por WhatsApp de forma comprobable.
 
+> Este corte conserva el estado observado el 27 de septiembre. El proceso de
+> activación y sus gates cambiaron el 29 de septiembre; para el flujo vigente,
+> consulta [ADR 0044](../adr/0044-activacion-corta-y-consentimiento-por-contacto.md)
+> y el [runbook de producción](../runbooks/activacion-whatsapp-produccion.md).
+
 ## Resumen ejecutivo
 
 Praxia ya permite entrar al panel de supervisión, crear una Clínica comercial e invitar a su propietario en producción. La infraestructura de WhatsApp con Kapso está desplegada, y el código admite números `dedicated` y `coexistence`. Todavía **no está validado el recorrido completo de una Clínica hasta recibir y entregar mensajes**. La primera Clínica de prueba, «Clinica Tests», no tiene una Conexión de WhatsApp registrada en Praxia y el tráfico real sigue bloqueado.
 
-Como todavía no hay clientes activos, producción puede servir para el piloto controlado con cuentas y Contactos de prueba. El siguiente hito no es desplegar más funciones por volumen: es completar un recorrido real de alta, conexión y mensaje, sin introducir datos de Pacientes hasta cerrar los gates legales y de privacidad.
+Al corte, producción podía servir para el piloto controlado con cuentas y Contactos de prueba. El siguiente hito documentado entonces era completar un recorrido real de alta, conexión y mensaje. Esa recomendación es histórica y fue reemplazada por el flujo de cuatro pasos de ADR 0044.
 
 ## Qué funciona hoy
 
@@ -28,7 +33,11 @@ La corrección está en el commit `ca1a8f4`, ya presente en `main`, pero **todav
 
 El botón de smoke se intentó mientras no existía una Conexión con `phone_number_id`; mostró «El mensaje Kapso requiere id y phone_number_id». **No constituye un smoke exitoso ni una entrega a WhatsApp.** Debe repetirse tras registrar la Conexión. Si vuelve a fallar, habrá que corregir ese recorrido por separado.
 
-## Lo que falta para incorporar al primer cliente
+## Lo que faltaba para incorporar al primer cliente (al corte)
+
+Esta lista conserva el plan de trabajo del 27 de septiembre. El paso de gates
+legales y la aprobación manual pertenecen al procedimiento anterior; ADR 0044
+define el cierre vigente de activación.
 
 1. **Desplegar la corrección del preflight y volver a ejecutarlo.** Confirmar que Praxia encuentra el customer y el número `dedicated` existentes sin crear duplicados. Verificar el nombre y la autoridad del propietario antes de marcar declaraciones del formulario; el campo observado mostraba «Superadmin» y requiere revisión.
 2. **Completar la Conexión de WhatsApp en Praxia.** Registrar la asociación customer–Clínica–WABA–`phone_number_id`, recibir la señal autoritativa de Kapso y comprobar el estado desde el panel. Una redirección o el estado `CONNECTED` en Kapso no bastan.
@@ -42,7 +51,7 @@ El botón de smoke se intentó mientras no existía una Conexión con `phone_num
 
 Kapso mostraba capacidad de **1/1 números**. Hace falta capacidad adicional para una segunda Clínica y demostrar que customer, WABA, número, plantillas, Contactos, entregas, workers y circuit breaker permanecen aislados. También faltan ensayos productivos controlados de invitación fallida o vencida, rechazo de plantilla, caída del proveedor, eventos duplicados o perdidos, reintentos y retirada de la Conexión. Estas pruebas deben usar datos sintéticos y dejar el tráfico real bloqueado mientras se ejecutan.
 
-## Criterio para declarar el servicio listo
+## Criterio propuesto al corte (histórico)
 
 Una Clínica estará lista para usar WhatsApp con clientes reales cuando su propietario pueda entrar y configurar la Clínica, su número y WABA propios estén asociados en Praxia, los webhooks y plantillas funcionen, billing esté confirmado, un mensaje de prueba complete entrada y entrega con callback, y los gates de consentimiento, contrato, privacidad y retención estén aprobados. El panel debe mostrar esa evidencia y permitir habilitar el tráfico explícitamente. Para afirmar que el producto es **multi-Clínica**, se debe repetir el recorrido con una segunda Clínica y verificar aislamiento.
 
