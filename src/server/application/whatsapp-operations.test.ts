@@ -345,7 +345,7 @@ describe("operaciones finales de WhatsApp", () => {
     );
   });
 
-  it("persiste un smoke fallido sin crear pacientes y conserva los bloqueos pendientes", async () => {
+  it("conserva fallos de regresión sin hacer fallar el smoke operativo", async () => {
     const { smokeRuns, store } = makeStore();
     const runner = {
       run: vi.fn().mockResolvedValue({
@@ -370,13 +370,15 @@ describe("operaciones finales de WhatsApp", () => {
       },
       { idGenerator: () => "smoke-failed-92", runner, store },
     );
-    expect(failed.status).toBe("failed");
+    expect(failed.status).toBe("pending");
     expect(failed.providerTransportVerified).toBe(false);
     expect(failed.realPatientsEnabled).toBe(false);
     expect(failed.steps.find((step) => step.code === "sandbox")?.passed).toBe(
       false,
     );
-    expect(failed.blockers.map((blocker) => blocker.code)).toContain("sandbox");
+    expect(failed.blockers.map((blocker) => blocker.code)).not.toContain(
+      "sandbox",
+    );
     expect(
       failed.steps.find((step) => step.code === "adult-flow")?.passed,
     ).toBe(true);
@@ -439,7 +441,39 @@ describe("operaciones finales de WhatsApp", () => {
     expect(result.providerTransportVerified).toBe(false);
   });
 
-  it("no interpreta evidencia local como preflight del webhook Kapso", async () => {
+  it("mantiene el roundtrip pendiente cuando falla el preflight independiente", async () => {
+    const { store } = makeStore();
+    const runner = {
+      run: vi
+        .fn()
+        .mockRejectedValue(new Error("Kapso no confirmó el preflight")),
+    };
+
+    const result = await runWhatsAppSyntheticSmoke(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: makeSnapshot().clinicId,
+        now,
+        testContactPhoneE164: "+50370000092",
+      },
+      { idGenerator: () => "smoke-run-preflight-error", runner, store },
+    );
+
+    expect(result.status).toBe("pending");
+    expect(result.blockers).toEqual([]);
+    expect(
+      result.steps.find((step) => step.code === "webhook-preflight"),
+    ).toMatchObject({
+      message: "Kapso no confirmó el preflight",
+      status: "failed",
+      passed: false,
+    });
+    expect(
+      result.steps.find((step) => step.code === "real-reception"),
+    ).toMatchObject({ status: "pending", passed: false });
+  });
+
+  it("muestra el preflight ausente como no ejecutado y mantiene pendiente el roundtrip", async () => {
     const { store } = makeStore();
     const runner = {
       run: vi.fn().mockResolvedValue({
@@ -464,10 +498,11 @@ describe("operaciones finales de WhatsApp", () => {
       { runner, store },
     );
 
-    expect(result.status).toBe("failed");
-    expect(result.blockers.map((blocker) => blocker.code)).toContain(
-      "webhook-preflight",
-    );
+    expect(result.status).toBe("pending");
+    expect(result.blockers).toEqual([]);
+    expect(
+      result.steps.find((step) => step.code === "webhook-preflight"),
+    ).toMatchObject({ status: "skipped", passed: false });
   });
 
   it("requiere un Contacto de prueba registrado para ejecutar el roundtrip Kapso", async () => {
@@ -682,7 +717,7 @@ describe("operaciones finales de WhatsApp", () => {
     );
 
     expect(result.status).toBe("failed");
-    expect(result.blockers[0]?.code).toBe("runner");
+    expect(result.blockers.map((blocker) => blocker.code)).toContain("runner");
     expect(runner.run).not.toHaveBeenCalled();
   });
 

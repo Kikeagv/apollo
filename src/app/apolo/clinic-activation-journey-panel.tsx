@@ -1,8 +1,15 @@
 "use client";
 
-import type { ClinicActivationStepId } from "~/domain/clinic-activation-journey";
+import type {
+  ClinicActivationSmokeRun,
+  ClinicActivationStepId,
+} from "~/domain/clinic-activation-journey";
 import { buildClinicActivationJourney } from "~/domain/clinic-activation-journey";
 import { formatDateTime } from "~/app/format-date";
+import {
+  whatsappSyntheticSmokeStepLabels,
+  type WhatsAppSyntheticSmokeStep,
+} from "~/domain/whatsapp-smoke";
 import type { ClinicRegistration } from "~/server/application/clinic-registration";
 import type { KapsoWhatsAppOnboardingSnapshot } from "~/server/application/kapso-onboarding";
 import type { WhatsAppNumberHealth } from "~/domain/whatsapp-readiness";
@@ -26,11 +33,23 @@ const stepStatusClasses = {
   pending: "border-border bg-muted text-muted-foreground",
 } as const;
 
+const smokeStepStatusLabels: Record<
+  WhatsAppSyntheticSmokeStep["status"],
+  string
+> = {
+  failed: "Falló",
+  passed: "Verificado",
+  pending: "Pendiente",
+  skipped: "No ejecutado",
+};
+
 export function ClinicActivationJourneyPanel({
   instanceId,
   clinicId,
   isLoading,
   isSending,
+  latestSmoke,
+  currentProvisioningEventId,
   numberHealth,
   numberHealthCheckedAt,
   onContinueWhatsApp,
@@ -46,6 +65,8 @@ export function ClinicActivationJourneyPanel({
   clinicId: string;
   isLoading: boolean;
   isSending: boolean;
+  latestSmoke: ClinicActivationSmokeRun | null;
+  currentProvisioningEventId: string | null;
   numberHealth: WhatsAppNumberHealth;
   numberHealthCheckedAt: Date | null;
   onContinueWhatsApp: () => void;
@@ -86,6 +107,8 @@ export function ClinicActivationJourneyPanel({
           },
     setupLinkId: currentSetupLinkId,
     setupLinkStatus: onboarding?.setupLink?.status ?? null,
+    latestSmoke,
+    currentProvisioningEventId,
   });
   const preflightPassed = onboarding?.preflight?.status === "passed";
   const setupLinkCanBeSent =
@@ -94,6 +117,9 @@ export function ClinicActivationJourneyPanel({
     onboarding?.setupLink?.status !== "used";
   const registrationStep = journey.steps[0]!;
   const setupLinkStep = journey.steps[1]!;
+  const templateDeliveryStep = journey.steps.find(
+    (step) => step.id === "template-delivery",
+  )!;
   const titleId = `clinic-activation-journey-${instanceId}-title`;
   const healthId = `activation-provider-health-${instanceId}-title`;
   const evidenceId = `activation-transport-evidence-${instanceId}-title`;
@@ -211,10 +237,53 @@ export function ClinicActivationJourneyPanel({
             ) : null}
 
             {step.id === "inbound-roundtrip" ? (
-              <p className="text-muted-foreground text-sm">
-                Pendiente de la prueba real con un Contacto controlado. Un
-                preflight no cuenta como roundtrip.
-              </p>
+              <div className="space-y-2">
+                <p className="text-muted-foreground text-sm">
+                  {roundtripSummary(journey.inboundRoundtrip.status)}
+                </p>
+                {journey.inboundRoundtrip.runId ? (
+                  <>
+                    <p className="text-muted-foreground text-xs">
+                      Ejecución {journey.inboundRoundtrip.runId} · Contacto
+                      controlado:{" "}
+                      {journey.inboundRoundtrip.contactMaskedPhone ??
+                        "teléfono no disponible"}
+                    </p>
+                    <ol
+                      aria-label="Evidencia del roundtrip entrante"
+                      className="space-y-1 text-xs"
+                    >
+                      {journey.inboundRoundtrip.steps.map((evidence) => (
+                        <li key={evidence.code}>
+                          <span className="font-medium">
+                            {whatsappSyntheticSmokeStepLabels[evidence.code]}:
+                          </span>{" "}
+                          <span>{smokeStepStatusLabels[evidence.status]}</span>
+                          {evidence.evidence ? ` · ${evidence.evidence}` : ""}
+                          {evidence.source
+                            ? ` · ${evidence.source === "provider" ? "Kapso" : "Praxia"}`
+                            : ""}
+                          {evidence.eventId ? ` · ${evidence.eventId}` : ""}
+                          {evidence.observedAt
+                            ? ` · ${formatDateTime(evidence.observedAt)}`
+                            : ""}
+                          {evidence.message ? ` · ${evidence.message}` : ""}
+                        </li>
+                      ))}
+                    </ol>
+                    <p className="text-muted-foreground text-xs">
+                      Preflight del webhook:{" "}
+                      {preflightSummary(journey.inboundRoundtrip.preflight)}. No
+                      cuenta como roundtrip ni habilita tráfico real.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-muted-foreground text-xs">
+                    Aún no hay una ejecución real con un Contacto controlado. Un
+                    preflight no cuenta como roundtrip.
+                  </p>
+                )}
+              </div>
             ) : null}
 
             {step.id === "template-delivery" ? (
@@ -281,11 +350,17 @@ export function ClinicActivationJourneyPanel({
             Evidencia de transporte
           </h3>
           <p className="text-muted-foreground text-sm">
-            Recepción y respuesta: pendiente · sin evidencia de roundtrip.
+            Roundtrip entrante:{" "}
+            {stepStatusLabels[journey.inboundRoundtrip.status]}
           </p>
           <p className="text-muted-foreground text-sm">
-            Inicio con plantilla y entrega: pendiente · sin evidencia
-            registrada.
+            Preflight del webhook:{" "}
+            {preflightSummary(journey.inboundRoundtrip.preflight)} · no
+            demuestra una conversación.
+          </p>
+          <p className="text-muted-foreground text-sm">
+            Inicio con plantilla y entrega:{" "}
+            {stepStatusLabels[templateDeliveryStep.status]}.
           </p>
           <p className="text-muted-foreground text-xs">
             La Clínica no se marca lista para tráfico real hasta completar la
@@ -329,4 +404,18 @@ function providerHealthLabel(status: "healthy" | "issue" | "unverified") {
     unverified: "Verificación pendiente",
   };
   return labels[status];
+}
+
+function roundtripSummary(status: "completed" | "failed" | "pending") {
+  const labels = {
+    completed: "Roundtrip entregado al Contacto controlado.",
+    failed: "La prueba del roundtrip falló; revisa la evidencia de cada paso.",
+    pending: "Pendiente de la prueba real con un Contacto controlado.",
+  };
+  return labels[status];
+}
+
+function preflightSummary(step: WhatsAppSyntheticSmokeStep | null) {
+  if (step === null) return "no ejecutado";
+  return smokeStepStatusLabels[step.status].toLocaleLowerCase("es");
 }

@@ -349,6 +349,7 @@ export async function runWhatsAppSyntheticSmoke(
       syntheticContact: true,
     });
   let providerError: string | null = null;
+  let runnerAttempted = false;
   const isSimulated = snapshot.connection?.provider === "simulated";
   const phoneNumberId =
     snapshot.connection?.phoneNumberId ??
@@ -367,6 +368,7 @@ export async function runWhatsAppSyntheticSmoke(
       "No hay evidencia suficiente de número y webhook para ejecutar el smoke";
   } else {
     try {
+      runnerAttempted = true;
       rawResult = await dependencies.runner.run({
         clinicId: input.clinicId,
         phoneNumberId,
@@ -380,17 +382,18 @@ export async function runWhatsAppSyntheticSmoke(
   }
   if (isKapso) {
     const preflight = rawResult.steps["webhook-preflight"];
-    if (providerError !== null || preflight === undefined) {
+    if (preflight === undefined) {
       rawResult = {
         ...rawResult,
         steps: {
           ...rawResult.steps,
           "webhook-preflight": {
             evidence: null,
-            message: providerError ?? "Kapso no confirmó el preflight",
+            message:
+              providerError ?? "El runner no ejecutó el preflight del webhook",
             passed: false,
             source: "provider" as const,
-            status: "failed" as const,
+            status: providerError === null ? "skipped" : "failed",
           },
         },
       };
@@ -429,7 +432,7 @@ export async function runWhatsAppSyntheticSmoke(
         "La Conexión cambió de generación mientras se ejecutaba el smoke",
     });
   }
-  if (providerError !== null) {
+  if (providerError !== null && (!isKapso || !runnerAttempted)) {
     result.status = "failed";
     result.blockers.unshift({ code: "runner", message: providerError });
   }

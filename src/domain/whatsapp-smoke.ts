@@ -148,8 +148,8 @@ export type WhatsAppSyntheticSmokeStepInput = {
 };
 
 /**
- * Normaliza el contrato del runner y falla cerrado ante pasos ausentes,
- * contactos reales o cualquier intento de habilitar pacientes reales.
+ * Normaliza el contrato del runner y falla cerrado ante pasos requeridos
+ * ausentes, Contactos no controlados o intentos de habilitar Pacientes reales.
  */
 export function evaluateWhatsAppSyntheticSmoke(input: {
   evidence?: string | null;
@@ -169,6 +169,18 @@ export function evaluateWhatsAppSyntheticSmoke(input: {
   const steps = whatsappSyntheticSmokeStepCodes.map((code) => {
     const step = input.steps[code];
     if (step === undefined) {
+      if (input.requireRealRoundtrip === true && !isRoundtripStep(code)) {
+        return {
+          code,
+          evidence: null,
+          eventId: null,
+          message: "Escenario no ejecutado en el smoke operativo",
+          observedAt: null,
+          passed: false,
+          source: null,
+          status: "skipped",
+        } satisfies WhatsAppSyntheticSmokeStep;
+      }
       if (code === "webhook-preflight" && input.requireRealRoundtrip !== true) {
         return {
           code,
@@ -217,14 +229,18 @@ export function evaluateWhatsAppSyntheticSmoke(input: {
         evidence: normalizeOperationalText(step.evidence),
         eventId: sanitizeOperationalText(step.eventId),
         message:
-          sanitizeOperationalText(step.message) ?? "Paso no aplicable a este runner",
+          sanitizeOperationalText(step.message) ??
+          "Paso no aplicable a este runner",
         observedAt: step.observedAt ?? null,
         passed: false,
         source: step.source ?? null,
         status: "skipped",
       } satisfies WhatsAppSyntheticSmokeStep;
     }
-    if (status === "failed") {
+    if (
+      status === "failed" &&
+      (input.requireRealRoundtrip !== true || isRoundtripStep(code))
+    ) {
       blockers.push({
         code,
         message:
@@ -241,7 +257,11 @@ export function evaluateWhatsAppSyntheticSmoke(input: {
       (eventId !== null && observedAt !== null);
     const passed =
       status === "passed" && evidence !== null && hasRoundtripReference;
-    if (status === "passed" && (evidence === null || !hasRoundtripReference)) {
+    if (
+      status === "passed" &&
+      (evidence === null || !hasRoundtripReference) &&
+      (input.requireRealRoundtrip !== true || isRoundtripStep(code))
+    ) {
       blockers.push({
         code: `${code}-evidence`,
         message: `El paso ${whatsappSyntheticSmokeStepLabels[code]} no tiene referencias suficientes`,
@@ -278,8 +298,8 @@ export function evaluateWhatsAppSyntheticSmoke(input: {
 
   const evidence = input.evidence?.trim();
   const requiresRoundtrip = input.requireRealRoundtrip === true;
-  const hasFailedStep = steps.some((step) => step.status === "failed");
-  const hasPendingStep = steps.some((step) => step.status === "pending");
+  const hasFailedStep = hasBlockingFailedStep(steps, requiresRoundtrip);
+  const hasPendingStep = hasRequiredPendingStep(steps, requiresRoundtrip);
   const providerTransportVerified = requiresRoundtrip
     ? hasVerifiedProviderRoundtrip(steps)
     : input.providerTransportVerified === true;
@@ -349,26 +369,27 @@ export function recordWhatsAppSyntheticSmokeStep(
       blocker.code !== input.code && !blocker.code.startsWith(`${input.code}-`),
   );
   if (!passed) {
-    blockers.push({
-      code: input.code,
-      message:
-        sanitizeOperationalText(input.message) ??
-        `Falló el paso ${whatsappSyntheticSmokeStepLabels[input.code]}`,
-    });
+    if (result.requireRealRoundtrip !== true || isRoundtripStep(input.code)) {
+      blockers.push({
+        code: input.code,
+        message:
+          sanitizeOperationalText(input.message) ??
+          `Falló el paso ${whatsappSyntheticSmokeStepLabels[input.code]}`,
+      });
+    }
   }
   const providerTransportVerified =
-    result.requireRealRoundtrip === true &&
-    hasVerifiedProviderRoundtrip(steps);
+    result.requireRealRoundtrip === true && hasVerifiedProviderRoundtrip(steps);
   return sanitizeWhatsAppSyntheticSmokeResult({
     ...result,
     blockers,
     providerTransportVerified,
     steps,
     status:
-      blockers.length > 0 || steps.some((step) => step.status === "failed")
+      blockers.length > 0 ||
+      hasBlockingFailedStep(steps, result.requireRealRoundtrip === true)
         ? "failed"
-        : result.requireRealRoundtrip === true &&
-            steps.some((step) => step.status === "pending")
+        : hasRequiredPendingStep(steps, result.requireRealRoundtrip === true)
           ? "pending"
           : "passed",
   });
@@ -387,7 +408,12 @@ export function expireWhatsAppSyntheticSmoke(
     return result;
   }
   const steps = result.steps.map((step) =>
-    step.status !== "pending"
+    step.status !== "pending" &&
+    !(
+      result.requireRealRoundtrip === true &&
+      step.status === "skipped" &&
+      isRoundtripStep(step.code)
+    )
       ? step
       : {
           ...step,
@@ -396,7 +422,11 @@ export function expireWhatsAppSyntheticSmoke(
           status: "failed" as const,
         },
   );
-  const timedOutSteps = steps.filter((step) => step.status === "failed");
+  const timedOutSteps = steps.filter(
+    (step) =>
+      step.status === "failed" &&
+      (result.requireRealRoundtrip !== true || isRoundtripStep(step.code)),
+  );
   const blockers = [
     ...result.blockers,
     ...timedOutSteps.map((step) => ({
@@ -441,6 +471,29 @@ function isRoundtripStep(code: WhatsAppSyntheticSmokeStepCode) {
   return (
     whatsappSyntheticSmokeRoundtripStepCodes as readonly string[]
   ).includes(code);
+}
+
+function hasBlockingFailedStep(
+  steps: WhatsAppSyntheticSmokeStep[],
+  requireRealRoundtrip: boolean,
+) {
+  return steps.some(
+    (step) =>
+      step.status === "failed" &&
+      (!requireRealRoundtrip || isRoundtripStep(step.code)),
+  );
+}
+
+function hasRequiredPendingStep(
+  steps: WhatsAppSyntheticSmokeStep[],
+  requireRealRoundtrip: boolean,
+) {
+  return steps.some(
+    (step) =>
+      (!requireRealRoundtrip || isRoundtripStep(step.code)) &&
+      (step.status === "pending" ||
+        (requireRealRoundtrip && step.status === "skipped")),
+  );
 }
 
 function hasVerifiedProviderRoundtrip(steps: WhatsAppSyntheticSmokeStep[]) {

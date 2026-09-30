@@ -138,7 +138,7 @@ export function ApoloOperations() {
   const whatsappOperations = api.apolo.getWhatsAppOperations.useQuery(
     { clinicId },
     {
-      enabled: Boolean(clinicId) && activeTab === "whatsapp",
+      enabled: Boolean(clinicId) && activationVisible,
       refetchInterval: (query) =>
         query.state.data?.latestSmoke?.status === "pending" ? 2_000 : false,
     },
@@ -609,12 +609,17 @@ export function ApoloOperations() {
             <ClinicActivationJourneyPanel
               instanceId="overview"
               clinicId={clinicId}
+              currentProvisioningEventId={
+                whatsappOperations.data?.connection?.provisioningEventId ?? null
+              }
               isLoading={
                 registration.isLoading ||
                 onboarding.isLoading ||
-                readiness.isLoading
+                readiness.isLoading ||
+                whatsappOperations.isLoading
               }
               isSending={sendSetupLink.isPending}
+              latestSmoke={latestSmoke}
               numberHealth={readiness.data?.numberHealth ?? "unknown"}
               numberHealthCheckedAt={
                 readiness.data?.numberHealthCheckedAt ?? null
@@ -675,12 +680,17 @@ export function ApoloOperations() {
         <ClinicActivationJourneyPanel
           instanceId="whatsapp"
           clinicId={clinicId}
+          currentProvisioningEventId={
+            whatsappOperations.data?.connection?.provisioningEventId ?? null
+          }
           isLoading={
             registration.isLoading ||
             onboarding.isLoading ||
-            readiness.isLoading
+            readiness.isLoading ||
+            whatsappOperations.isLoading
           }
           isSending={sendSetupLink.isPending}
+          latestSmoke={latestSmoke}
           numberHealth={readiness.data?.numberHealth ?? "unknown"}
           numberHealthCheckedAt={readiness.data?.numberHealthCheckedAt ?? null}
           onContinueWhatsApp={() => {
@@ -1822,12 +1832,17 @@ export function ApoloOperations() {
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <h3 className="font-semibold">Smoke E2E sintético</h3>
+                      <h3 className="font-semibold">
+                        {whatsappOperations.data.connection?.provider ===
+                        "kapso"
+                          ? "Roundtrip real de WhatsApp"
+                          : "Smoke sintético de WhatsApp"}
+                      </h3>
                       <p className="text-foreground mt-1 text-sm">
-                        Combina contratos locales, preflight del webhook de
-                        Kapso y un roundtrip firmado con un Contacto de prueba.
-                        La respuesta aceptada sigue pendiente hasta que llegue
-                        el callback de entrega.
+                        {whatsappOperations.data.connection?.provider ===
+                        "kapso"
+                          ? "Un Contacto controlado inicia el roundtrip. El preflight se registra aparte y la prueba queda pendiente hasta confirmar la entrega de la respuesta."
+                          : "Ejecuta los contratos de Praxia con el proveedor simulado; no constituye evidencia de transporte real con Kapso."}
                       </p>
                     </div>
                     {whatsappOperations.data.connection?.provider ===
@@ -1979,11 +1994,13 @@ export function ApoloOperations() {
                                   : step.status === "pending"
                                     ? "…"
                                     : step.status === "skipped"
-                                      ? "–"
+                                      ? "No ejecutado"
                                       : "✕"}{" "}
                                 {whatsappSyntheticSmokeStepLabels[step.code]}
                               </span>
-                              {step.message ? " · " + step.message : ""}
+                              {step.message && step.status !== "skipped"
+                                ? " · " + step.message
+                                : ""}
                               {step.evidence ? " · " + step.evidence : ""}
                               {step.source
                                 ? ` · ${step.source === "provider" ? "Kapso" : "Praxia"}`
