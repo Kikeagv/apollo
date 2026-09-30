@@ -16,7 +16,12 @@ import {
   type WhatsAppSendResult,
 } from "~/server/application/whatsapp-provider";
 import { drizzleWhatsAppInboundStore } from "~/server/db/whatsapp-inbound-store";
-import { requireWhatsAppConnectionReady } from "~/server/db/whatsapp-connection-store";
+import {
+  requireWhatsAppConnectionReady,
+  requireWhatsAppSmokeReplyConnectionReady,
+  requireWhatsAppSmokeTemplateConsent,
+  requireWhatsAppSmokeTemplateConnectionReady,
+} from "~/server/db/whatsapp-connection-store";
 import { reserveWhatsAppSendSlot } from "~/server/db/whatsapp-rate-limit-store";
 
 export {
@@ -65,6 +70,9 @@ type KapsoWhatsAppOptions = {
   now?: () => Date;
   reserveCapacity?: WhatsAppBillingCapacityStore;
   requireConnection?: typeof requireWhatsAppConnectionReady;
+  requireSmokeReplyConnection?: typeof requireWhatsAppSmokeReplyConnectionReady;
+  requireSmokeTemplateConsent?: typeof requireWhatsAppSmokeTemplateConsent;
+  requireSmokeConnection?: typeof requireWhatsAppSmokeTemplateConnectionReady;
   reserveSendSlot?: typeof reserveWhatsAppSendSlot;
 };
 
@@ -73,7 +81,26 @@ type KapsoWhatsAppOptions = {
  * cada llamada; el proveedor nunca recibe un número global ni una credencial
  * persistida en Praxia.
  */
-export type KapsoWhatsAppSenders = Omit<WhatsAppProvider, "provider">;
+export type KapsoSmokeTemplateRequest = {
+  clinicId: string;
+  contactId: string;
+  consentEvidence: {
+    acceptedAt: Date;
+    privacyVersion: string;
+    reference: string;
+    termsVersion: string;
+    textReference: string;
+  };
+  idempotencyKey: string;
+  recipientPhoneE164: string;
+  route: Extract<TransactionalWhatsAppRoute, { kind: "template" }>;
+};
+
+export type KapsoWhatsAppSenders = Omit<WhatsAppProvider, "provider"> & {
+  sendSmokeTemplate(
+    input: KapsoSmokeTemplateRequest,
+  ): Promise<WhatsAppSendResult>;
+};
 
 export function createKapsoWhatsAppSenders(
   options: KapsoWhatsAppOptions = {},
@@ -83,6 +110,14 @@ export function createKapsoWhatsAppSenders(
   const now = options.now ?? (() => new Date());
   const requireConnection =
     options.requireConnection ?? requireWhatsAppConnectionReady;
+  const requireSmokeConnection =
+    options.requireSmokeConnection ??
+    requireWhatsAppSmokeTemplateConnectionReady;
+  const requireSmokeReplyConnection =
+    options.requireSmokeReplyConnection ??
+    requireWhatsAppSmokeReplyConnectionReady;
+  const requireSmokeTemplateConsent =
+    options.requireSmokeTemplateConsent ?? requireWhatsAppSmokeTemplateConsent;
   const reserveSendSlot = options.reserveSendSlot ?? reserveWhatsAppSendSlot;
   const reserveCapacity = options.reserveCapacity;
 
@@ -111,8 +146,20 @@ export function createKapsoWhatsAppSenders(
           reserveSendSlot,
         }),
     },
-    sendConversationReply: (input) =>
-      sendKapsoMessage({
+    sendConversationReply: (input) => {
+      const isSmokeReply = /^whatsapp-smoke:[0-9a-f-]{36}:reply$/i.test(
+        input.idempotencyKey,
+      );
+      const requireReplyConnection = isSmokeReply
+        ? ({ clinicId, provider }: Parameters<typeof requireConnection>[0]) =>
+            requireSmokeReplyConnection({
+              clinicId,
+              idempotencyKey: input.idempotencyKey,
+              provider,
+              recipientPhoneE164: input.recipientPhoneE164,
+            })
+        : requireConnection;
+      return sendKapsoMessage({
         apiKey,
         clinicId: input.clinicId,
         fetchImpl,
@@ -121,7 +168,7 @@ export function createKapsoWhatsAppSenders(
         recipientBusinessScopedUserId:
           input.recipientBusinessScopedUserId ?? null,
         recipientPhoneE164: input.recipientPhoneE164,
-        requireConnection,
+        requireConnection: requireReplyConnection,
         reserveCapacity,
         reserveSendSlot,
         route:
@@ -132,7 +179,8 @@ export function createKapsoWhatsAppSenders(
                 kind: "interactive",
                 text: input.text,
               },
-      }),
+      });
+    },
     sendConversationEscalationNotification: (input) =>
       sendKapsoMessage({
         apiKey,
@@ -149,6 +197,27 @@ export function createKapsoWhatsAppSenders(
           kind: "text",
           text: "La Clínica recibió tu solicitud y una persona te contactará pronto.",
         },
+      }),
+    sendSmokeTemplate: (input: KapsoSmokeTemplateRequest) =>
+      sendKapsoMessage({
+        apiKey,
+        beforeSend: () =>
+          requireSmokeTemplateConsent({
+            clinicId: input.clinicId,
+            contactId: input.contactId,
+            consentEvidence: input.consentEvidence,
+            now: now(),
+            phoneE164: input.recipientPhoneE164,
+          }),
+        clinicId: input.clinicId,
+        fetchImpl,
+        idempotencyKey: input.idempotencyKey,
+        now,
+        recipientPhoneE164: input.recipientPhoneE164,
+        requireConnection: requireSmokeConnection,
+        reserveCapacity,
+        reserveSendSlot,
+        route: input.route,
       }),
   };
 }
@@ -226,6 +295,7 @@ async function sendReminder(input: {
 
 async function sendKapsoMessage(input: {
   apiKey: string | undefined;
+  beforeSend?: () => Promise<void>;
   clinicId: string;
   fetchImpl: typeof fetch;
   idempotencyKey: string;
@@ -281,6 +351,7 @@ async function sendKapsoMessage(input: {
       phoneNumberId: connection.phoneNumberId,
     });
     if (waitMs > 0) await waitForRateLimit(waitMs);
+    await input.beforeSend?.();
   } catch (error) {
     await settleCapacity({
       capacityReserved,

@@ -841,6 +841,34 @@
       "when": 1790550000003,
       "tag": "0124_apo111_kapso_funding_readiness",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1790550000004,
+      "tag": "0125_apo112_contact_whatsapp_consent",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1790550000005,
+      "tag": "0126_apo113_setup_link_email_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1790550000006,
+      "tag": "0127_apo114_manual_patient_whatsapp_consent",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1790810000000,
+      "tag": "0128_apo116_template_delivery_activation_gate",
+      "breakpoints": true
     }
   ]
 }

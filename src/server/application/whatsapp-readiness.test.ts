@@ -533,7 +533,7 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
     expect(syncTemplates).not.toHaveBeenCalled();
   });
 
-  it("ejecuta plantillas, billing y E2E por separado y solo termina en ready al completar el último gate", async () => {
+  it("readiness no espera un E2E opcional después de preparar plantillas y billing", async () => {
     const fake = fakeStore();
     const syncTemplates = vi
       .fn<WhatsAppReadinessProvider["syncTemplates"]>()
@@ -586,7 +586,7 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
       },
       dependencies,
     );
-    expect(afterBilling.readiness.status).toBe("pending");
+    expect(afterBilling.readiness.status).toBe("ready");
     expect(getBilling).toHaveBeenCalledOnce();
     expect(runE2ETest).not.toHaveBeenCalled();
 
@@ -877,7 +877,7 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
     expect(ensurePhoneNumberWebhook).toHaveBeenCalledWith("phone-1");
     expect(syncTemplates).toHaveBeenCalledOnce();
     expect(providerGetBilling).toHaveBeenCalledOnce();
-    expect(runE2ETest).toHaveBeenCalledOnce();
+    expect(runE2ETest).not.toHaveBeenCalled();
     expect(fake.completeReconciliation).toHaveBeenCalledWith(
       expect.objectContaining({
         nextAttemptAt: new Date("2026-09-07T12:05:00.000Z"),
@@ -993,7 +993,7 @@ describe("caso de uso de readiness técnico de WhatsApp", () => {
       { provider, store: fake.store },
     );
     expect(providerGetBilling).toHaveBeenCalledOnce();
-    expect(runE2ETest).toHaveBeenCalledOnce();
+    expect(runE2ETest).not.toHaveBeenCalled();
     expect(fake.getState().reconciliation.status).toBe("succeeded");
   });
 

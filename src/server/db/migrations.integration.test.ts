@@ -2009,6 +2009,10 @@ describe("migraciones de PostgreSQL", () => {
                 name: "whatsapp_contact_consent_worker_append",
               },
               {
+                command: "INSERT",
+                name: "whatsapp_contact_consent_clinic_registration_append",
+              },
+              {
                 command: "SELECT",
                 name: "whatsapp_contact_consent_worker_read",
               },
@@ -2036,6 +2040,9 @@ describe("migraciones de PostgreSQL", () => {
                 'clinic_id',
                 'contact_id',
                 'identity_id',
+                'origin',
+                'actor_identity_id',
+                'source_patient_id',
                 'patient_id',
                 'declaration',
                 'accepted_role',
@@ -2052,18 +2059,32 @@ describe("migraciones de PostgreSQL", () => {
           expect(consentColumns).toEqual([
             { column_name: "accepted_at" },
             { column_name: "accepted_role" },
+            { column_name: "actor_identity_id" },
             { column_name: "clinic_id" },
             { column_name: "contact_id" },
             { column_name: "declaration" },
             { column_name: "identity_id" },
             { column_name: "interaction_id" },
+            { column_name: "origin" },
             { column_name: "patient_id" },
             { column_name: "privacy_version" },
             { column_name: "provider" },
+            { column_name: "source_patient_id" },
             { column_name: "status" },
             { column_name: "terms_version" },
             { column_name: "text_reference" },
           ]);
+
+          const consentIdentityNullability = await migrated<
+            Array<{ isNullable: "YES" | "NO" }>
+          >`
+            select is_nullable as "isNullable"
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'pg-drizzle_whatsapp_contact_consent'
+              and column_name = 'identity_id'
+          `;
+          expect(consentIdentityNullability).toEqual([{ isNullable: "YES" }]);
 
           const consentIndexes = await migrated<Array<{ indexName: string }>>`
             select indexname as "indexName"
@@ -2072,13 +2093,15 @@ describe("migraciones de PostgreSQL", () => {
               and tablename = 'pg-drizzle_whatsapp_contact_consent'
               and indexname in (
                 'whatsapp_contact_consent_current_idx',
-                'whatsapp_contact_consent_interaction_unique'
+                'whatsapp_contact_consent_interaction_unique',
+                'whatsapp_contact_consent_source_patient_idx'
               )
             order by indexname
           `;
           expect(consentIndexes).toEqual([
             { indexName: "whatsapp_contact_consent_current_idx" },
             { indexName: "whatsapp_contact_consent_interaction_unique" },
+            { indexName: "whatsapp_contact_consent_source_patient_idx" },
           ]);
           const consentStatusConstraints = await migrated<
             Array<{ constraintName: string }>
@@ -2090,6 +2113,23 @@ describe("migraciones de PostgreSQL", () => {
           `;
           expect(consentStatusConstraints).toEqual([
             { constraintName: "whatsapp_contact_consent_status" },
+          ]);
+
+          const consentOriginConstraints = await migrated<
+            Array<{ constraintName: string }>
+          >`
+            select conname as "constraintName"
+            from pg_constraint
+            where conrelid = 'pg-drizzle_whatsapp_contact_consent'::regclass
+              and conname in (
+                'whatsapp_contact_consent_origin',
+                'whatsapp_contact_consent_origin_evidence'
+              )
+            order by conname
+          `;
+          expect(consentOriginConstraints).toEqual([
+            { constraintName: "whatsapp_contact_consent_origin" },
+            { constraintName: "whatsapp_contact_consent_origin_evidence" },
           ]);
 
           const consentDeclarationConstraints = await migrated<
@@ -2112,12 +2152,24 @@ describe("migraciones de PostgreSQL", () => {
             select conname as "constraintName"
             from pg_constraint
             where conrelid = 'pg-drizzle_whatsapp_contact_consent'::regclass
-              and conname = 'whatsapp_contact_consent_identity_contact_same_clinic_fk'
+              and conname in (
+                'whatsapp_contact_consent_identity_contact_same_clinic_fk',
+                'whatsapp_contact_consent_actor_identity_fk',
+                'whatsapp_contact_consent_source_patient_same_clinic_fk'
+              )
+            order by conname
           `;
           expect(consentForeignKeys).toEqual([
             {
+              constraintName: "whatsapp_contact_consent_actor_identity_fk",
+            },
+            {
               constraintName:
                 "whatsapp_contact_consent_identity_contact_same_clinic_fk",
+            },
+            {
+              constraintName:
+                "whatsapp_contact_consent_source_patient_same_clinic_fk",
             },
           ]);
 

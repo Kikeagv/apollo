@@ -65,7 +65,7 @@ La ficha administrativa de un Paciente que todavía no tiene ningún Contacto vi
 _Avoid_: paciente inválido, paciente sin identidad
 
 **Vínculo Contacto–Paciente**:
-La relación explícita dentro de una Clínica entre un Contacto y un Paciente. Permite que un Contacto esté vinculado a más de un Paciente y que un Paciente tenga varios Contactos; el vínculo de Tutor es su variante con tutela legal registrada.
+La relación explícita dentro de una Clínica entre un Contacto y un Paciente. Permite que un Contacto esté vinculado a más de un Paciente y que un Paciente tenga varios Contactos; el vínculo de Tutor es su variante con tutela legal registrada. El Consentimiento de WhatsApp pertenece al Contacto y cubre sus Pacientes actuales y futuros; otro Contacto vinculado necesita su propio consentimiento.
 _Avoid_: inferir el Paciente desde el Contacto o la última Cita
 
 **Tutor**:
@@ -77,7 +77,7 @@ La solicitud de un paciente para ocupar una fecha liberada. Es alcance de fase 1
 _Avoid_: cola de citas de fase 1
 
 **Activación de clínica**:
-El proceso que deja a una Clínica habilitada para intercambiar mensajes reales por WhatsApp. Incluye la autorización de su propio Business Portfolio/WABA y número mediante un Enlace de configuración de WhatsApp de Kapso, la conexión en modo `coexistence` con la aplicación WhatsApp Business, la asociación `partner_managed`, la provisión y aprobación de plantillas, los webhooks, la prueba extremo a extremo y los gates legales/operativos. El número y los activos Meta siguen siendo propiedad de la Clínica; Praxia no recibe sus credenciales Meta.
+El recorrido de cuatro pasos que habilita una Clínica para intercambiar mensajes reales por WhatsApp: registrar sus datos, enviar al propietario el Enlace de configuración, probar recepción y respuesta con un Contacto controlado antes de tener plantillas aprobadas, y, después de la aprobación, iniciar una conversación de prueba con plantilla y confirmar su entrega. Si la última prueba pasa, el tráfico real queda habilitado automáticamente, sin aprobación manual ni gates separados de activación a nivel de Clínica. El Consentimiento de WhatsApp aplicable a cada Contacto sigue rigiendo los envíos proactivos. El número y los activos Meta siguen siendo propiedad de la Clínica; Praxia no recibe sus credenciales Meta.
 _Avoid_: alta cuando se habla únicamente de crear un registro de clínica
 
 **Conexión de WhatsApp**:
@@ -86,11 +86,11 @@ _Avoid_: una credencial global, un número compartido entre clínicas o asumir q
 
 **Enlace de configuración de WhatsApp**:
 El enlace de Kapso que autoriza a la persona responsable de una Clínica a conectar su Business Portfolio, WABA y número. Puede generarlo el Médico propietario desde la configuración de WhatsApp o el superadmin desde el alta manual; generar uno nuevo revoca el anterior. Es de un solo flujo, vence en 30 días, no contiene secretos de Praxia y nunca permite al superadmin ver OTP o credenciales Meta.
-_Avoid_: enlace permanente, enlace compartido públicamente o generación de un enlace sin preflight de la Clínica
+_Avoid_: enlace permanente o enlace compartido públicamente
 
 **Clínica lista para WhatsApp**:
-El estado técnico en que la Conexión de WhatsApp recibió el evento de número creado, las plantillas críticas están aprobadas, el envío y recepción extremo a extremo funcionan y no existe un bloqueo productivo de Meta. No autoriza por sí mismo datos reales: el consentimiento, el gate legal y la minimización de datos siguen siendo obligatorios.
-_Avoid_: confundirla con Clínica lista para Asclepio o con consentimiento global de todos sus Contactos
+El estado en que la Conexión de WhatsApp recibió el evento de número creado, las plantillas críticas están aprobadas, la Clínica probó recepción y respuesta con un Contacto controlado, completó el envío de prueba iniciado con plantilla y no existe un bloqueo del proveedor. Completar esa última prueba habilita tráfico real. Cada envío proactivo sigue sujeto al Consentimiento de WhatsApp del Contacto destinatario.
+_Avoid_: confundirla con Clínica lista para Asclepio o con consentimiento de un Contacto para otro
 
 **Configuración inicial de Clínica**:
 El recorrido guiado que completa la información y capacidad mínima de una Clínica para que la Agenda pueda operar y Asclepio pueda habilitarse. No incluye la Activación de clínica ni sustituye las aprobaciones externas de WhatsApp.
@@ -189,11 +189,11 @@ El mensaje administrativo por WhatsApp que Asclepio envía al Contacto sobre una
 _Avoid_: mensaje proactivo cuando se habla de comunicación promocional
 
 **Consentimiento de WhatsApp**:
-La autorización explícita, registrable y revocable de un Contacto para recibir una categoría de comunicación de una Clínica por WhatsApp. Puede probarse mediante un checkbox/formulario del paciente, un mensaje explícito iniciado por el paciente o evidencia externa documentada por un Usuario de clínica autorizado. Un número importado o una conversación entrante aislada no concede consentimiento permanente para recordatorios. Un opt-out explícito como “no me escriban más” suspende los envíos proactivos y solo un nuevo consentimiento explícito lo reactiva.
-_Avoid_: asumir consentimiento por tener el número, por haber recibido una cita o por interpretar `NO`/`CANCELAR` sin contexto
+La autorización registrable y revocable de un Contacto para recibir mensajes administrativos de citas de una Clínica por WhatsApp. En el primer contacto, Praxia presenta los términos y el texto indica expresamente ese alcance. `CONTINUAR` al aceptarlos concede el permiso para todos los Pacientes actuales y futuros vinculados a ese Contacto; una aceptación de canal anterior que no se haya revocado se migra al mismo alcance, aunque use una versión previa de los términos. En el alta manual de un Paciente, la Clínica concede automáticamente el permiso al Contacto usado en el alta, sin una confirmación adicional; esto también aplica a menores antes de verificar la tutela. En el alta por WhatsApp, `CONTINUAR` concede el permiso y `registrar` crea la ficha del Paciente. El alta manual de otro Paciente reactiva el permiso si ese Contacto se había dado de baja. Cada concesión conserva origen, actor y fecha. Una aceptación no caduca por cambios posteriores de versión o redacción de los términos. Un opt-out explícito como “no me escriban más” suspende los envíos proactivos hasta una nueva concesión.
+_Avoid_: extenderlo a marketing o contenido clínico, heredarlo entre Contactos, inferirlo de un mensaje entrante aislado o perder el rastro de su origen
 
 **Ventana de servicio de WhatsApp**:
-El período de 24 horas que comienza con un mensaje del Contacto y durante el cual Asclepio puede responder con contenido administrativo permitido sin una plantilla. No crea Consentimiento de WhatsApp para recordatorios futuros ni permite contenido clínico.
+El período de 24 horas que comienza con un mensaje del Contacto y durante el cual Asclepio puede responder con contenido administrativo permitido sin una plantilla. El mensaje entrante por sí solo no concede Consentimiento de WhatsApp para recordatorios futuros ni permite contenido clínico.
 _Avoid_: usarla como autorización permanente o enviar plantillas promocionales por ser una conversación abierta
 
 **Entrega transaccional**:

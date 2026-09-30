@@ -30,6 +30,7 @@ export type WhatsAppRealTrafficBlocker = {
     | "offboarded"
     | "smoke"
     | "smoke-generation"
+    | "template-delivery"
     | "technical-readiness"
     | "traffic-not-enabled"
     | "provider-transport-unverified";
@@ -50,11 +51,12 @@ export function evaluateWhatsAppRealTraffic(input: {
   gates: Partial<
     Record<WhatsAppRealTrafficGateCode, WhatsAppRealTrafficGateInput>
   >;
-  /** Requiere la habilitación manual cuando se evalúa un guard de envío. */
+  /** Exige estado enabled cuando se valida un envío real. */
   requireEnabled?: boolean;
   smoke: {
     controlledTestContact?: boolean;
     providerTransportVerified?: boolean;
+    templateDeliveryVerified?: boolean;
     provisioningEventId?: string | null;
     realPatientsEnabled: boolean;
     status: "failed" | "passed" | "pending";
@@ -110,7 +112,14 @@ export function evaluateWhatsAppRealTraffic(input: {
     blockers.push({
       code: "smoke",
       message:
-        "Debe existir un smoke sintético exitoso que no habilite Pacientes reales",
+        "Debe existir una prueba de transporte exitosa con un Contacto controlado",
+    });
+  }
+  if (input.smoke.templateDeliveryVerified !== true) {
+    blockers.push({
+      code: "template-delivery",
+      message:
+        "El Contacto de prueba no confirmó la entrega de una plantilla aprobada",
     });
   }
   if (
@@ -121,14 +130,14 @@ export function evaluateWhatsAppRealTraffic(input: {
     blockers.push({
       code: "smoke-generation",
       message:
-        "El smoke sintético no corresponde a la generación actual de la Conexión",
+        "La prueba de transporte no corresponde a la generación actual de la Conexión",
     });
   }
   if (input.requireEnabled === true && input.trafficStatus !== "enabled") {
     blockers.push({
       code: "traffic-not-enabled",
       message:
-        "El tráfico real de WhatsApp requiere habilitación manual explícita",
+        "El tráfico real de WhatsApp sigue bloqueado hasta completar la prueba de plantilla aprobada",
     });
   }
   if (
@@ -140,16 +149,6 @@ export function evaluateWhatsAppRealTraffic(input: {
       message:
         "El smoke de Kapso no conserva verificación externa completa para enviar tráfico real",
     });
-  }
-
-  for (const code of whatsappRealTrafficGateCodes) {
-    const gate = input.gates[code];
-    if (gate?.ready !== true || !hasEvidence(gate.evidenceReference)) {
-      blockers.push({
-        code,
-        message: `Falta evidencia del gate ${whatsappRealTrafficGateLabel(code)}`,
-      });
-    }
   }
 
   return { allowed: blockers.length === 0, blockers };
@@ -168,8 +167,4 @@ export function whatsappRealTrafficGateLabel(
     retention: "retención",
     transfers: "transferencias internacionales",
   }[code];
-}
-
-function hasEvidence(value: string | null | undefined) {
-  return value !== null && value !== undefined && value.trim() !== "";
 }

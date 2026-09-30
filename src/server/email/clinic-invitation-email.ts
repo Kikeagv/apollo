@@ -7,6 +7,7 @@ import { createResendClinicInvitationEmailSender } from "~/server/email/resend-c
 import {
   sendSimulatedClinicDoctorInvitation,
   sendSimulatedClinicOwnerInvitation,
+  sendSimulatedClinicWhatsAppSetupLink,
 } from "~/server/email/simulated-identity-email";
 
 export type ClinicOwnerInvitationDelivery = {
@@ -25,6 +26,14 @@ export type ClinicDoctorInvitationDelivery = {
   token: string;
 };
 
+export type ClinicWhatsAppSetupLinkDelivery = {
+  clinicName: string;
+  expiresAt: Date;
+  ownerEmail: string;
+  ownerName: string;
+  setupLinkUrl: string;
+};
+
 /**
  * Puerto de correo de invitaciones de clínica. Los mensajes conservan solo
  * contenido administrativo: nombre de la Clínica, destinatario, vencimiento y
@@ -34,6 +43,9 @@ export type ClinicInvitationEmailSender = {
   sendOwnerInvitation(invitation: ClinicOwnerInvitationDelivery): Promise<void>;
   sendDoctorInvitation(
     invitation: ClinicDoctorInvitationDelivery,
+  ): Promise<void>;
+  sendWhatsAppSetupLink(
+    invitation: ClinicWhatsAppSetupLinkDelivery,
   ): Promise<void>;
 };
 
@@ -66,6 +78,7 @@ export function clinicInvitationEmailSender(): ClinicInvitationEmailSender {
     simulated: () => ({
       sendDoctorInvitation: sendSimulatedClinicDoctorInvitation,
       sendOwnerInvitation: sendSimulatedClinicOwnerInvitation,
+      sendWhatsAppSetupLink: sendSimulatedClinicWhatsAppSetupLink,
     }),
     resend: () =>
       createResendClinicInvitationEmailSender({

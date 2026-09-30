@@ -189,6 +189,154 @@ describe("smoke sintético de WhatsApp", () => {
     expect(result.runId).toBe("smoke-run-106");
     expect(result.testContactId).toBe("controlled-contact-106");
     expect(result.timeoutAt).toEqual(new Date(startedAt.valueOf() + 300_000));
+    expect(
+      result.steps.find((step) => step.code === "real-template-delivery"),
+    ).toMatchObject({ status: "skipped", passed: false });
+  });
+
+  it("registra la entrega de plantilla por intento sobre el smoke real completo", () => {
+    const startedAt = new Date("2026-09-25T12:00:00.000Z");
+    const steps = passingSteps();
+    delete steps["real-template-delivery"];
+    for (const code of whatsappSyntheticSmokeRoundtripStepCodes) {
+      steps[code] = { passed: false, status: "pending" };
+    }
+    let result = evaluateWhatsAppSyntheticSmoke({
+      realPatientsEnabled: false,
+      requireRealRoundtrip: true,
+      runId: "smoke-run-template-delivery",
+      steps,
+      syntheticContact: false,
+      testContactId: "controlled-contact-template",
+      timeoutAt: new Date(startedAt.valueOf() + 300_000),
+    });
+
+    for (const [code, eventId, source] of [
+      ["real-reception", "inbound-template", "provider"],
+      ["real-processing", "inbound-template", "application"],
+      ["real-response", "outbound-template", "provider"],
+      ["real-delivery", "delivery-template", "provider"],
+    ] as const) {
+      result = recordWhatsAppSyntheticSmokeStep(result, {
+        code,
+        eventId,
+        evidence: `${code} observado`,
+        observedAt: startedAt,
+        source,
+        status: "passed",
+      });
+    }
+    expect(result.status).toBe("passed");
+
+    result = recordWhatsAppSyntheticSmokeStep(result, {
+      attemptId: "f5d2cc37-646e-4298-a751-b348c4dc0333",
+      code: "real-template-delivery",
+      eventId: "template-delivery-event",
+      evidence: "Kapso confirmó delivery de la plantilla Utility",
+      observedAt: new Date(startedAt.valueOf() + 5_000),
+      source: "provider",
+      status: "passed",
+      templateKind: "confirmation",
+      templateName: "appointment_confirmation",
+    });
+
+    expect(result.status).toBe("passed");
+    expect(
+      result.steps.find((step) => step.code === "real-template-delivery"),
+    ).toMatchObject({
+      attemptId: "f5d2cc37-646e-4298-a751-b348c4dc0333",
+      passed: true,
+      status: "passed",
+      templateKind: "confirmation",
+      templateName: "appointment_confirmation",
+    });
+  });
+
+  it("mantiene pendiente el roundtrip si un paso operativo está marcado como no ejecutado", () => {
+    const steps = passingSteps();
+    for (const code of whatsappSyntheticSmokeRoundtripStepCodes) {
+      steps[code] = {
+        evidence: `Kapso confirmó ${code}`,
+        eventId: `event-${code}`,
+        observedAt: new Date("2026-09-25T12:00:00.000Z"),
+        passed: true,
+        source: code === "real-processing" ? "application" : "provider",
+      };
+    }
+    steps["real-delivery"] = {
+      message: "A la espera de la confirmación de entrega",
+      passed: false,
+      status: "skipped",
+    };
+
+    const result = evaluateWhatsAppSyntheticSmoke({
+      realPatientsEnabled: false,
+      requireRealRoundtrip: true,
+      steps,
+      syntheticContact: false,
+      testContactId: "controlled-contact-skipped-delivery",
+      timeoutAt: new Date("2026-09-25T12:05:00.000Z"),
+    });
+
+    expect(result.status).toBe("pending");
+    expect(result.providerTransportVerified).toBe(false);
+    expect(
+      result.steps.find((step) => step.code === "real-delivery"),
+    ).toMatchObject({ status: "skipped", passed: false });
+
+    const timedOut = expireWhatsAppSyntheticSmoke(
+      result,
+      new Date("2026-09-25T12:05:00.000Z"),
+    );
+
+    expect(timedOut.status).toBe("failed");
+    expect(
+      timedOut.steps.find((step) => step.code === "real-delivery"),
+    ).toMatchObject({ status: "failed" });
+    expect(timedOut.blockers).toContainEqual(
+      expect.objectContaining({ code: "real-delivery-timeout" }),
+    );
+  });
+
+  it("separa el preflight y las regresiones no ejecutadas del resultado del roundtrip", () => {
+    const steps = {
+      ...Object.fromEntries(
+        whatsappSyntheticSmokeRoundtripStepCodes.map((code) => [
+          code,
+          { passed: false, status: "pending" as const },
+        ]),
+      ),
+      "webhook-preflight": {
+        evidence: null,
+        message: "Kapso no confirmó el preflight",
+        passed: false,
+        source: "provider" as const,
+        status: "failed" as const,
+      },
+    };
+
+    const result = evaluateWhatsAppSyntheticSmoke({
+      realPatientsEnabled: false,
+      requireRealRoundtrip: true,
+      runId: "smoke-run-preflight-only",
+      steps,
+      syntheticContact: false,
+      testContactId: "controlled-contact-preflight-only",
+    });
+
+    expect(result.status).toBe("pending");
+    expect(result.providerTransportVerified).toBe(false);
+    expect(
+      result.steps.find((step) => step.code === "webhook-preflight"),
+    ).toMatchObject({ status: "failed", passed: false });
+    expect(
+      result.steps.find((step) => step.code === "phone-number-created"),
+    ).toMatchObject({
+      message: "Escenario no ejecutado en el smoke operativo",
+      status: "skipped",
+      passed: false,
+    });
+    expect(result.blockers).toEqual([]);
   });
 
   it("falla al vencer el timeout y conserva evidencia sanitizada por paso", () => {

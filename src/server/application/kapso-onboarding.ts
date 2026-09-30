@@ -64,6 +64,8 @@ export type KapsoWhatsAppSetupLinkAuditEvent = {
     | "setup-link-confirmed"
     | "setup-link-created"
     | "setup-link-expired"
+    | "setup-link-email-failed"
+    | "setup-link-email-sent"
     | "setup-link-provider-unavailable"
     | "setup-link-regenerated"
     | "setup-link-revoked"
@@ -85,6 +87,8 @@ export type KapsoWhatsAppOnboardingAuditEvent = {
     | "setup-link-confirmed"
     | "setup-link-created"
     | "setup-link-expired"
+    | "setup-link-email-failed"
+    | "setup-link-email-sent"
     | "setup-link-provider-unavailable"
     | "setup-link-regenerated"
     | "setup-link-revoked"
@@ -96,11 +100,11 @@ export type KapsoWhatsAppOnboardingAuditEvent = {
 };
 
 export type KapsoWhatsAppConnectionUpdate = {
-  connectionType: "coexistence" | "dedicated";
+  connectionType: "simulated" | "coexistence" | "dedicated";
   metadata: Record<string, string | null>;
   phoneNumberE164: string | null;
   phoneNumberId: string | null;
-  provider: "kapso";
+  provider: "simulated" | "kapso";
   status: "blocked" | "pending";
 };
 
@@ -164,10 +168,9 @@ type KapsoOnboardingDependencies = {
   now?: () => Date;
 };
 
-const providerUnavailableNextAction =
-  "Reintentar cuando Kapso esté disponible para confirmar el customer y ejecutar el preflight.";
-const providerUnavailableReason =
-  "Kapso no está disponible para el onboarding.";
+function providerDisplayName(provider: KapsoOnboardingProvider) {
+  return provider.source === "simulated" ? "proveedor simulado" : "Kapso";
+}
 
 export async function getKapsoWhatsAppOnboarding(
   input: {
@@ -187,6 +190,7 @@ export async function getKapsoWhatsAppOnboarding(
   ) {
     return snapshot;
   }
+  const providerName = providerDisplayName(provider);
   const setupLink = snapshot.setupLink;
   const setupLinkProviderId = snapshot.setupLinkProviderId;
 
@@ -216,8 +220,8 @@ export async function getKapsoWhatsAppOnboarding(
             customerId: snapshot.customerId,
             reason:
               status === "expired"
-                ? "El enlace alcanzó su fecha de vencimiento y ya no está disponible en Kapso."
-                : "Kapso ya no reporta el enlace de configuración activo.",
+                ? `El enlace alcanzó su fecha de vencimiento y ya no está disponible en ${providerName}.`
+                : `${providerName} ya no reporta el enlace de configuración activo.`,
             result: "succeeded",
             setupLinkId: setupLinkProviderId,
           },
@@ -257,7 +261,7 @@ export async function getKapsoWhatsAppOnboarding(
         {
           action: setupLinkStatusAuditAction(status),
           customerId: snapshot.customerId,
-          reason: "Kapso actualizó el estado del enlace de configuración.",
+          reason: `${providerName} actualizó el estado del enlace de configuración.`,
           result: "succeeded",
           setupLinkId: remoteLink.id,
         },
@@ -278,6 +282,9 @@ export async function prepareKapsoWhatsAppOnboarding(
   dependencies: KapsoOnboardingDependencies,
 ) {
   const now = dependencies.now ?? (() => new Date());
+  const providerName = providerDisplayName(dependencies.provider);
+  const providerUnavailableReason = `${providerName} no está disponible para el onboarding.`;
+  const providerUnavailableNextAction = `Reintentar cuando ${providerName} esté disponible para confirmar el customer y ejecutar el preflight.`;
   const current = await dependencies.store.read({
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
@@ -287,7 +294,7 @@ export async function prepareKapsoWhatsAppOnboarding(
     (current.connection?.provider === "kapso" &&
     current.connection.connectionType === "dedicated"
       ? "dedicated"
-      : current.preflight?.onboardingMode ?? "coexistence");
+      : (current.preflight?.onboardingMode ?? "coexistence"));
   const localPreflightInput = createPreflightInput(
     input,
     current,
@@ -351,7 +358,7 @@ export async function prepareKapsoWhatsAppOnboarding(
   let customer: KapsoCustomer | undefined;
   let customerAction: "customer-confirmed" | "customer-created";
   try {
-    const customerResult = await findOrCreateCustomer(
+    const customerResult = await findOrCreateKapsoCustomer(
       dependencies.provider,
       externalCustomerId,
       current.clinicName,
@@ -377,7 +384,9 @@ export async function prepareKapsoWhatsAppOnboarding(
       phoneResolution.association === "same-customer" ||
       (evaluation.status === "passed" &&
         phoneResolution.association === "available");
+    const simulatedProvider = dependencies.provider.source === "simulated";
     const persistedPhoneNumber =
+      !simulatedProvider &&
       canPersistPhoneNumber &&
       isValidE164PhoneNumber(input.phoneNumberE164) &&
       input.numberOwnedByClinic
@@ -408,8 +417,8 @@ export async function prepareKapsoWhatsAppOnboarding(
           customerId: customer.id,
           reason:
             customerAction === "customer-created"
-              ? "Customer de Kapso creado para la Clínica."
-              : "Customer de Kapso confirmado para la Clínica.",
+              ? `Customer del ${providerName} creado para la Clínica.`
+              : `Customer del ${providerName} confirmado para la Clínica.`,
           result: "succeeded",
         },
         {
@@ -427,18 +436,21 @@ export async function prepareKapsoWhatsAppOnboarding(
         ? {}
         : {
             connection: {
-              connectionType: onboardingMode,
+              connectionType: simulatedProvider ? "simulated" : onboardingMode,
               metadata: {
                 mode: onboardingMode,
-                source: "kapso-onboarding",
+                source: simulatedProvider ? "praxia-e2e" : "kapso-onboarding",
                 displayPhoneE164: persistedPhoneNumber,
               },
               phoneNumberE164: persistedPhoneNumber,
               phoneNumberId:
+                !simulatedProvider &&
                 phoneResolution.association === "same-customer"
                   ? phoneResolution.phoneNumberId
                   : null,
-              provider: "kapso" as const,
+              provider: simulatedProvider
+                ? ("simulated" as const)
+                : ("kapso" as const),
               status: evaluation.status === "passed" ? "pending" : "blocked",
             },
           }),
@@ -520,7 +532,7 @@ function normalizeOwnerName(name: string) {
   return name.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
-async function findOrCreateCustomer(
+export async function findOrCreateKapsoCustomer(
   provider: KapsoOnboardingProvider,
   externalCustomerId: string,
   name: string,

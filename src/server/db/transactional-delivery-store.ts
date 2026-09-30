@@ -63,6 +63,7 @@ import {
 } from "~/server/db/clinic-context";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
 import { recordSmokeReplyOutcome } from "~/server/db/whatsapp-smoke-run-store";
+import { recordSmokeTemplateOutcome } from "~/server/db/whatsapp-smoke-template-store";
 import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
 import type { db } from "~/server/db";
 import {
@@ -509,6 +510,19 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
     async recordProviderCallback(input) {
       await inWhatsAppOutboundWorkerTransaction(async (transaction) => {
         const callbackNow = new Date();
+        if (
+          await recordSmokeTemplateOutcome(transaction, {
+            idempotencyKey: input.idempotencyKey ?? "",
+            now: callbackNow,
+            phoneNumberId: input.phoneNumberId ?? null,
+            providerEventId: input.providerEventId,
+            providerMessageId: input.providerMessageId,
+            status: input.status === "accepted" ? "sent" : input.status,
+            error: input.error,
+          })
+        ) {
+          return;
+        }
         const delivery = await findDeliveryForCallback(transaction, input);
         if (delivery !== undefined) {
           const currentStatus = whatsappStatusFromDelivery(delivery.status);

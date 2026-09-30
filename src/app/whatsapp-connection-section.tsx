@@ -85,7 +85,7 @@ function readinessGateLabel(
 ) {
   return {
     billing: "Billing y crédito",
-    e2e: "Prueba extremo a extremo",
+    e2e: "Diagnóstico E2E (opcional)",
     number: "Número y WABA",
     templates: "Plantillas críticas",
     webhooks: "Webhooks",
@@ -265,7 +265,6 @@ export function WhatsAppSetupLinkSection() {
   const snapshot = onboarding.data;
   const setupLink = snapshot?.setupLink ?? null;
   const status = setupLink === null ? null : whatsappSetupLinkStatus(setupLink);
-  const preflightPassed = snapshot?.preflight?.status === "passed";
 
   return (
     <Card data-whatsapp-setup-link="true">
@@ -295,13 +294,6 @@ export function WhatsAppSetupLinkSection() {
                 contraseña y credenciales de Meta; Praxia no los guarda ni los
                 muestra.
               </p>
-              {snapshot.preflight?.status !== "passed" ? (
-                <p className="text-muted-foreground mt-2">
-                  Primero complete el preflight de WhatsApp.{" "}
-                  {snapshot.preflight?.nextAction ??
-                    "Todavía no se ha ejecutado."}
-                </p>
-              ) : null}
             </div>
             {setupLink !== null && status !== null ? (
               <dl className="grid gap-4 text-sm sm:grid-cols-2">
@@ -387,7 +379,7 @@ export function WhatsAppSetupLinkSection() {
                 </a>
               ) : null}
               <Button
-                disabled={!preflightPassed || manageSetupLink.isPending}
+                disabled={manageSetupLink.isPending}
                 onClick={() => manageSetupLink.mutate({ action: "generate" })}
                 type="button"
               >

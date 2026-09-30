@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -20,10 +20,16 @@ import {
   verifyPatientGuardianship,
 } from "./administrative-records";
 import { db } from "../db";
+import { createWhatsAppConsentGate } from "./whatsapp-consent";
+import { drizzleWhatsAppInboundStore } from "../db/whatsapp-inbound-store";
 import {
   inClinicTransaction,
+  inWhatsAppInboundWorkerTransaction,
   inSuperadminTransaction,
+  inWhatsAppOutboundWorkerTransaction,
+  setWhatsAppWorkerClinicContext,
 } from "../db/clinic-context";
+import { readWhatsAppConsentSnapshot } from "../db/whatsapp-consent-query";
 import {
   drizzleAdministrativeRecordsStore,
   TutorOnlyForMinorPatientError,
@@ -35,6 +41,8 @@ import {
   contactPatientLinks,
   contacts,
   patients,
+  whatsappContactConsents,
+  whatsappIdentities,
   user as identities,
 } from "../db/schema";
 
@@ -282,7 +290,7 @@ describe("fichas administrativas persistentes", () => {
         const registered =
           await registerAdministrativeRecordsForManualAppointment(
             {
-              birthDate: "2018-04-02",
+              birthDate: "1990-04-02",
               clinicId: fixture.primary.clinicId,
               contactName: " Ana Inline ",
               identityId: fixture.secretary.identityId,
@@ -291,6 +299,22 @@ describe("fichas administrativas persistentes", () => {
             },
             drizzleAdministrativeRecordsStore,
           );
+
+        const outboundDecision = await inWhatsAppOutboundWorkerTransaction(
+          async (transaction) => {
+            await setWhatsAppWorkerClinicContext(
+              transaction,
+              fixture.primary.clinicId,
+            );
+            return readWhatsAppConsentSnapshot(transaction, {
+              clinicId: fixture.primary.clinicId,
+              contactId: registered.contact.id,
+              now: new Date(Date.now() + 10_000),
+              patientId: registered.patient.id,
+            });
+          },
+        );
+        expect(outboundDecision.decision).toBe("allowed");
 
         await expect(
           listAdministrativeRecords(
@@ -308,7 +332,7 @@ describe("fichas administrativas persistentes", () => {
           ],
           patients: [
             {
-              birthDate: "2018-04-02",
+              birthDate: "1990-04-02",
               contactIds: [registered.contact.id],
               id: registered.patient.id,
               name: "Lucía Inline",
@@ -359,7 +383,7 @@ describe("fichas administrativas persistentes", () => {
           ],
           patients: [
             {
-              birthDate: "2018-04-02",
+              birthDate: "1990-04-02",
               contactIds: [registered.contact.id],
               id: registered.patient.id,
               name: "Lucía Inline",
@@ -640,6 +664,172 @@ describe("fichas administrativas persistentes", () => {
       }
     },
   );
+
+  databaseTest(
+    "concede elegibilidad outbound al Contacto de alta de un menor sin heredarla a otro Contacto",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const initialContact = await createContact(
+          {
+            clinicId: fixture.primary.clinicId,
+            identityId: fixture.primary.identityId,
+            name: "Ana Martínez",
+            phone: "+503 7123-4567",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        const whatsappIdentity = await inWhatsAppInboundWorkerTransaction(
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.primary.clinicId}, true)`,
+            );
+            const [created] = await transaction
+              .insert(whatsappIdentities)
+              .values({
+                clinicId: fixture.primary.clinicId,
+                contactId: initialContact.id,
+                phoneE164: initialContact.phoneE164,
+                phoneNumberId: `simulated-${fixture.primary.clinicId}`,
+                status: "active",
+              })
+              .returning({ id: whatsappIdentities.id });
+            if (created === undefined) {
+              throw new Error("No se creó la Identidad de WhatsApp de prueba");
+            }
+            return created;
+          },
+        );
+        const optedOutAt = new Date(Date.now() - 60_000);
+        await expect(
+          createWhatsAppConsentGate(drizzleWhatsAppInboundStore).check({
+            clinicId: fixture.primary.clinicId,
+            contactId: initialContact.id,
+            identityId: whatsappIdentity.id,
+            interactiveAction: null,
+            messageId: `opt-out-${randomUUID()}`,
+            now: optedOutAt,
+            phoneE164: initialContact.phoneE164,
+            text: "No me escriban más",
+          }),
+        ).resolves.toMatchObject({ kind: "revoked" });
+
+        const registration = await registerPatient(
+          {
+            birthDate: "2018-04-02",
+            clinicId: fixture.primary.clinicId,
+            contact: { contactId: initialContact.id, kind: "existing" },
+            guardianDui: "01234567-8",
+            identityId: fixture.primary.identityId,
+            patientName: "Lucía Martínez",
+            relationship: "tutor",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        const otherContact = await addPatientContact(
+          {
+            clinicId: fixture.primary.clinicId,
+            contact: {
+              kind: "new",
+              name: "Otro Contacto",
+              phone: "+503 7000-0001",
+            },
+            identityId: fixture.primary.identityId,
+            patientId: registration.patient.id,
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        const now = new Date(Date.now() + 10_000);
+        const outboundDecision = async (contactId: string) =>
+          inWhatsAppOutboundWorkerTransaction(async (transaction) => {
+            await setWhatsAppWorkerClinicContext(
+              transaction,
+              fixture.primary.clinicId,
+            );
+            return readWhatsAppConsentSnapshot(transaction, {
+              clinicId: fixture.primary.clinicId,
+              contactId,
+              now,
+              patientId: registration.patient.id,
+            });
+          });
+
+        const consentHistory = await inClinicTransaction(
+          fixture.primary,
+          (transaction) =>
+            transaction
+              .select()
+              .from(whatsappContactConsents)
+              .where(
+                and(
+                  eq(
+                    whatsappContactConsents.clinicId,
+                    fixture.primary.clinicId,
+                  ),
+                  eq(whatsappContactConsents.contactId, initialContact.id),
+                ),
+              )
+              .orderBy(
+                desc(whatsappContactConsents.acceptedAt),
+                desc(whatsappContactConsents.createdAt),
+              ),
+        );
+        const latestConsent = consentHistory[0];
+        if (latestConsent === undefined) {
+          throw new Error("Falta la concesión manual en el historial");
+        }
+
+        await expect(
+          outboundDecision(registration.contact.id),
+        ).resolves.toMatchObject({ decision: "allowed" });
+        await expect(
+          outboundDecision(otherContact.contact.id),
+        ).resolves.toMatchObject({ decision: "blocked" });
+        expect(consentHistory).toHaveLength(2);
+        expect(latestConsent).toMatchObject({
+          acceptedRole: "contact",
+          actorIdentityId: fixture.primary.identityId,
+          declaration: "REGISTRO_MANUAL_DE_PACIENTE",
+          identityId: null,
+          origin: "manual_patient_registration",
+          patientId: null,
+          provider: "kapso",
+          scope: "contact",
+          sourcePatientId: registration.patient.id,
+          status: "accepted",
+        });
+        expect(latestConsent.acceptedAt.valueOf()).toBeGreaterThan(
+          optedOutAt.valueOf(),
+        );
+        await expect(
+          inClinicTransaction(fixture.primary, (transaction) =>
+            transaction.insert(whatsappContactConsents).values({
+              acceptedAt: new Date(),
+              acceptedRole: "contact",
+              actorIdentityId: fixture.secretary.identityId,
+              clinicId: fixture.primary.clinicId,
+              contactId: registration.contact.id,
+              declaration: "REGISTRO_MANUAL_DE_PACIENTE",
+              identityId: null,
+              interactionId: `manual-patient-registration:${registration.patient.id}`,
+              origin: "manual_patient_registration",
+              patientId: null,
+              phoneE164: registration.contact.phoneE164,
+              privacyVersion: latestConsent.privacyVersion,
+              provider: "kapso",
+              scope: "contact",
+              sourcePatientId: registration.patient.id,
+              status: "accepted",
+              termsVersion: latestConsent.termsVersion,
+              textReference: latestConsent.textReference,
+            }),
+          ),
+        ).rejects.toMatchObject({ cause: { code: "42501" } });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
 });
 
 async function createFixture() {
@@ -722,6 +912,9 @@ async function createFixture() {
             await transaction.execute(
               sql`select set_config('app.clinic_id', ${clinicId}, true)`,
             );
+            await transaction
+              .delete(whatsappContactConsents)
+              .where(eq(whatsappContactConsents.clinicId, clinicId));
             await transaction.delete(clinics).where(eq(clinics.id, clinicId));
           },
         );

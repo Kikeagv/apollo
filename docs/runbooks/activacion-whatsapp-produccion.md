@@ -1,9 +1,14 @@
 # Activación de WhatsApp en producción para Praxia
 
-Runbook de operación para habilitar hasta cinco Clínicas beta con Kapso. Cada
-Clínica conecta su propio número/WABA mediante setup link y `coexistence`.
+Runbook operativo para el alta y la activación de Clínicas con Kapso. El
+recorrido de cada Clínica tiene cuatro pasos; la entrega confirmada de una
+conversación iniciada con plantilla aprobada habilita automáticamente el
+tráfico real, de acuerdo con [ADR 0044](../adr/0044-activacion-corta-y-consentimiento-por-contacto.md).
 Kapso es transporte, onboarding, webhooks y billing; el agente, la agenda, el
 consentimiento, las conversaciones y la auditoría viven en Praxia.
+
+Este runbook describe el proceso aprobado en ADR 0044. El despliegue debe
+conservar la evidencia del roundtrip y del callback de entrega por Clínica.
 
 Fuentes del proveedor: [customer guide](https://docs.kapso.ai/docs/platform/customer-guide),
 [manage setup links](https://docs.kapso.ai/docs/platform/setup-links/manage),
@@ -12,130 +17,103 @@ Fuentes del proveedor: [customer guide](https://docs.kapso.ai/docs/platform/cust
 [pricing FAQ](https://docs.kapso.ai/docs/whatsapp/pricing-faq) y
 [Meta message billing](https://docs.kapso.ai/docs/whatsapp/meta-message-billing).
 
-## Estado inicial
+## Modelo de operación
 
 | Ítem | Criterio |
 | --- | --- |
 | Proveedor WhatsApp | Kapso; adaptador simulado disponible para pruebas |
 | Modelo por Clínica | Un número propio y un WABA propio |
-| Conexión | `coexistence` con WhatsApp Business App |
+| Conexión | `coexistence` o `dedicated`, según modalidad de la Clínica |
 | Aplicación Meta | Aplicación predeterminada de Kapso |
 | Billing | `partner_managed`, créditos centrales, atribución por Clínica |
 | Inbox/agente | Praxia conserva agente, agenda, handoff y fuente de verdad |
 | Webhooks | JSON estructurado v2, endpoint compartido, sin buffering inicial |
 | Clientes Twilio | Ninguno; no hay migración ni fallback automático |
-| Datos reales | Bloqueados hasta gate legal y de privacidad |
+| Datos reales | Se habilitan al completar la prueba de plantilla del paso 4; cada envío proactivo conserva su control de consentimiento por Contacto |
 
 ## Roles y límites
 
 ### Superadmin de Praxia
 
 - Crea la Clínica y su customer en Kapso.
-- Ejecuta el preflight, genera/revoca/regenera el setup link y ve los estados.
-- Puede reintentar provisioning, plantillas, webhooks y E2E.
+- Registra los datos de la Clínica, envía/revoca/regenera el setup link y ve los estados.
+- Puede reintentar provisioning, plantillas y webhooks. El E2E/preflight es un
+  diagnóstico opcional y no forma parte de la activación por Clínica.
 - No ve OTP, QR, contraseñas ni credenciales Meta.
-- Puede abrir el circuito de protección solo después de corregir la causa y
-  dejar auditoría.
+- Puede abrir el circuito de protección después de corregir la causa y dejar
+  auditoría.
 
 ### Médico propietario de la Clínica
 
-- Es la persona autorizada para Meta y puede generar/completar el setup link.
+- Es la persona autorizada para Meta y completa el setup link.
 - Aporta el número propio, Business Portfolio/WABA, WhatsApp Business App y
   dispositivo para QR.
-- Revisa display name, perfil, aviso y términos de su negocio.
-- Confirma opt-ins y operación de la Clínica.
+- Revisa display name y perfil comercial.
 
 ### Personal de clínica
 
 - Puede operar Panacea y recibir handoffs según su rol.
 - No puede cambiar billing, plantillas, conexión, webhooks ni propiedad Meta.
 
-## Fase 0 — Preflight global
+## Activación de una Clínica
 
-- [ ] Existe sitio HTTPS público de Praxia con contacto, privacidad y términos.
-- [ ] El contrato Praxia–Clínica, DPA, retención y transferencias están
-      aprobados para datos administrativos de citas.
-- [ ] Está definido el contacto de soporte y la escalación ante incidentes.
-- [ ] El endpoint de webhooks tiene HTTPS, validación de HMAC sobre raw body,
-      comparación timing-safe, idempotencia durable y respuesta rápida 200.
-- [ ] El worker/outbox, métricas, alertas, circuit breaker y backoff están
-      desplegados.
-- [ ] Los secretos de proyecto viven solo en el gestor autorizado y están
-      separados por entorno.
-- [ ] El catálogo de plantillas y locales exactos está versionado por Praxia.
-- [ ] Se validó el pricing vigente de Kapso y Meta antes de comprar créditos;
-      el plan recomendado para beta es Pro + números adicionales si el volumen
-      permanece por debajo de 100.000 mensajes/mes, sujeto a precio vigente.
+Repetir estos cuatro pasos por Clínica, sin reutilizar enlaces, números o WABA:
 
-## Fase 1 — Alta de una Clínica
+1. **Registrar los datos de la Clínica.** Crear la Clínica, su propietario,
+   zona horaria y la asociación de Kapso.
+2. **Enviar el enlace de enrolamiento.** Entregar al propietario un setup link
+   activo por un canal autenticado. El propietario conecta su WABA y número;
+   completa Embedded Signup y QR cuando la modalidad lo requiere.
+3. **Probar recepción y respuesta.** Antes de aprobar plantillas, enviar texto
+   desde un Contacto controlado y confirmar que Praxia lo recibe y que la
+   respuesta de la Clínica llega al Contacto.
+4. **Probar inicio con plantilla.** Después de que Meta apruebe la plantilla,
+   iniciar con ella una conversación al Contacto controlado y confirmar el
+   callback `delivered` o `read`. Al completar esta prueba, Praxia habilita el
+   tráfico real sin una aprobación manual adicional.
 
-Repetir para cada Clínica, sin reutilizar enlaces, números o WABA.
+El paso 3 prueba el intercambio dentro de la ventana abierta por el mensaje del
+Contacto. El paso 4 prueba el inicio proactivo con plantilla fuera de esa
+ventana. La aceptación de un endpoint de webhook o un estado `accepted` de API
+no sustituye la confirmación de entrega.
 
-1. Crear/confirmar la Clínica, owner, zona horaria y customer ID de Kapso.
-2. Ejecutar el preflight de número propio, WhatsApp Business App, autoridad
-   Meta, sitio, display name y capacidad QR.
-3. Mostrar el aviso de `partner_managed` y la separación de cargos Meta/Kapso.
-4. Generar un único setup link para `coexistence`; registrar actor, vencimiento
-   de 30 días y estado `pending`.
-5. Enviar el enlace al propietario por canal autenticado. El superadmin puede
-   abrir el flujo manual y volver a generar el enlace si vence o falla.
-6. El propietario completa Embedded Signup, selecciona su WABA/número y
-   escanea el QR desde la WhatsApp Business App.
-7. Esperar `whatsapp.phone_number.created`; no inferir conexión desde el
-   redirect del navegador.
-8. Ejecutar provisioning automático y marcar `ready` solo con todos los gates.
+### Trabajo automático de la plataforma
 
-## Fase 2 — Provisioning y configuración
+Al recibir `whatsapp.phone_number.created`, Praxia asocia el customer, la
+Clínica, WABA y `phone_number_id`, provisiona webhooks, sincroniza el catálogo
+de plantillas, consulta billing y registra el resultado. Los fallos conservan
+su causa y permiten reintento; la redirección del navegador no marca por sí
+sola una conexión como lista.
 
-Para cada `phone_number_id` nuevo:
+### Cobertura automatizada
 
-- [ ] Asociar de forma única customer, Clínica, WABA, display phone y estado.
-- [ ] Crear webhooks de número para `received`, `sent`, `delivered`, `read`,
-      `failed`, `conversation.created`, `conversation.ended` y
-      `conversation.inactive`.
-- [ ] Suscribirse a `whatsapp.phone_number.deleted` y detener envíos si ocurre.
-- [ ] Sincronizar templates centralizados de confirmación, recordatorio,
-      cancelación y reprogramación; esperar `APPROVED` en el locale exacto.
-- [ ] Verificar partner billing, crédito, umbral de alerta y atribución.
-- [ ] Actualizar la Conexión de WhatsApp y registrar el resultado append-only.
+Por Clínica se ejecutan los dos recorridos de transporte de los pasos 3 y 4.
+Firma inválida, duplicados, reintentos, batching, takeover, consentimiento,
+tutela, templates bloqueadas, billing y circuit breaker siguen como pruebas
+automatizadas del producto. Un paso que el runner no ejecuta se informa como
+“no ejecutado”; no se contabiliza como fallo de un roundtrip distinto. El
+preflight del webhook de proyecto de Kapso acredita solo ese preflight.
 
-Un error deja la conexión en `provisioning`, `degraded` o `blocked`; nunca se
-oculta en logs ni se marca `ready` parcialmente.
+### Consentimiento para mensajes
 
-## Fase 3 — Smoke y aceptación
+- El consentimiento cubre mensajes administrativos de citas: confirmaciones,
+  recordatorios, cancelaciones y reprogramaciones. No cubre marketing ni
+  contenido clínico.
+- En WhatsApp, `CONTINUAR` acepta los términos y concede al Contacto el permiso
+  para todos sus Pacientes actuales y futuros. `registrar` crea la ficha del
+  Paciente y no solicita una segunda aceptación.
+- En el alta manual de un Paciente desde la Clínica, el Contacto usado recibe
+  automáticamente el permiso, con origen, actor y fecha auditables. Aplica
+  también a menores antes de verificar la tutela y reactiva el permiso si el
+  Contacto se había dado de baja.
+- El permiso no se hereda entre Contactos. Cada Contacto añadido necesita su
+  propia aceptación. Las aceptaciones de canal previas que no fueron revocadas
+  se migran al mismo alcance y no vencen cuando cambian los términos.
 
-Usar contactos sintéticos y una cuenta interna con consentimiento de prueba.
-
-- [ ] Entrante de texto nuevo → resolución BSUID/teléfono → agente → respuesta.
-- [ ] Mensaje escrito desde Business App → `business_app` → almacenamiento y
-      `human_takeover`; el agente queda pausado.
-- [ ] `history_sync` se almacena sin generar respuestas.
-- [ ] Audio, imagen, documento, ubicación e interactivo → evento almacenado y
-      escalamiento, sin descarga/interpretación.
-- [ ] Plantilla fuera de ventana de servicio → delivery statuses y correlación
-      con la Entrega transaccional.
-- [ ] Duplicado/replay/lote/firma inválida → idempotencia o rechazo correcto.
-- [ ] Timeout/429/409 → backoff y sin duplicación.
-- [ ] `phone_number_id` desconocido → rechazo y alerta, sin cruzar tenants.
-- [ ] Opt-out explícito (“no me escriban más”) → bloqueo de envíos proactivos;
-      un nuevo consentimiento explícito es necesario para reactivar.
-- [ ] Datos clínicos en un mensaje → redirección a canal seguro y no envío.
-
-## Fase 4 — Habilitación de tráfico real
-
-La Clínica solo se habilita cuando:
-
-- [ ] Conexión técnica `ready`.
-- [ ] Gate legal/privacidad y contrato cerrados.
-- [ ] Consentimiento por Contacto/categoría registrable y auditable.
-- [ ] La Clínica acepta la operación `partner_managed` y tiene créditos.
-- [ ] No existe bloqueo de Meta, display name pendiente que impida producción,
-      pausa de calidad, webhook pausado ni deuda de billing.
-- [ ] Superadmin aprobó la evidencia de smoke y autorizó el cambio.
-
-El primer tráfico real debe ser administrativo y de baja escala. No incluir
-diagnóstico, resultados, medicamentos, DUI, notas clínicas, documentos ni
-transcripciones.
+El Contacto puede detener mensajes proactivos con un opt-out. La creación
+manual posterior de un Paciente concede de nuevo el permiso al Contacto usado.
+Ningún mensaje debe incluir diagnóstico, resultados, medicamentos, DUI, notas
+clínicas ni documentos.
 
 ## Circuit breaker y continuidad
 

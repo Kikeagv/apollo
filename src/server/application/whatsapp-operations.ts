@@ -298,7 +298,7 @@ export async function authorizeWhatsAppOffboarding(
   });
 }
 
-export async function runWhatsAppSyntheticSmoke(
+export async function startWhatsAppInboundRoundtrip(
   input: {
     actorIdentityId: string;
     clinicId: string;
@@ -317,14 +317,49 @@ export async function runWhatsAppSyntheticSmoke(
   const isKapso = snapshot.connection?.provider === "kapso";
   const canStartKapsoSmoke =
     isKapso &&
-    snapshot.trafficStatus !== "offboarded" &&
-    snapshot.connection?.status !== "disconnected" &&
+    !snapshot.clinicIsSynthetic &&
+    snapshot.trafficStatus === "blocked" &&
+    snapshot.circuitStatus === "closed" &&
+    snapshot.connection?.status === "ready" &&
     snapshot.connection?.phoneNumberId !== null &&
     snapshot.connection?.projectWebhookId !== null;
   const testContact = canStartKapsoSmoke
     ? await resolveSmokeTestContact(input, dependencies.store)
     : null;
   const timeoutAt = isKapso ? new Date(startedAt.valueOf() + 5 * 60_000) : null;
+  if (isKapso) {
+    const connection = snapshot.connection;
+    if (
+      !canStartKapsoSmoke ||
+      testContact === null ||
+      connection?.provisioningEventId == null
+    ) {
+      throw new Error(
+        "Se requiere una Clínica real, una Conexión Kapso lista y el circuito cerrado para iniciar la prueba",
+      );
+    }
+    const result = evaluateWhatsAppSyntheticSmoke({
+      realPatientsEnabled: false,
+      requireRealRoundtrip: true,
+      runId,
+      steps: {},
+      syntheticContact: false,
+      testContactId: testContact.id,
+      testContactMaskedPhone: testContact.maskedPhone,
+      timeoutAt,
+    });
+    await dependencies.store.saveSyntheticSmokeRun({
+      actorIdentityId: input.actorIdentityId,
+      clinicId: input.clinicId,
+      finishedAt: null,
+      provisioningEventId: connection.provisioningEventId,
+      result,
+      runId,
+      startedAt,
+    });
+    return { ...result, finishedAt: null, id: runId, startedAt };
+  }
+
   const syntheticContactId = testContact
     ? `synthetic-smoke:${testContact.id}`
     : `synthetic-smoke:${input.clinicId}`;
@@ -349,6 +384,7 @@ export async function runWhatsAppSyntheticSmoke(
       syntheticContact: true,
     });
   let providerError: string | null = null;
+  let runnerAttempted = false;
   const isSimulated = snapshot.connection?.provider === "simulated";
   const phoneNumberId =
     snapshot.connection?.phoneNumberId ??
@@ -367,6 +403,7 @@ export async function runWhatsAppSyntheticSmoke(
       "No hay evidencia suficiente de número y webhook para ejecutar el smoke";
   } else {
     try {
+      runnerAttempted = true;
       rawResult = await dependencies.runner.run({
         clinicId: input.clinicId,
         phoneNumberId,
@@ -380,17 +417,18 @@ export async function runWhatsAppSyntheticSmoke(
   }
   if (isKapso) {
     const preflight = rawResult.steps["webhook-preflight"];
-    if (providerError !== null || preflight === undefined) {
+    if (preflight === undefined) {
       rawResult = {
         ...rawResult,
         steps: {
           ...rawResult.steps,
           "webhook-preflight": {
             evidence: null,
-            message: providerError ?? "Kapso no confirmó el preflight",
+            message:
+              providerError ?? "El runner no ejecutó el preflight del webhook",
             passed: false,
             source: "provider" as const,
-            status: "failed" as const,
+            status: providerError === null ? "skipped" : "failed",
           },
         },
       };
@@ -429,7 +467,7 @@ export async function runWhatsAppSyntheticSmoke(
         "La Conexión cambió de generación mientras se ejecutaba el smoke",
     });
   }
-  if (providerError !== null) {
+  if (providerError !== null && (!isKapso || !runnerAttempted)) {
     result.status = "failed";
     result.blockers.unshift({ code: "runner", message: providerError });
   }
@@ -504,7 +542,9 @@ export async function enableWhatsAppRealTraffic(
   dependencies: { store: WhatsAppOperationsStore },
 ) {
   if (!input.manualConfirmation) {
-    throw new Error("Habilitar tráfico real requiere confirmación explícita");
+    throw new Error(
+      "El tráfico real se habilita al confirmar la prueba de plantilla aprobada",
+    );
   }
   const snapshot = await dependencies.store.read(input);
   const evaluation = evaluateWhatsAppOperationsTraffic(snapshot);
@@ -827,14 +867,32 @@ function evaluateTraffic(
     connectionProvider: snapshot.connection?.provider,
     connectionStatus: snapshot.connection?.status ?? null,
     gates: snapshot.gates,
-    smoke: snapshot.latestSmoke ?? {
-      controlledTestContact: false,
-      providerTransportVerified: false,
-      realPatientsEnabled: false,
-      provisioningEventId: null,
-      status: "pending",
-      syntheticContact: false,
-    },
+    smoke:
+      snapshot.latestSmoke === null
+        ? {
+            controlledTestContact: false,
+            providerTransportVerified: false,
+            templateDeliveryVerified: false,
+            realPatientsEnabled: false,
+            provisioningEventId: null,
+            status: "pending",
+            syntheticContact: false,
+          }
+        : {
+            controlledTestContact: snapshot.latestSmoke.controlledTestContact,
+            providerTransportVerified:
+              snapshot.latestSmoke.providerTransportVerified,
+            templateDeliveryVerified: snapshot.latestSmoke.steps.some(
+              (step) =>
+                step.code === "real-template-delivery" &&
+                step.status === "passed" &&
+                step.passed,
+            ),
+            realPatientsEnabled: snapshot.latestSmoke.realPatientsEnabled,
+            provisioningEventId: snapshot.latestSmoke.provisioningEventId,
+            status: snapshot.latestSmoke.status,
+            syntheticContact: snapshot.latestSmoke.syntheticContact,
+          },
     technicalBlockers: snapshot.technicalReadiness.blockers,
     technicalReadiness: snapshot.technicalReadiness.status,
     trafficStatus: snapshot.trafficStatus,

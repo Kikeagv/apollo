@@ -102,7 +102,7 @@ export async function getClinicSupervisionSummary(
     dependencies.readCircuitBreaker(input),
   ]);
   const incompleteGate = readiness.readiness.gates.find(
-    (gate) => gate.status !== "ready",
+    (gate) => gate.code !== "e2e" && gate.status !== "ready",
   );
   const billingGate = readiness.readiness.gates.find(
     (gate) => gate.code === "billing",

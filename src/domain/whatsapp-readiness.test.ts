@@ -116,17 +116,12 @@ describe("readiness técnico de la Conexión de WhatsApp", () => {
     ).toBe(false);
   });
 
-  it("solo declara ready cuando número, webhooks, plantillas, billing y E2E pasan", () => {
+  it("declara ready con número, webhooks, plantillas y billing", () => {
     const result = evaluateWhatsAppReadiness(readyInput());
 
     expect(result.status).toBe("ready");
     expect(result.gates.every((gate) => gate.status === "ready")).toBe(true);
     expect(result.nextAction).toBeNull();
-    expect(result.legalAuthorization).toEqual({
-      allowed: false,
-      message:
-        "El readiness técnico no autoriza datos reales; consentimiento y gates legales siguen siendo obligatorios.",
-    });
   });
 
   it("conserva un bloqueo hasta que una acción manual autoriza la recuperación", () => {
@@ -329,7 +324,7 @@ describe("readiness técnico de la Conexión de WhatsApp", () => {
     );
   });
 
-  it("mantiene pendiente el preflight de webhook hasta tener roundtrip completo", () => {
+  it("conserva el preflight de webhook como diagnóstico opcional", () => {
     const result = evaluateWhatsAppReadiness(
       readyInput({
         e2e: {
@@ -341,8 +336,11 @@ describe("readiness técnico de la Conexión de WhatsApp", () => {
       }),
     );
 
-    expect(result.status).toBe("pending");
-    expect(result.nextAction).toContain("envío, recepción y delivery");
+    expect(result.status).toBe("ready");
+    expect(result.nextAction).toBeNull();
+    expect(result.gates.find((gate) => gate.code === "e2e")?.status).toBe(
+      "pending",
+    );
   });
 
   it("requiere revalidar la salud antes de permitir envíos", () => {

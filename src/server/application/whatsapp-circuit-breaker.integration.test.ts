@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import {
   buildWhatsAppConsentPolicy,
-  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
   WHATSAPP_CONSENT_TEXTUAL_RESPONSE,
 } from "~/domain/whatsapp-consent";
 import { WHATSAPP_BILLING_RESERVATION_LEASE_MS } from "./whatsapp-billing-capacity";
@@ -780,42 +779,23 @@ async function createFixture() {
       });
       if (terms === undefined) throw new Error("Faltan Términos de Clínica");
       const consentPolicy = buildWhatsAppConsentPolicy(terms.currentVersion);
-      await transaction.insert(whatsappContactConsents).values([
-        {
-          acceptedAt: connectionNow,
-          acceptedRole: "contact",
-          clinicId: clinic.id,
-          contactId: contact.id,
-          declaration: WHATSAPP_CONSENT_TEXTUAL_RESPONSE,
-          identityId: whatsappIdentity.id,
-          interactionId: `apo-107-channel-${clinic.id}`,
-          patientId: null,
-          phoneE164: "+50370000001",
-          privacyVersion: consentPolicy.privacyVersion,
-          provider: "kapso",
-          scope: "channel",
-          status: "accepted",
-          termsVersion: consentPolicy.termsVersion,
-          textReference: consentPolicy.immutableTextReference,
-        },
-        {
-          acceptedAt: connectionNow,
-          acceptedRole: "adult-patient",
-          clinicId: clinic.id,
-          contactId: contact.id,
-          declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
-          identityId: whatsappIdentity.id,
-          interactionId: `apo-107-patient-${clinic.id}`,
-          patientId: patient.id,
-          phoneE164: "+50370000001",
-          privacyVersion: consentPolicy.privacyVersion,
-          provider: "kapso",
-          scope: "patient",
-          status: "accepted",
-          termsVersion: consentPolicy.termsVersion,
-          textReference: consentPolicy.immutableTextReference,
-        },
-      ]);
+      await transaction.insert(whatsappContactConsents).values({
+        acceptedAt: connectionNow,
+        acceptedRole: "contact",
+        clinicId: clinic.id,
+        contactId: contact.id,
+        declaration: WHATSAPP_CONSENT_TEXTUAL_RESPONSE,
+        identityId: whatsappIdentity.id,
+        interactionId: `apo-107-contact-${clinic.id}`,
+        patientId: null,
+        phoneE164: "+50370000001",
+        privacyVersion: consentPolicy.privacyVersion,
+        provider: "kapso",
+        scope: "contact",
+        status: "accepted",
+        termsVersion: consentPolicy.termsVersion,
+        textReference: consentPolicy.immutableTextReference,
+      });
       const [appointment] = await transaction
         .insert(appointments)
         .values({

@@ -1,5 +1,12 @@
 # Activación de WhatsApp para una Clínica piloto
 
+> Este runbook conserva el procedimiento del piloto inicial. Su lista larga de
+> smoke y gates de activación quedó reemplazada por el recorrido de cuatro
+> pasos en [el runbook de producción](activacion-whatsapp-produccion.md) y
+> [ADR 0044](../adr/0044-activacion-corta-y-consentimiento-por-contacto.md).
+> Las verificaciones técnicas restantes se conservan como regresiones
+> automatizadas, no como pasos manuales por Clínica.
+
 Este runbook prepara una Clínica real para el primer piloto de Praxia usando
 Kapso como capa de mensajería. La Clínica conserva su número, Business
 Portfolio, WABA y WhatsApp Business App; Praxia conserva la lógica de negocio y
@@ -72,7 +79,9 @@ privacidad, contrato, retención y el gate legal correspondiente.
 El enlace puede generarlo el Médico propietario desde la configuración de
 WhatsApp o el superadmin durante el alta manual de la Clínica.
 
-- [ ] Ejecutar el preflight antes de crear el enlace.
+- [ ] (Opcional) Ejecutar el preflight para diagnosticar la configuración del
+      webhook de proyecto; su resultado no es requisito para crear el enlace
+      ni demuestra un roundtrip de transporte.
 - [ ] Crear el setup link para el customer correcto con `coexistence` y
       `partner_managed`.
 - [ ] Confirmar que solo existe un enlace activo; si se regenera, revocar el

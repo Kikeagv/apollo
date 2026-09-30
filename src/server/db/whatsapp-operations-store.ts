@@ -360,9 +360,13 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
           });
         await insertApoloAudit(transaction, {
           action:
-            result.status === "pending"
-              ? "whatsapp-synthetic-smoke-started"
-              : `whatsapp-synthetic-smoke-${result.status}`,
+            result.requireRealRoundtrip === true
+              ? result.status === "pending"
+                ? "whatsapp-transport-roundtrip-started"
+                : `whatsapp-transport-roundtrip-${result.status}`
+              : result.status === "pending"
+                ? "whatsapp-synthetic-smoke-started"
+                : `whatsapp-synthetic-smoke-${result.status}`,
           actorIdentityId: input.actorIdentityId,
           clinicId: input.clinicId,
           occurredAt: input.finishedAt ?? input.startedAt,
@@ -1032,7 +1036,7 @@ function readinessBlockers(
     });
     blockers.push(
       ...result.gates
-        .filter((gate) => gate.status !== "ready")
+        .filter((gate) => gate.code !== "e2e" && gate.status !== "ready")
         .map((gate) => gate.message),
     );
     if (readiness.technicalStatus !== "ready") {

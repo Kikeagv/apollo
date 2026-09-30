@@ -3,31 +3,32 @@ import { describe, expect, it } from "vitest";
 import {
   buildWhatsAppConsentPolicy,
   isWhatsAppConsentCurrent,
-  isWhatsAppPatientConsentCurrent,
   WHATSAPP_CONSENT_PROVIDER,
-  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
   type WhatsAppConsentEvidence,
 } from "./whatsapp-consent";
 
 const policy = buildWhatsAppConsentPolicy("2.0");
 
-function patientConsent(
+function consent(
   overrides: Partial<WhatsAppConsentEvidence> = {},
 ): WhatsAppConsentEvidence {
   return {
     acceptedAt: new Date("2026-09-20T12:00:00.000Z"),
-    acceptedRole: "adult-patient",
+    acceptedRole: "contact",
+    actorIdentityId: null,
     clinicId: "clinic-1",
     contactId: "contact-1",
-    declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
+    declaration: "CONTINUAR",
     id: "consent-1",
     identityId: "identity-1",
     interactionId: "message-1",
-    patientId: "patient-1",
+    origin: "whatsapp_inbound",
+    patientId: null,
     phoneE164: "+50370000002",
     privacyVersion: policy.privacyVersion,
     provider: WHATSAPP_CONSENT_PROVIDER,
-    scope: "patient",
+    sourcePatientId: null,
+    scope: "contact",
     status: "accepted",
     termsVersion: policy.termsVersion,
     textReference: policy.immutableTextReference,
@@ -35,46 +36,67 @@ function patientConsent(
   };
 }
 
-describe("consentimiento de WhatsApp por Paciente", () => {
-  it("solo acepta evidencia de canal con rol Contacto y declaración explícitos", () => {
-    const channelEvidence = patientConsent({
-      acceptedRole: "contact",
-      declaration: "CONTINUAR",
-      patientId: null,
-      scope: "channel",
-    });
-
-    expect(isWhatsAppConsentCurrent(channelEvidence, policy)).toBe(true);
+describe("consentimiento de WhatsApp del Contacto", () => {
+  it("acepta evidencia del Contacto aunque hayan cambiado los términos", () => {
     expect(
       isWhatsAppConsentCurrent(
-        { ...channelEvidence, acceptedRole: "tutor" },
+        consent({ termsVersion: "1.0", textReference: "old-reference" }),
         policy,
       ),
-    ).toBe(false);
-  });
-
-  it("acepta evidencia vigente del Paciente y rol esperados", () => {
-    expect(
-      isWhatsAppPatientConsentCurrent(patientConsent(), policy, {
-        patientId: "patient-1",
-        acceptedRole: "adult-patient",
-      }),
     ).toBe(true);
   });
 
+  it("acepta la concesión registrada junto con un Paciente en la Clínica", () => {
+    const manualRegistrationConsent = {
+      ...consent({
+        declaration: "REGISTRO_MANUAL_DE_PACIENTE",
+        identityId: null,
+      }),
+      actorIdentityId: "operator-1",
+      origin: "manual_patient_registration",
+      sourcePatientId: "patient-1",
+    } as unknown as WhatsAppConsentEvidence;
+
+    expect(isWhatsAppConsentCurrent(manualRegistrationConsent, policy)).toBe(
+      true,
+    );
+  });
+
   it.each([
-    ["otro Paciente", { patientId: "patient-2" }],
+    ["sin actor", { actorIdentityId: null }],
+    ["sin Paciente de origen", { sourcePatientId: null }],
+    ["con marca de declaración incorrecta", { declaration: "CONTINUAR" }],
+  ] as const)("rechaza la concesión manual %s", (_label, override) => {
+    const manualRegistrationConsent = consent({
+      declaration: "REGISTRO_MANUAL_DE_PACIENTE",
+      identityId: null,
+      origin: "manual_patient_registration",
+      actorIdentityId: "operator-1",
+      sourcePatientId: "patient-1",
+      ...override,
+    });
+
+    expect(isWhatsAppConsentCurrent(manualRegistrationConsent, policy)).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ["revocada", { status: "revoked" }],
     ["otro rol", { acceptedRole: "tutor" }],
-    ["declaración ausente", { declaration: "" }],
-    ["otra versión", { termsVersion: "1.0" }],
-    ["opt-out", { status: "revoked" }],
-    ["alcance del canal", { scope: "channel", patientId: null }],
-  ] as const)("bloquea evidencia con %s", (_label, override) => {
+    ["declaración distinta", { declaration: "ACEPTO" }],
+    ["otra versión de privacidad", { privacyVersion: "0.9" }],
+    [
+      "alcance histórico por Paciente",
+      { scope: "patient", patientId: "patient-1" },
+    ],
+    ["alcance de canal legado", { scope: "patient", patientId: null }],
+    ["asociada a un Paciente", { patientId: "patient-1" }],
+  ] as const)("rechaza evidencia %s", (_label, override) => {
     expect(
-      isWhatsAppPatientConsentCurrent(
-        patientConsent(override as Partial<WhatsAppConsentEvidence>),
+      isWhatsAppConsentCurrent(
+        consent(override as Partial<WhatsAppConsentEvidence>),
         policy,
-        { patientId: "patient-1", acceptedRole: "adult-patient" },
       ),
     ).toBe(false);
   });

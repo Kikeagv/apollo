@@ -640,10 +640,7 @@ describe("worker de provisión Kapso", () => {
       businessAccountId: "waba-1",
       phoneNumberId: "phone-1",
     });
-    expect(runE2ETest).toHaveBeenCalledWith({
-      phoneNumberId: "phone-1",
-      projectWebhookId: "project-webhook-1",
-    });
+    expect(runE2ETest).not.toHaveBeenCalled();
     expect(readiness.getState()).toMatchObject({
       connection: { status: "ready" },
       technicalStatus: "ready",

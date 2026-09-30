@@ -1,18 +1,14 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 
-import { isAdultPatient } from "~/domain/patient";
 import {
   buildWhatsAppConsentPolicy,
-  isWhatsAppGuardianDeclaration,
   isWhatsAppConsentCurrent,
-  isWhatsAppPatientConsentCurrent,
   WHATSAPP_CONSENT_PROVIDER,
 } from "~/domain/whatsapp-consent";
 import type { ClinicTransaction } from "~/server/db/clinic-context";
 import {
   contactPatientLinks,
   clinicTermsContract,
-  patients,
   whatsappContactConsents,
 } from "~/server/db/schema";
 
@@ -47,16 +43,19 @@ export async function readWhatsAppConsentSnapshot(
   const [consent] = await transaction
     .select({
       acceptedAt: whatsappContactConsents.acceptedAt,
+      actorIdentityId: whatsappContactConsents.actorIdentityId,
       contactId: whatsappContactConsents.contactId,
       declaration: whatsappContactConsents.declaration,
       id: whatsappContactConsents.id,
       identityId: whatsappContactConsents.identityId,
       interactionId: whatsappContactConsents.interactionId,
+      origin: whatsappContactConsents.origin,
       patientId: whatsappContactConsents.patientId,
       phoneE164: whatsappContactConsents.phoneE164,
       privacyVersion: whatsappContactConsents.privacyVersion,
       provider: whatsappContactConsents.provider,
       scope: whatsappContactConsents.scope,
+      sourcePatientId: whatsappContactConsents.sourcePatientId,
       status: whatsappContactConsents.status,
       termsVersion: whatsappContactConsents.termsVersion,
       textReference: whatsappContactConsents.textReference,
@@ -68,7 +67,7 @@ export async function readWhatsAppConsentSnapshot(
       and(
         eq(whatsappContactConsents.clinicId, input.clinicId),
         eq(whatsappContactConsents.contactId, input.contactId),
-        eq(whatsappContactConsents.scope, "channel"),
+        eq(whatsappContactConsents.scope, "contact"),
         isNull(whatsappContactConsents.patientId),
       ),
     )
@@ -83,26 +82,13 @@ export async function readWhatsAppConsentSnapshot(
     consent.acceptedAt <= input.now &&
     consent.provider === WHATSAPP_CONSENT_PROVIDER &&
     isWhatsAppConsentCurrent(consent, policy);
-  let patientConsent: typeof whatsappContactConsents.$inferSelect | undefined;
-  let patientRole: "adult-patient" | "tutor" | null = null;
+  let patientIsLinkedToContact = false;
   if (input.patientId !== undefined && input.patientId !== null) {
     const [link] = await transaction
       .select({
-        birthDate: patients.birthDate,
-        guardianDeclaration: contactPatientLinks.guardianDeclaration,
-        guardianDui: contactPatientLinks.guardianDui,
-        guardianshipVerificationStatus:
-          contactPatientLinks.guardianshipVerificationStatus,
-        relationship: contactPatientLinks.relationship,
+        id: contactPatientLinks.id,
       })
       .from(contactPatientLinks)
-      .innerJoin(
-        patients,
-        and(
-          eq(contactPatientLinks.clinicId, patients.clinicId),
-          eq(contactPatientLinks.patientId, patients.id),
-        ),
-      )
       .where(
         and(
           eq(contactPatientLinks.clinicId, input.clinicId),
@@ -111,63 +97,21 @@ export async function readWhatsAppConsentSnapshot(
         ),
       )
       .limit(1);
-    if (link?.relationship === "tutor") {
-      patientRole =
-        link.guardianshipVerificationStatus === "verified" &&
-        link.guardianDui !== null &&
-        /^\d{8}-\d$/.test(link.guardianDui) &&
-        isWhatsAppGuardianDeclaration(link.guardianDeclaration ?? "")
-          ? "tutor"
-          : null;
-    } else if (
-      link?.relationship === "contact" &&
-      link.birthDate !== null &&
-      isAdultPatient(link.birthDate, input.now)
-    ) {
-      patientRole = "adult-patient";
-    }
-    if (patientRole !== null) {
-      const [latestPatientConsent] = await transaction
-        .select()
-        .from(whatsappContactConsents)
-        .where(
-          and(
-            eq(whatsappContactConsents.clinicId, input.clinicId),
-            eq(whatsappContactConsents.contactId, input.contactId),
-            eq(whatsappContactConsents.scope, "patient"),
-            eq(whatsappContactConsents.patientId, input.patientId),
-          ),
-        )
-        .orderBy(
-          desc(whatsappContactConsents.acceptedAt),
-          desc(whatsappContactConsents.createdAt),
-          desc(whatsappContactConsents.id),
-        )
-        .limit(1);
-      patientConsent = latestPatientConsent;
-    }
+    patientIsLinkedToContact = link !== undefined;
   }
   const patientAllowed =
     input.patientId === undefined
       ? true
-      : input.patientId !== null &&
-        patientConsent !== undefined &&
-        patientRole !== null &&
-        patientConsent.acceptedAt <= input.now &&
-        patientConsent.provider === WHATSAPP_CONSENT_PROVIDER &&
-        isWhatsAppPatientConsentCurrent(patientConsent, policy, {
-          acceptedRole: patientRole,
-          patientId: input.patientId,
-        });
+      : input.patientId !== null && patientIsLinkedToContact;
   return {
     acceptedAt: consent?.acceptedAt ?? null,
     decision: allowed && patientAllowed ? "allowed" : "blocked",
-    patientAcceptedAt: patientConsent?.acceptedAt ?? null,
-    patientReference: patientConsent?.id ?? null,
+    patientAcceptedAt: null,
+    patientReference: null,
     reference: consent?.id ?? `policy:${policy.immutableTextReference}`,
-    privacyVersion: policy.privacyVersion,
-    termsVersion: policy.termsVersion,
-    textReference: policy.immutableTextReference,
+    privacyVersion: consent?.privacyVersion ?? policy.privacyVersion,
+    termsVersion: consent?.termsVersion ?? policy.termsVersion,
+    textReference: consent?.textReference ?? policy.immutableTextReference,
   };
 }
 

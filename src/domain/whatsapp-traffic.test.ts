@@ -22,20 +22,21 @@ function readyGates(): Record<
 }
 
 describe("gate de tráfico real de WhatsApp", () => {
-  it("permite habilitar solo con todos los gates, readiness y smoke sintético", () => {
+  it("permite tráfico con plantilla entregada y leída sin gates manuales", () => {
     const result = evaluateWhatsAppRealTraffic({
       circuitStatus: "closed",
       clinicIsSynthetic: false,
       connectionGenerationId: "generation-current",
       connectionProvider: "kapso",
       connectionStatus: "ready",
-      gates: readyGates(),
+      gates: {},
       smoke: {
         providerTransportVerified: true,
         provisioningEventId: "generation-current",
         realPatientsEnabled: false,
         status: "passed",
         syntheticContact: true,
+        templateDeliveryVerified: true,
       },
       technicalReadiness: "ready",
       trafficStatus: "blocked",
@@ -60,6 +61,7 @@ describe("gate de tráfico real de WhatsApp", () => {
         realPatientsEnabled: false,
         status: "passed",
         syntheticContact: false,
+        templateDeliveryVerified: true,
       },
       technicalReadiness: "ready",
       trafficStatus: "blocked",
@@ -69,7 +71,7 @@ describe("gate de tráfico real de WhatsApp", () => {
     expect(result.blockers).toEqual([]);
   });
 
-  it("exige habilitación manual cuando se usa como guard de envío", () => {
+  it("mantiene el guard de tráfico habilitado cuando se usa antes de un envío", () => {
     const blocked = evaluateWhatsAppRealTraffic({
       circuitStatus: "closed",
       clinicIsSynthetic: false,
@@ -84,6 +86,7 @@ describe("gate de tráfico real de WhatsApp", () => {
         realPatientsEnabled: false,
         status: "passed",
         syntheticContact: true,
+        templateDeliveryVerified: true,
       },
       technicalReadiness: "ready",
       trafficStatus: "blocked",
@@ -108,6 +111,7 @@ describe("gate de tráfico real de WhatsApp", () => {
         realPatientsEnabled: false,
         status: "passed",
         syntheticContact: true,
+        templateDeliveryVerified: true,
       },
       technicalReadiness: "ready",
       trafficStatus: "enabled",
@@ -131,6 +135,7 @@ describe("gate de tráfico real de WhatsApp", () => {
         realPatientsEnabled: false,
         status: "passed",
         syntheticContact: true,
+        templateDeliveryVerified: true,
       },
       technicalReadiness: "ready",
       trafficStatus: "enabled",
@@ -142,7 +147,7 @@ describe("gate de tráfico real de WhatsApp", () => {
     );
   });
 
-  it("bloquea consentimiento incompleto, billing no adjunto, sandbox, smoke fallido y circuito abierto", () => {
+  it("ignora gates manuales y conserva bloqueos de smoke y circuit breaker", () => {
     const gates = readyGates();
     gates.consent = { evidenceReference: null, ready: false };
     gates.billing = { evidenceReference: null, ready: false };
@@ -158,21 +163,47 @@ describe("gate de tráfico real de WhatsApp", () => {
         realPatientsEnabled: false,
         status: "failed",
         syntheticContact: true,
+        templateDeliveryVerified: true,
       },
-      technicalReadiness: "blocked",
-      technicalBlockers: ["Número sandbox", "Plantilla PENDING"],
+      technicalReadiness: "ready",
       trafficStatus: "blocked",
     });
 
     expect(result.allowed).toBe(false);
     expect(result.blockers).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ code: "consent" }),
-        expect.objectContaining({ code: "billing" }),
-        expect.objectContaining({ code: "technical-readiness" }),
         expect.objectContaining({ code: "smoke" }),
         expect.objectContaining({ code: "circuit-breaker" }),
       ]),
+    );
+    expect(result.blockers.map((blocker) => blocker.code)).not.toEqual(
+      expect.arrayContaining(["consent", "billing"]),
+    );
+  });
+
+  it("bloquea tráfico si la plantilla no quedó entregada y leída", () => {
+    const result = evaluateWhatsAppRealTraffic({
+      circuitStatus: "closed",
+      clinicIsSynthetic: false,
+      connectionGenerationId: "generation-current",
+      connectionProvider: "kapso",
+      connectionStatus: "ready",
+      gates: {},
+      smoke: {
+        providerTransportVerified: true,
+        provisioningEventId: "generation-current",
+        realPatientsEnabled: false,
+        status: "passed",
+        syntheticContact: true,
+        templateDeliveryVerified: false,
+      },
+      technicalReadiness: "ready",
+      trafficStatus: "blocked",
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.blockers).toContainEqual(
+      expect.objectContaining({ code: "template-delivery" }),
     );
   });
 
@@ -188,6 +219,7 @@ describe("gate de tráfico real de WhatsApp", () => {
         realPatientsEnabled: false,
         status: "passed",
         syntheticContact: true,
+        templateDeliveryVerified: true,
       },
       technicalReadiness: "ready",
       trafficStatus: "offboarded",
@@ -214,6 +246,7 @@ describe("gate de tráfico real de WhatsApp", () => {
         realPatientsEnabled: false,
         status: "passed",
         syntheticContact: true,
+        templateDeliveryVerified: true,
       },
       technicalReadiness: "ready",
       trafficStatus: "blocked",
@@ -237,6 +270,7 @@ describe("gate de tráfico real de WhatsApp", () => {
         realPatientsEnabled: false,
         status: "passed",
         syntheticContact: true,
+        templateDeliveryVerified: true,
       },
       technicalReadiness: "ready",
       trafficStatus: "blocked",
@@ -245,6 +279,32 @@ describe("gate de tráfico real de WhatsApp", () => {
     expect(result.allowed).toBe(false);
     expect(result.blockers).toContainEqual(
       expect.objectContaining({ code: "smoke-generation" }),
+    );
+  });
+
+  it("no habilita una Clínica sintética aunque la plantilla esté entregada y leída", () => {
+    const result = evaluateWhatsAppRealTraffic({
+      circuitStatus: "closed",
+      clinicIsSynthetic: true,
+      connectionGenerationId: "generation-current",
+      connectionProvider: "kapso",
+      connectionStatus: "ready",
+      gates: {},
+      smoke: {
+        providerTransportVerified: true,
+        provisioningEventId: "generation-current",
+        realPatientsEnabled: false,
+        status: "passed",
+        syntheticContact: true,
+        templateDeliveryVerified: true,
+      },
+      technicalReadiness: "ready",
+      trafficStatus: "blocked",
+    });
+
+    expect(result.allowed).toBe(false);
+    expect(result.blockers).toContainEqual(
+      expect.objectContaining({ code: "clinic-synthetic" }),
     );
   });
 });

@@ -129,7 +129,7 @@ export const whatsappActivationClosureCriteria = [
   },
   {
     behavior:
-      "La preparación técnica exige número, webhooks, templates, billing y E2E de la generación vigente.",
+      "La preparación técnica exige número, webhooks, templates y billing vigentes; el E2E/preflight es diagnóstico opcional.",
     code: "technical-readiness",
     issue: "APO-77 / APO-85 / APO-86",
     label: "Preparación técnica",

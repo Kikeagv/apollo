@@ -2,7 +2,6 @@ import {
   isWhatsAppSetupLinkUsable,
   whatsappSetupLinkStatus,
 } from "~/domain/whatsapp-setup-link";
-import { phoneNumbersMatch } from "~/domain/whatsapp-preflight";
 import { whatsappSetupLinkReturnUrl } from "~/domain/whatsapp-setup-link-return";
 import {
   KapsoProviderError,
@@ -12,6 +11,7 @@ import {
 } from "~/server/whatsapp/kapso-onboarding";
 
 import {
+  findOrCreateKapsoCustomer,
   isExistingKapsoConfiguration,
   type KapsoWhatsAppOnboardingSnapshot,
   type KapsoWhatsAppOnboardingStore,
@@ -45,7 +45,7 @@ export async function manageKapsoWhatsAppSetupLink(
 ) {
   assertActionAllowed(input);
   const now = dependencies.now ?? (() => new Date());
-  const current = await dependencies.store.read({
+  let current = await dependencies.store.read({
     access: input.actorType,
     actorIdentityId: input.actorIdentityId,
     clinicId: input.clinicId,
@@ -56,7 +56,8 @@ export async function manageKapsoWhatsAppSetupLink(
     return revokeSetupLink(input, current, reason, dependencies, now());
   }
 
-  const customerId = requireApprovedPreflight(current);
+  const customerId = await ensureCustomerId(input, current, dependencies);
+  current = { ...current, customerId };
   const reconnectPhoneNumber = resolveReconnectPhoneNumber(current);
 
   const currentStatus =
@@ -223,15 +224,62 @@ export async function manageKapsoWhatsAppSetupLink(
   }
 }
 
-function requireApprovedPreflight(
+async function ensureCustomerId(
+  input: ManageKapsoWhatsAppSetupLinkInput,
   snapshot: KapsoWhatsAppOnboardingSnapshot,
-): string {
-  if (snapshot.customerId === null || snapshot.preflight?.status !== "passed") {
-    throw new Error(
-      "El preflight de WhatsApp debe estar aprobado antes de gestionar el enlace.",
+  dependencies: ManageKapsoWhatsAppSetupLinkDependencies,
+): Promise<string> {
+  if (snapshot.customerId?.trim()) return snapshot.customerId;
+
+  let customerResult: Awaited<ReturnType<typeof findOrCreateKapsoCustomer>>;
+  try {
+    customerResult = await findOrCreateKapsoCustomer(
+      dependencies.provider,
+      `praxia-clinic:${snapshot.clinicId}`,
+      snapshot.clinicName,
     );
+  } catch (error) {
+    if (!isProviderFailure(error)) throw error;
+    await dependencies.store.save({
+      access: input.actorType,
+      actorIdentityId: input.actorIdentityId,
+      auditEvents: [
+        {
+          action: "onboarding-provider-unavailable",
+          customerId: null,
+          reason:
+            "Kapso no está disponible para crear el customer requerido para el Enlace de configuración.",
+          result: "failed",
+        },
+      ],
+      clinicId: input.clinicId,
+      customerId: null,
+    });
+    throw error;
   }
-  return snapshot.customerId;
+
+  const providerName =
+    dependencies.provider.source === "simulated"
+      ? "proveedor simulado"
+      : "Kapso";
+  await dependencies.store.save({
+    access: input.actorType,
+    actorIdentityId: input.actorIdentityId,
+    auditEvents: [
+      {
+        action: customerResult.action,
+        customerId: customerResult.customer.id,
+        reason:
+          customerResult.action === "customer-created"
+            ? `Customer del ${providerName} creado para la Clínica al gestionar el Enlace de configuración.`
+            : `Customer del ${providerName} confirmado para la Clínica al gestionar el Enlace de configuración.`,
+        result: "succeeded",
+      },
+    ],
+    clinicId: input.clinicId,
+    customerId: customerResult.customer.id,
+  });
+  return customerResult.customer.id;
 }
 
 function resolveReconnectPhoneNumber(
@@ -267,15 +315,6 @@ function resolveReconnectPhoneNumber(
     );
   }
 
-  const preflightPhoneNumber = snapshot.preflight?.checks?.phoneNumberE164;
-  if (
-    preflightPhoneNumber === undefined ||
-    !phoneNumbersMatch(preflightPhoneNumber, connection.phoneNumberE164)
-  ) {
-    throw new Error(
-      "La reconexión de WhatsApp debe usar el mismo número productivo ya configurado",
-    );
-  }
   return connection.phoneNumberE164;
 }
 
