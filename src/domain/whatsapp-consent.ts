@@ -7,12 +7,9 @@ export const WHATSAPP_PRIVACY_URL = "https://www.usepraxia.com/privacidad";
 export const WHATSAPP_PRIVACY_VERSION = "1.0";
 export const WHATSAPP_GUARDIAN_DECLARATION =
   "DECLARO REPRESENTACIÓN AUTORIZADA" as const;
-export const WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION =
-  "DECLARO SER EL PACIENTE Y ACEPTO RECIBIR MENSAJES ADMINISTRATIVOS POR WHATSAPP" as const;
-export const WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION =
-  "ACEPTO RECIBIR MENSAJES ADMINISTRATIVOS POR WHATSAPP EN REPRESENTACIÓN AUTORIZADA DEL PACIENTE" as const;
 
-export type WhatsAppConsentScope = "channel" | "patient";
+/** `patient` se conserva solo para consultar evidencia histórica. */
+export type WhatsAppConsentScope = "contact" | "patient";
 
 export type WhatsAppConsentSafeRoute =
   "frustration" | "human-request" | "urgency";
@@ -69,7 +66,7 @@ export function buildWhatsAppConsentPolicy(
 }
 
 export function whatsappConsentPrompt(policy: WhatsAppConsentPolicy) {
-  return `Para continuar, revisa el Aviso de privacidad: ${policy.privacyUrl} y las condiciones de la Clínica: ${policy.termsUrl}. Pulsa ${policy.buttonLabel} para aceptar.`;
+  return `Revisa el Aviso de privacidad: ${policy.privacyUrl} y las condiciones de la Clínica: ${policy.termsUrl}. Al pulsar ${policy.buttonLabel} aceptas las condiciones y autorizas mensajes administrativos de citas por WhatsApp (confirmaciones, recordatorios, cancelaciones y reprogramaciones) para todos los Pacientes que tienes vinculados con esta Clínica, actuales y futuros.`;
 }
 
 export function isWhatsAppConsentAffirmation(input: {
@@ -114,6 +111,7 @@ export function classifyWhatsAppConsentSafeRoute(
   return null;
 }
 
+/** Valida el permiso del Contacto, sin invalidarlo por cambios de términos. */
 export function isWhatsAppConsentCurrent(
   evidence: WhatsAppConsentEvidence,
   policy: WhatsAppConsentPolicy,
@@ -121,62 +119,16 @@ export function isWhatsAppConsentCurrent(
   return (
     evidence.provider === WHATSAPP_CONSENT_PROVIDER &&
     evidence.status === "accepted" &&
-    evidence.scope === "channel" &&
+    evidence.scope === "contact" &&
     evidence.acceptedRole === "contact" &&
     evidence.patientId === null &&
     evidence.declaration === WHATSAPP_CONSENT_TEXTUAL_RESPONSE &&
-    evidence.privacyVersion === policy.privacyVersion &&
-    evidence.termsVersion === policy.termsVersion &&
-    evidence.textReference === policy.immutableTextReference
-  );
-}
-
-/** Evalúa consentimiento paciente, con el rol y la declaración del alcance. */
-export function isWhatsAppPatientConsentCurrent(
-  evidence: WhatsAppConsentEvidence,
-  policy: WhatsAppConsentPolicy,
-  expected: {
-    acceptedRole: Extract<
-      WhatsAppConsentAcceptedRole,
-      "adult-patient" | "tutor"
-    >;
-    patientId: string;
-  },
-) {
-  const expectedDeclaration =
-    expected.acceptedRole === "adult-patient"
-      ? WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION
-      : WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION;
-  return (
-    evidence.provider === WHATSAPP_CONSENT_PROVIDER &&
-    evidence.status === "accepted" &&
-    evidence.scope === "patient" &&
-    evidence.patientId === expected.patientId &&
-    evidence.acceptedRole === expected.acceptedRole &&
-    normalizeWhatsAppDeclaration(evidence.declaration) ===
-      expectedDeclaration &&
-    evidence.privacyVersion === policy.privacyVersion &&
-    evidence.termsVersion === policy.termsVersion &&
-    evidence.textReference === policy.immutableTextReference
+    evidence.privacyVersion === policy.privacyVersion
   );
 }
 
 export function isWhatsAppGuardianDeclaration(value: string) {
   return normalizeWhatsAppDeclaration(value) === WHATSAPP_GUARDIAN_DECLARATION;
-}
-
-export function isWhatsAppAdultPatientConsentDeclaration(value: string) {
-  return (
-    normalizeWhatsAppDeclaration(value) ===
-    WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION
-  );
-}
-
-export function isWhatsAppTutorPatientConsentDeclaration(value: string) {
-  return (
-    normalizeWhatsAppDeclaration(value) ===
-    WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION
-  );
 }
 
 function normalizeWhatsAppDeclaration(value: string) {

@@ -841,6 +841,13 @@
       "when": 1790550000003,
       "tag": "0124_apo111_kapso_funding_readiness",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1790550000004,
+      "tag": "0125_apo112_contact_whatsapp_consent",
+      "breakpoints": true
     }
   ]
 }

@@ -9,8 +9,6 @@ import {
 } from "~/domain/appointment-events";
 import {
   buildWhatsAppConsentPolicy,
-  WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
-  WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
 } from "~/domain/whatsapp-consent";
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import type { WhatsAppInboundMessage } from "~/domain/whatsapp-inbound";
@@ -65,6 +63,7 @@ import {
 } from "../db/pending-store";
 import { drizzleAdministrativeRecordsStore } from "../db/administrative-records-store";
 import { drizzleManualAppointmentStore } from "../db/manual-appointment-store";
+import { readWhatsAppConsentSnapshot } from "../db/whatsapp-consent-query";
 import {
   drizzleTransactionalDeliveryStore,
   drizzleTransactionalDeliveryCallbackStore,
@@ -114,6 +113,54 @@ const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("Reserva simulada de WhatsApp persistente", () => {
+  databaseTest(
+    "el consentimiento del Contacto cubre a un Paciente vinculado después sin crear consentimiento por Paciente",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-08-14T12:00:00.000Z");
+      try {
+        const futurePatientId = await inClinicTransaction(
+          fixture,
+          async (transaction) => {
+            const [patient] = await transaction
+              .insert(patients)
+              .values({
+                birthDate: "1988-05-01",
+                clinicId: fixture.clinicId,
+                name: "Paciente vinculado después",
+              })
+              .returning({ id: patients.id });
+            if (patient === undefined) {
+              throw new Error("No se creó el Paciente vinculado después");
+            }
+            await transaction.insert(contactPatientLinks).values({
+              clinicId: fixture.clinicId,
+              contactId: fixture.contactId,
+              patientId: patient.id,
+            });
+            return patient.id;
+          },
+        );
+
+        await expect(
+          inClinicTransaction(fixture, (transaction) =>
+            readWhatsAppConsentSnapshot(transaction, {
+              clinicId: fixture.clinicId,
+              contactId: fixture.contactId,
+              now,
+              patientId: futurePatientId,
+            }),
+          ),
+        ).resolves.toMatchObject({
+          decision: "allowed",
+          patientReference: null,
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "crea una Entrega de reprogramación con consentimiento y plantilla bajo RLS",
     async () => {
@@ -723,7 +770,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
   );
 
   databaseTest(
-    "bloquea al Tutor pendiente aunque el canal esté aceptado y RLS rechaza su consentimiento por Paciente",
+    "bloquea al Tutor pendiente aunque su Contacto tenga permiso y RLS rechaza nuevos permisos por Paciente",
     async () => {
       const fixture = await createFixture();
       const now = new Date("2026-08-14T12:00:00.000Z");
@@ -819,7 +866,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
               phoneE164: "+50370000003",
               privacyVersion: policy.privacyVersion,
               provider: "kapso",
-              scope: "channel",
+              scope: "contact",
               status: "accepted",
               termsVersion: policy.termsVersion,
               textReference: policy.immutableTextReference,
@@ -828,16 +875,6 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           },
         );
 
-        await expect(
-          drizzleSimulatedWhatsAppBookingStore.findWhatsAppPatientConsentEligibility(
-            {
-              clinicId: fixture.clinicId,
-              contactId: tutor.contactId,
-              now,
-              patientId: fixture.patientId,
-            },
-          ),
-        ).resolves.toBe("tutor-pending");
         await expect(
           processWhatsAppTextForContact(
             {
@@ -933,10 +970,10 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             );
             return transaction.insert(whatsappContactConsents).values({
               acceptedAt: now,
-              acceptedRole: "tutor",
+              acceptedRole: "contact",
               clinicId: fixture.clinicId,
               contactId: tutor.contactId,
-              declaration: WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
+              declaration: "CONTINUAR",
               identityId: identity.id,
               interactionId: `pending-tutor-patient-${fixture.clinicId}`,
               patientId: fixture.patientId,
@@ -1099,28 +1136,12 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             phoneE164: "+50370000003",
             privacyVersion: policy.privacyVersion,
             provider: "kapso",
-            scope: "channel",
-            termsVersion: policy.termsVersion,
-            textReference: policy.immutableTextReference,
-          });
-          await transaction.insert(whatsappContactConsents).values({
-            acceptedAt: new Date("2026-08-12T12:00:00.000Z"),
-            acceptedRole: "tutor",
-            clinicId: fixture.clinicId,
-            contactId: tutor.id,
-            declaration: WHATSAPP_TUTOR_PATIENT_CONSENT_DECLARATION,
-            identityId: whatsappIdentity.id,
-            interactionId: `fixture-tutor-patient-consent-${fixture.clinicId}`,
-            patientId: fixture.patientId,
-            phoneE164: "+50370000003",
-            privacyVersion: policy.privacyVersion,
-            provider: "kapso",
-            scope: "patient",
+            scope: "contact",
             termsVersion: policy.termsVersion,
             textReference: policy.immutableTextReference,
           });
         });
-        const patientConsentReferences =
+        const contactConsentReferences =
           await inWhatsAppInboundWorkerTransaction(async (transaction) => {
             await transaction.execute(
               sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
@@ -1134,8 +1155,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
               .where(
                 and(
                   eq(whatsappContactConsents.clinicId, fixture.clinicId),
-                  eq(whatsappContactConsents.patientId, fixture.patientId),
-                  eq(whatsappContactConsents.scope, "patient"),
+                  eq(whatsappContactConsents.scope, "contact"),
                 ),
               );
             const adultConsent = consents.find(
@@ -1145,7 +1165,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
               (consent) => consent.contactId === tutor.id,
             );
             if (adultConsent === undefined || tutorConsent === undefined) {
-              throw new Error("Falta el Consentimiento por Paciente vigente");
+              throw new Error("Falta el consentimiento vigente por Contacto");
             }
             return { adult: adultConsent.id, tutor: tutorConsent.id };
           });
@@ -1221,6 +1241,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
             transaction
               .select({
                 id: transactionalDeliveries.id,
+                consentReference: transactionalDeliveries.consentReference,
                 patientConsentReference:
                   transactionalDeliveries.patientConsentReference,
                 status: transactionalDeliveries.status,
@@ -1237,12 +1258,14 @@ describe("Reserva simulada de WhatsApp persistente", () => {
           expect.arrayContaining([
             {
               id: adultDelivery.id,
-              patientConsentReference: patientConsentReferences.adult,
+              consentReference: contactConsentReferences.adult,
+              patientConsentReference: null,
               status: "processing",
             },
             {
               id: tutorDelivery.id,
-              patientConsentReference: patientConsentReferences.tutor,
+              consentReference: contactConsentReferences.tutor,
+              patientConsentReference: null,
               status: "processing",
             },
           ]),
@@ -1537,7 +1560,7 @@ describe("Reserva simulada de WhatsApp persistente", () => {
                 phoneE164: fixture.contactPhone,
                 privacyVersion: policy.privacyVersion,
                 provider: "kapso",
-                scope: "channel",
+                scope: "contact",
                 status: "accepted",
                 termsVersion: policy.termsVersion,
                 textReference: policy.immutableTextReference,
@@ -3835,23 +3858,7 @@ async function createFixture() {
       phoneE164: contactPhone,
       privacyVersion: policy.privacyVersion,
       provider: "kapso",
-      scope: "channel",
-      termsVersion: policy.termsVersion,
-      textReference: policy.immutableTextReference,
-    });
-    await transaction.insert(whatsappContactConsents).values({
-      acceptedAt: new Date("2026-08-12T12:00:00.000Z"),
-      acceptedRole: "adult-patient",
-      clinicId: primary.clinicId,
-      contactId: records.contactId,
-      declaration: WHATSAPP_ADULT_PATIENT_CONSENT_DECLARATION,
-      identityId: whatsappIdentity.id,
-      interactionId: `fixture-patient-consent-${primary.clinicId}`,
-      patientId: records.patientId,
-      phoneE164: contactPhone,
-      privacyVersion: policy.privacyVersion,
-      provider: "kapso",
-      scope: "patient",
+      scope: "contact",
       termsVersion: policy.termsVersion,
       textReference: policy.immutableTextReference,
     });

@@ -186,7 +186,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
     });
   },
 
-  async findLatestWhatsAppConsent({ clinicId, contactId, patientId, scope }) {
+  async findLatestWhatsAppConsent({ clinicId, contactId }) {
     return inWhatsAppInboundWorkerTransaction(async (transaction) => {
       await configureWorkerClinic(transaction, clinicId);
       const [consent] = await transaction
@@ -196,10 +196,8 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           and(
             eq(whatsappContactConsents.clinicId, clinicId),
             eq(whatsappContactConsents.contactId, contactId),
-            eq(whatsappContactConsents.scope, scope),
-            patientId === null
-              ? isNull(whatsappContactConsents.patientId)
-              : eq(whatsappContactConsents.patientId, patientId),
+            eq(whatsappContactConsents.scope, "contact"),
+            isNull(whatsappContactConsents.patientId),
           ),
         )
         .orderBy(
@@ -229,17 +227,17 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         .insert(whatsappContactConsents)
         .values({
           acceptedAt: input.acceptedAt,
-          acceptedRole: input.acceptedRole,
+          acceptedRole: "contact",
           clinicId: input.clinicId,
           contactId: input.contactId,
           declaration: input.declaration,
           identityId: input.identityId,
           interactionId: input.interactionId,
-          patientId: input.patientId,
+          patientId: null,
           phoneE164: input.phoneE164 ?? contact.phoneE164,
           privacyVersion: input.policy.privacyVersion,
           provider: WHATSAPP_CONSENT_PROVIDER,
-          scope: input.scope,
+          scope: "contact",
           status: input.status ?? "accepted",
           termsVersion: input.policy.termsVersion,
           textReference: input.policy.immutableTextReference,
@@ -277,19 +275,8 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
             eq(whatsappContactConsents.clinicId, input.clinicId),
             eq(whatsappContactConsents.contactId, input.contactId),
             eq(whatsappContactConsents.provider, WHATSAPP_CONSENT_PROVIDER),
-            eq(whatsappContactConsents.scope, input.scope),
-            input.patientId === null
-              ? isNull(whatsappContactConsents.patientId)
-              : eq(whatsappContactConsents.patientId, input.patientId),
-            eq(
-              whatsappContactConsents.privacyVersion,
-              input.policy.privacyVersion,
-            ),
-            eq(whatsappContactConsents.termsVersion, input.policy.termsVersion),
-            eq(
-              whatsappContactConsents.textReference,
-              input.policy.immutableTextReference,
-            ),
+            eq(whatsappContactConsents.scope, "contact"),
+            isNull(whatsappContactConsents.patientId),
           ),
         )
         .orderBy(desc(whatsappContactConsents.acceptedAt))
@@ -1518,14 +1505,11 @@ function matchesWhatsAppConsentInput(
     evidence.contactId === input.contactId &&
     evidence.declaration === input.declaration &&
     evidence.identityId === input.identityId &&
-    evidence.patientId === input.patientId &&
-    evidence.scope === input.scope &&
+    evidence.patientId === null &&
+    evidence.scope === "contact" &&
     evidence.status === (input.status ?? "accepted") &&
-    evidence.acceptedRole === input.acceptedRole &&
+    evidence.acceptedRole === "contact" &&
     (input.phoneE164 === null || evidence.phoneE164 === input.phoneE164) &&
-    evidence.privacyVersion === input.policy.privacyVersion &&
-    evidence.termsVersion === input.policy.termsVersion &&
-    evidence.textReference === input.policy.immutableTextReference &&
     evidence.provider === WHATSAPP_CONSENT_PROVIDER
   );
 }

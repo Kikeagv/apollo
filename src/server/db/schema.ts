@@ -2692,7 +2692,7 @@ export const contactPatientLinks = createTable(
   ],
 );
 
-/** Evidencia append-only de consentimiento para canal o Paciente por WhatsApp. */
+/** Evidencia append-only de consentimiento por Contacto y su historial legado. */
 export const whatsappContactConsents = createTable(
   "whatsapp_contact_consent",
   {
@@ -2755,7 +2755,7 @@ export const whatsappContactConsents = createTable(
     check(
       "whatsapp_contact_consent_scope",
       sql`(
-        (${table.scope} = 'channel' AND ${table.patientId} IS NULL)
+        (${table.scope} = 'contact' AND ${table.patientId} IS NULL)
         OR (${table.scope} = 'patient' AND ${table.patientId} IS NOT NULL)
       )`,
     ),
