@@ -29,6 +29,7 @@ export default defineConfig({
       BETTER_AUTH_URL: baseURL,
       E2E_TEST_MODE: "true",
       E2E_TEST_OTP: "246810",
+      IDENTITY_EMAIL_DELIVERY: "simulated",
     },
     reuseExistingServer: false,
     timeout: 120_000,

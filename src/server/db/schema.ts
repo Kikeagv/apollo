@@ -1456,6 +1456,8 @@ export const whatsappOnboardingAuditEvents = createTable(
         | "setup-link-confirmed"
         | "setup-link-created"
         | "setup-link-expired"
+        | "setup-link-email-failed"
+        | "setup-link-email-sent"
         | "setup-link-provider-unavailable"
         | "setup-link-regenerated"
         | "setup-link-revoked"

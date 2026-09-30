@@ -7,6 +7,7 @@ import type {
   ClinicInvitationEmailSender,
   ClinicDoctorInvitationDelivery,
   ClinicOwnerInvitationDelivery,
+  ClinicWhatsAppSetupLinkDelivery,
 } from "~/server/email/clinic-invitation-email";
 
 /**
@@ -26,6 +27,13 @@ export function createResendClinicInvitationEmailSender(input: {
     clinicInvitationUrl(env.PUBLIC_SITE_URL, token);
 
   return {
+    async sendWhatsAppSetupLink(invitation: ClinicWhatsAppSetupLinkDelivery) {
+      await sendResendEmail(apiKey, {
+        subject: `Configure el WhatsApp de ${invitation.clinicName} en Praxia`,
+        text: setupLinkText(invitation),
+        to: invitation.ownerEmail,
+      });
+    },
     async sendOwnerInvitation(invitation: ClinicOwnerInvitationDelivery) {
       await sendResendEmail(apiKey, {
         subject: `Invitación a ${invitation.clinicName} en Praxia`,
@@ -41,6 +49,17 @@ export function createResendClinicInvitationEmailSender(input: {
       });
     },
   };
+}
+
+function setupLinkText(invitation: ClinicWhatsAppSetupLinkDelivery) {
+  return [
+    `Hola ${invitation.ownerName}:`,
+    `El equipo de Praxia la/o invita a configurar WhatsApp para la clínica "${invitation.clinicName}".`,
+    `Abra el siguiente enlace para completar el enrolamiento con Meta. Vence el ${invitation.expiresAt.toISOString()}:`,
+    invitation.setupLinkUrl,
+    "Praxia no solicita por correo su contraseña, código OTP ni credenciales de Meta.",
+    "Si no esperaba este enlace, puede ignorar este correo.",
+  ].join("\n\n");
 }
 
 function ownerInvitationText(

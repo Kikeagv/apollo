@@ -14,6 +14,7 @@ import {
   prepareKapsoWhatsAppOnboarding,
 } from "~/server/application/kapso-onboarding";
 import { manageKapsoWhatsAppSetupLink } from "~/server/application/whatsapp-setup-links";
+import { sendWhatsAppSetupLinkToOwner } from "~/server/application/send-whatsapp-setup-link";
 import { createSubscriptionSupport } from "~/server/application/subscription-support";
 import {
   createWhatsAppTestContact,
@@ -68,6 +69,7 @@ import {
 } from "~/server/db/whatsapp-inbound-alert-store";
 import { clinicInvitationEmailSender } from "~/server/email/clinic-invitation-email";
 import { createKapsoOnboardingProvider } from "~/server/whatsapp/kapso-onboarding";
+import { createSimulatedKapsoOnboardingProvider } from "~/server/whatsapp/simulated-kapso-onboarding";
 import { createKapsoWebhookOffboardingProvider } from "~/server/whatsapp/kapso-provisioning";
 import { createKapsoReadinessProvider } from "~/server/whatsapp/kapso-readiness";
 import { createSimulatedWhatsAppSyntheticSmokeRunner } from "~/server/whatsapp/simulated-whatsapp-smoke";
@@ -85,9 +87,10 @@ import {
 const subscriptionSupport = createSubscriptionSupport(
   drizzleSubscriptionSupportStore,
 );
-const kapsoOnboardingProvider = createKapsoOnboardingProvider({
-  apiKey: env.KAPSO_API_KEY,
-});
+const kapsoOnboardingProvider =
+  process.env.E2E_TEST_MODE === "true" && process.env.NODE_ENV !== "production"
+    ? createSimulatedKapsoOnboardingProvider()
+    : createKapsoOnboardingProvider({ apiKey: env.KAPSO_API_KEY });
 const kapsoReadinessProvider = createKapsoReadinessProvider({
   apiKey: env.KAPSO_API_KEY,
 });
@@ -757,6 +760,30 @@ export const apoloRouter = {
           appUrl: env.PUBLIC_SITE_URL,
           provider: kapsoOnboardingProvider,
           store: drizzleKapsoOnboardingStore,
+        },
+      ),
+    ),
+
+  sendKapsoWhatsAppSetupLink: superadminProcedure
+    .input(
+      z.object({
+        action: z.enum(["send", "regenerate"]).default("send"),
+        clinicId: z.string().uuid(),
+        reason: z.string().trim().min(1).max(500).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) =>
+      sendWhatsAppSetupLinkToOwner(
+        {
+          ...input,
+          actorIdentityId: ctx.session.user.id,
+        },
+        {
+          appUrl: env.PUBLIC_SITE_URL,
+          emailSender: clinicInvitationEmailSender(),
+          onboardingStore: drizzleKapsoOnboardingStore,
+          ownerStore: drizzleClinicRegistrationStore,
+          provider: kapsoOnboardingProvider,
         },
       ),
     ),

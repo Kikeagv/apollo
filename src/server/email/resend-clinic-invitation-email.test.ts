@@ -60,9 +60,7 @@ describe("adaptador Resend de invitaciones de clínica", () => {
     expect(body.to).toEqual(["ana@example.test"]);
     expect(body.subject).toContain("Clínica Aurora");
     expect(body.text).toContain("Dra. Ana Reyes");
-    expect(body.text).toContain(
-      "activar-invitacion?token=token-abc",
-    );
+    expect(body.text).toContain("activar-invitacion?token=token-abc");
     expect(body.text).toContain("2026-08-22T00:00:00.000Z");
   });
 
@@ -94,6 +92,38 @@ describe("adaptador Resend de invitaciones de clínica", () => {
     expect(body.subject).toContain("Clínica Aurora");
     expect(body.text).toContain("Dra. Sofía Molina");
     expect(body.text).toContain("/activar-invitacion?token=token-dr-1");
+  });
+
+  it("envía al propietario el Enlace de configuración con su vencimiento", async () => {
+    const fetchMock = stubFetch();
+    const sender = createResendClinicInvitationEmailSender({
+      apiKey: "re_test",
+    });
+
+    await sender.sendWhatsAppSetupLink({
+      clinicName: "Clínica Aurora",
+      expiresAt: new Date("2026-10-29T12:00:00Z"),
+      ownerEmail: "ana@example.test",
+      ownerName: "Dra. Ana Reyes",
+      setupLinkUrl: "https://setup.kapso.ai/one-time-token",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      FetchInit,
+    ];
+    expect(url).toBe("https://api.resend.com/emails");
+    const body = JSON.parse(init.body) as {
+      subject: string;
+      text: string;
+      to: string[];
+    };
+    expect(body.to).toEqual(["ana@example.test"]);
+    expect(body.subject).toContain("Clínica Aurora");
+    expect(body.text).toContain("Dra. Ana Reyes");
+    expect(body.text).toContain("https://setup.kapso.ai/one-time-token");
+    expect(body.text).toContain("2026-10-29T12:00:00.000Z");
+    expect(body.text).not.toContain("246810");
   });
 
   it("propaga un rechazo del proveedor", async () => {

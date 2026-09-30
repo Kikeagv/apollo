@@ -66,6 +66,35 @@ describe("caso de uso de onboarding Kapso", () => {
     );
   });
 
+  it("conserva la evidencia del adaptador E2E como simulada y no guarda el número como productivo", async () => {
+    const provider = Object.assign(
+      providerFixture({ customer: customerFixture() }),
+      { source: "simulated" as const },
+    );
+    const store = storeFixture();
+
+    const result = await prepareKapsoWhatsAppOnboarding(baseInput, {
+      provider,
+      store,
+    });
+
+    expect(result.preflight?.status).toBe("passed");
+    expect(store.saved?.connection).toMatchObject({
+      connectionType: "simulated",
+      metadata: { source: "praxia-e2e" },
+      phoneNumberE164: null,
+      phoneNumberId: null,
+      provider: "simulated",
+      status: "pending",
+    });
+    expect(store.saved?.auditEvents).toContainEqual(
+      expect.objectContaining({
+        action: "customer-created",
+        reason: "Customer del proveedor simulado creado para la Clínica.",
+      }),
+    );
+  });
+
   it("prepara dedicated sin exigir app ni QR", async () => {
     const provider = providerFixture({
       customer: customerFixture(),
@@ -550,7 +579,7 @@ function storeFixture(
             ...snapshot.connection!,
             ...input.connection,
             customer: input.customerId!,
-            provider: "kapso",
+            provider: input.connection.provider,
             updatedAt: new Date(),
           },
         };

@@ -121,6 +121,7 @@ export class KapsoProviderError extends Error {
 }
 
 export type KapsoOnboardingProvider = {
+  source?: "kapso" | "simulated";
   createCustomer: (input: {
     externalCustomerId: string;
     name: string;
@@ -155,6 +156,7 @@ export function createKapsoOnboardingProvider(
   const fetchImpl = options.fetchImpl ?? fetch;
 
   return {
+    source: "kapso",
     async createCustomer(input) {
       const payload = await requestJson(
         fetchImpl,

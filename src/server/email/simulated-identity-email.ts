@@ -8,6 +8,7 @@ import type { DailyAgendaEmail } from "~/server/application/appointment-reminder
 import type {
   ClinicDoctorInvitationDelivery,
   ClinicOwnerInvitationDelivery,
+  ClinicWhatsAppSetupLinkDelivery,
 } from "~/server/email/clinic-invitation-email";
 import { env } from "~/env";
 import { clinicInvitationUrl } from "~/domain/clinic-invitation";
@@ -24,6 +25,7 @@ const sentIdentityOtps: IdentityOtp[] = [];
 const sentIdentityPasswordBlockNotices: string[] = [];
 const sentClinicOwnerInvitations: ClinicOwnerInvitation[] = [];
 const sentClinicDoctorInvitations: ClinicDoctorInvitation[] = [];
+const sentClinicWhatsAppSetupLinks: ClinicWhatsAppSetupLinkDelivery[] = [];
 const sentDailyAgendaEmails: Array<
   DailyAgendaEmail & { idempotencyKey?: string; pdf: Uint8Array }
 > = [];
@@ -72,6 +74,17 @@ export async function sendSimulatedClinicDoctorInvitation(
 
 export function getSentClinicDoctorInvitations() {
   return [...sentClinicDoctorInvitations];
+}
+
+/** Adaptador simulado que conserva la evidencia de envío del setup link. */
+export async function sendSimulatedClinicWhatsAppSetupLink(
+  invitation: ClinicWhatsAppSetupLinkDelivery,
+) {
+  sentClinicWhatsAppSetupLinks.push(invitation);
+}
+
+export function getSentClinicWhatsAppSetupLinks() {
+  return [...sentClinicWhatsAppSetupLinks];
 }
 
 /** Adaptador de correo simulado para el PDF nocturno de la Agenda. */

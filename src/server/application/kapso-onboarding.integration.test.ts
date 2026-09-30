@@ -155,6 +155,21 @@ describe("persistencia y RLS del onboarding Kapso", () => {
             status: "success",
           }),
         ).resolves.toBe(false);
+        await drizzleKapsoOnboardingStore.save({
+          actorIdentityId: superadminIdentityId,
+          auditEvents: [
+            {
+              action: "setup-link-email-sent",
+              customerId: "kapso-customer-apo-83",
+              reason:
+                "El enlace se envió al correo registrado del propietario.",
+              result: "succeeded",
+              setupLinkId: "kapso-link-apo-84",
+            },
+          ],
+          clinicId: fixture.primaryClinicId,
+          customerId: "kapso-customer-apo-83",
+        });
         await expect(
           drizzleKapsoOnboardingStore.read({
             access: "clinic-owner",
@@ -225,6 +240,11 @@ describe("persistencia y RLS del onboarding Kapso", () => {
               customerId: "kapso-customer-apo-83",
               setupLinkId: "kapso-link-apo-84",
             },
+            {
+              clinicId: fixture.primaryClinicId,
+              customerId: "kapso-customer-apo-83",
+              setupLinkId: "kapso-link-apo-84",
+            },
           ],
           preflight: [
             {
@@ -278,7 +298,7 @@ describe("persistencia y RLS del onboarding Kapso", () => {
         expect(JSON.stringify(persisted.audit)).not.toMatch(
           /otp|qr|token|secret/i,
         );
-        expect(persisted.audit).toHaveLength(2);
+        expect(persisted.audit).toHaveLength(3);
         expect(persisted.audit).toContainEqual(
           expect.objectContaining({
             actorIdentityId: superadminIdentityId,
@@ -291,6 +311,14 @@ describe("persistencia y RLS del onboarding Kapso", () => {
           expect.objectContaining({
             actorIdentityId: primaryOwnerIdentityId,
             action: "setup-link-created",
+            result: "succeeded",
+            setupLinkId: "kapso-link-apo-84",
+          }),
+        );
+        expect(persisted.audit).toContainEqual(
+          expect.objectContaining({
+            actorIdentityId: superadminIdentityId,
+            action: "setup-link-email-sent",
             result: "succeeded",
             setupLinkId: "kapso-link-apo-84",
           }),

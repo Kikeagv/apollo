@@ -848,6 +848,13 @@
       "when": 1790550000004,
       "tag": "0125_apo112_contact_whatsapp_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1790550000005,
+      "tag": "0126_apo113_setup_link_email_delivery",
+      "breakpoints": true
     }
   ]
 }

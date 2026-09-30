@@ -56,6 +56,7 @@ import {
   getSupervisionOperationStatusLabel,
   SupervisionTechnicalDetails,
 } from "./supervision-diagnostics";
+import { ClinicActivationJourneyPanel } from "./clinic-activation-journey-panel";
 
 const operationStatusLabels = {
   idle: "Sin operación",
@@ -112,13 +113,19 @@ export function ApoloOperations() {
   };
   const clinics = api.apolo.listCommercialClinics.useQuery();
   const selectedClinic = clinics.data?.find((clinic) => clinic.id === clinicId);
+  const activationVisible =
+    activeTab === "overview" || activeTab === "whatsapp";
+  const registration = api.apolo.getClinicRegistration.useQuery(
+    { clinicId },
+    { enabled: Boolean(clinicId) && activationVisible },
+  );
   const onboarding = api.apolo.getKapsoOnboarding.useQuery(
     { clinicId },
-    { enabled: Boolean(clinicId) && activeTab === "whatsapp" },
+    { enabled: Boolean(clinicId) && activationVisible },
   );
   const readiness = api.apolo.getWhatsAppReadiness.useQuery(
     { clinicId },
-    { enabled: Boolean(clinicId) && activeTab === "whatsapp" },
+    { enabled: Boolean(clinicId) && activationVisible },
   );
   const circuitBreaker = api.apolo.getWhatsAppCircuitBreaker.useQuery(
     { clinicId },
@@ -141,29 +148,7 @@ export function ApoloOperations() {
   const connectionReady = onboarding.data?.connection?.status === "ready";
   const readinessReady = readiness.data?.readiness.status === "ready";
   const smokePassed = latestSmoke?.status === "passed";
-  const trafficAllowed =
-    whatsappOperations.data?.trafficEvaluation.allowed === true;
   const trafficEnabled = whatsappOperations.data?.trafficStatus === "enabled";
-  const connectionStageDetail =
-    onboarding.data?.preflight?.blockers[0]?.message ??
-    onboarding.data?.preflight?.reason ??
-    onboarding.data?.preflight?.nextAction ??
-    "Confirme los datos del Médico propietario y del número.";
-  const readinessStageDetail =
-    readiness.data?.readiness.gates.find((gate) => gate.status !== "ready")
-      ?.message ??
-    readiness.data?.readiness.legalAuthorization.message ??
-    "La preparación técnica todavía no está confirmada.";
-  const smokeStageDetail =
-    latestSmoke?.blockers[0]?.message ??
-    (latestSmoke?.status === "pending"
-      ? "El roundtrip controlado sigue en espera."
-      : "No hay una prueba controlada aprobada para esta Conexión.");
-  const authorizationStageDetail =
-    whatsappOperations.data?.trafficEvaluation.blockers[0]?.message ??
-    (trafficAllowed
-      ? "Los gates están presentes; falta confirmar y habilitar el tráfico."
-      : "Registre la evidencia requerida por cada gate.");
   useEffect(() => {
     if (latestSmoke?.finishedAt === null || latestSmoke === null) return;
     const remainingMs =
@@ -239,6 +224,13 @@ export function ApoloOperations() {
       },
     });
   const manageSetupLink = api.apolo.manageKapsoWhatsAppSetupLink.useMutation({
+    onSuccess: () => {
+      void onboarding.refetch();
+      refreshActivationContract();
+      refreshSupervisionSummary();
+    },
+  });
+  const sendSetupLink = api.apolo.sendKapsoWhatsAppSetupLink.useMutation({
     onSuccess: () => {
       void onboarding.refetch();
       refreshActivationContract();
@@ -398,6 +390,7 @@ export function ApoloOperations() {
     setSupportAttempt(null);
     prepareOnboarding.reset();
     manageSetupLink.reset();
+    sendSetupLink.reset();
     retryReadiness.reset();
     openCircuitBreaker.reset();
     reactivateCircuitBreaker.reset();
@@ -419,6 +412,7 @@ export function ApoloOperations() {
     openSupport,
     prepareOnboarding,
     readSupport,
+    sendSetupLink,
     recordPayment,
     recordTrafficGate,
     reactivateCircuitBreaker,
@@ -611,10 +605,38 @@ export function ApoloOperations() {
         tabIndex={0}
       >
         {activeTab === "overview" ? (
-          <ClinicSupervisionSummary
-            clinicId={clinicId}
-            onNavigate={(tab) => updateSupervisionContext({ tab })}
-          />
+          <div className="space-y-5">
+            <ClinicActivationJourneyPanel
+              instanceId="overview"
+              clinicId={clinicId}
+              isLoading={
+                registration.isLoading ||
+                onboarding.isLoading ||
+                readiness.isLoading
+              }
+              isSending={sendSetupLink.isPending}
+              numberHealth={readiness.data?.numberHealth ?? "unknown"}
+              numberHealthCheckedAt={
+                readiness.data?.numberHealthCheckedAt ?? null
+              }
+              onContinueWhatsApp={() => {
+                updateSupervisionContext({ tab: "whatsapp" });
+              }}
+              onRegister={() => router.push(registrationHref)}
+              onSendSetupLink={() =>
+                sendSetupLink.mutate({ action: "send", clinicId })
+              }
+              registration={registration.data ?? null}
+              sendError={sendSetupLink.error?.message ?? null}
+              sendMessage={sendSetupLink.data?.message ?? null}
+              sendStatus={sendSetupLink.data?.deliveryStatus ?? null}
+              onboarding={onboarding.data ?? null}
+            />
+            <ClinicSupervisionSummary
+              clinicId={clinicId}
+              onNavigate={(tab) => updateSupervisionContext({ tab })}
+            />
+          </div>
         ) : null}
       </section>
       <section
@@ -650,43 +672,32 @@ export function ApoloOperations() {
         role="tabpanel"
         tabIndex={0}
       >
-        <section
-          aria-labelledby="whatsapp-activation-stages-title"
-          className="border-border bg-card space-y-4 rounded-xl border p-5"
-        >
-          <div>
-            <p className="text-primary text-xs font-semibold tracking-wide uppercase">
-              Operación por etapas
-            </p>
-            <h2
-              className="mt-1 text-xl font-semibold"
-              id="whatsapp-activation-stages-title"
-            >
-              Activación de WhatsApp
-            </h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              Revisa el paso pendiente y su bloqueo antes de abrir diagnósticos
-              y evidencia técnica.
-            </p>
-          </div>
-          {!clinicId ? (
-            <p className="text-muted-foreground text-sm">
-              Selecciona una Clínica para ver su etapa de activación.
-            </p>
-          ) : (
-            <WhatsAppActivationStages
-              authorizationDetail={authorizationStageDetail}
-              connectionDetail={connectionStageDetail}
-              connectionReady={connectionReady}
-              readinessDetail={readinessStageDetail}
-              readinessReady={readinessReady}
-              smokeDetail={smokeStageDetail}
-              smokePassed={smokePassed}
-              trafficAllowed={trafficAllowed}
-              trafficEnabled={trafficEnabled}
-            />
-          )}
-        </section>
+        <ClinicActivationJourneyPanel
+          instanceId="whatsapp"
+          clinicId={clinicId}
+          isLoading={
+            registration.isLoading ||
+            onboarding.isLoading ||
+            readiness.isLoading
+          }
+          isSending={sendSetupLink.isPending}
+          numberHealth={readiness.data?.numberHealth ?? "unknown"}
+          numberHealthCheckedAt={readiness.data?.numberHealthCheckedAt ?? null}
+          onContinueWhatsApp={() => {
+            const preflight = document.getElementById("whatsapp-onboarding");
+            if (preflight instanceof HTMLDetailsElement) preflight.open = true;
+            preflight?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          onRegister={() => router.push(registrationHref)}
+          onSendSetupLink={() =>
+            sendSetupLink.mutate({ action: "send", clinicId })
+          }
+          registration={registration.data ?? null}
+          sendError={sendSetupLink.error?.message ?? null}
+          sendMessage={sendSetupLink.data?.message ?? null}
+          sendStatus={sendSetupLink.data?.deliveryStatus ?? null}
+          onboarding={onboarding.data ?? null}
+        />
         {circuitBreaker.data?.status === "open" ? (
           <section
             aria-labelledby="whatsapp-circuit-breaker-attention-title"
@@ -1190,7 +1201,9 @@ export function ApoloOperations() {
                 <OnboardingSummary snapshot={onboarding.data} />
                 <SetupLinkOperations
                   clinicId={clinicId}
-                  isPending={manageSetupLink.isPending}
+                  isPending={
+                    manageSetupLink.isPending || sendSetupLink.isPending
+                  }
                   onManage={(action, actionReason) =>
                     manageSetupLink.mutate({
                       action,
@@ -1200,8 +1213,34 @@ export function ApoloOperations() {
                         : { reason: actionReason }),
                     })
                   }
+                  onSend={(action, actionReason) =>
+                    sendSetupLink.mutate({
+                      action,
+                      clinicId,
+                      ...(actionReason === undefined
+                        ? {}
+                        : { reason: actionReason }),
+                    })
+                  }
                   snapshot={onboarding.data}
                 />
+                {sendSetupLink.data?.message ? (
+                  <p
+                    className="text-sm"
+                    role={
+                      sendSetupLink.data.deliveryStatus === "failed"
+                        ? "alert"
+                        : "status"
+                    }
+                  >
+                    {sendSetupLink.data.message}
+                  </p>
+                ) : null}
+                {sendSetupLink.error ? (
+                  <p className="text-warning-foreground text-sm" role="alert">
+                    {sendSetupLink.error.message}
+                  </p>
+                ) : null}
                 {manageSetupLink.error ? (
                   <p className="text-warning-foreground text-sm" role="alert">
                     {manageSetupLink.error.message}
@@ -2738,115 +2777,6 @@ function AdministrativeOperationFeedback({
   );
 }
 
-function WhatsAppActivationStages({
-  authorizationDetail,
-  connectionDetail,
-  connectionReady,
-  readinessDetail,
-  readinessReady,
-  smokeDetail,
-  smokePassed,
-  trafficAllowed,
-  trafficEnabled,
-}: {
-  authorizationDetail: string;
-  connectionDetail: string;
-  connectionReady: boolean;
-  readinessDetail: string;
-  readinessReady: boolean;
-  smokeDetail: string;
-  smokePassed: boolean;
-  trafficAllowed: boolean;
-  trafficEnabled: boolean;
-}) {
-  const stages = [
-    {
-      complete: connectionReady,
-      detail: connectionDetail,
-      href: "#whatsapp-onboarding",
-      label: "Conexión",
-      pending: "Confirme el número y los datos de la Conexión.",
-    },
-    {
-      complete: readinessReady,
-      detail: readinessDetail,
-      href: "#whatsapp-readiness",
-      label: "Preparación técnica",
-      pending: "Resuelva los gates de preparación que siguen pendientes.",
-    },
-    {
-      complete: smokePassed,
-      detail: smokeDetail,
-      href: "#whatsapp-final-operations",
-      label: "Prueba controlada",
-      pending: "Ejecute y complete el smoke antes de autorizar tráfico.",
-    },
-    {
-      complete: trafficAllowed,
-      detail: authorizationDetail,
-      href: "#whatsapp-final-operations",
-      label: "Autorización",
-      pending: "Registre la evidencia requerida por cada gate.",
-    },
-    {
-      complete: trafficEnabled,
-      detail: authorizationDetail,
-      href: "#whatsapp-final-operations",
-      label: "Habilitación",
-      pending: "Confirme explícitamente la habilitación de tráfico real.",
-    },
-  ];
-  const currentIndex = stages.findIndex((stage) => !stage.complete);
-  const currentStage = stages[currentIndex];
-
-  return (
-    <div className="border-border bg-muted space-y-3 rounded-lg border p-4">
-      <p className="text-muted-foreground text-sm" role="status">
-        {currentStage
-          ? `Etapa actual: ${currentStage.label}`
-          : "Activación completada: tráfico real habilitado."}
-      </p>
-      {currentStage ? (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="font-medium">{currentStage.detail}</p>
-            <p className="text-muted-foreground mt-1 text-sm">
-              {currentStage.pending}
-            </p>
-          </div>
-          <a
-            className="bg-primary text-primary-foreground focus-visible:outline-ring rounded-lg px-4 py-2 font-medium underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-            href={currentStage.href}
-            onClick={() => {
-              const detailsId =
-                currentStage.label === "Prueba controlada"
-                  ? "whatsapp-smoke"
-                  : currentStage.label === "Autorización" ||
-                      currentStage.label === "Habilitación"
-                    ? "whatsapp-real-traffic"
-                    : currentStage.href.slice(1);
-              const target = document.getElementById(detailsId);
-              if (target instanceof HTMLDetailsElement) target.open = true;
-            }}
-          >
-            Abrir {currentStage.label.toLocaleLowerCase("es")}
-          </a>
-        </div>
-      ) : null}
-      {stages.slice(currentIndex < 0 ? stages.length : currentIndex + 1)
-        .length ? (
-        <p className="text-muted-foreground text-sm">
-          Después:{" "}
-          {stages
-            .slice(currentIndex < 0 ? stages.length : currentIndex + 1)
-            .map((stage) => stage.label)
-            .join(" · ")}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 function OnboardingSummary({
   snapshot,
 }: {
@@ -2883,7 +2813,11 @@ function OnboardingSummary({
         <DiagnosticValue
           label="Proveedor"
           value={
-            snapshot.connection?.provider === "kapso" ? "Kapso" : "Simulado"
+            snapshot.connection?.provider === "kapso"
+              ? "Kapso"
+              : snapshot.connection?.provider === "simulated"
+                ? "Simulado"
+                : "Pendiente"
           }
         />
         <DiagnosticValue
@@ -2927,7 +2861,12 @@ function OnboardingSummary({
         <>
           <p>
             Estado del preflight:{" "}
-            <strong>{preflightStatusLabel(snapshot.preflight.status)}</strong>
+            <strong>
+              {preflightStatusLabel(
+                snapshot.preflight.status,
+                snapshot.connection?.provider,
+              )}
+            </strong>
           </p>
           {snapshot.preflight.reason ? (
             <p className="text-warning-foreground">
@@ -2956,14 +2895,13 @@ function SetupLinkOperations({
   clinicId,
   isPending,
   onManage,
+  onSend,
   snapshot,
 }: {
   clinicId: string;
   isPending: boolean;
-  onManage: (
-    action: "generate" | "regenerate" | "revoke",
-    reason?: string,
-  ) => void;
+  onManage: (action: "revoke", reason?: string) => void;
+  onSend: (action: "send" | "regenerate", reason?: string) => void;
   snapshot: {
     preflight: { status: string } | null;
     setupLink: WhatsAppSetupLink | null;
@@ -2996,9 +2934,9 @@ function SetupLinkOperations({
           Enlace de configuración de WhatsApp
         </h3>
         <p className="text-foreground mt-1">
-          Se entrega únicamente desde esta sesión autenticada. El propietario
-          completa OTP, QR, contraseñas y credenciales de Meta; Praxia no los
-          recibe ni los guarda.
+          Se envía al correo registrado del propietario. El propietario completa
+          OTP, QR, contraseñas y credenciales de Meta; Praxia no los recibe ni
+          los guarda.
         </p>
       </div>
       {setupLink !== null && status !== null ? (
@@ -3083,17 +3021,17 @@ function SetupLinkOperations({
         ) : null}
         <button
           className="bg-primary text-primary-foreground rounded px-3 py-2 font-medium disabled:opacity-50"
-          disabled={!clinicId || !preflightPassed || isPending}
-          onClick={() => {
-            if (status === "active") {
-              setPendingAction("regenerate");
-              return;
-            }
-            onManage("generate");
-          }}
+          disabled={
+            !clinicId || !preflightPassed || isPending || status === "used"
+          }
+          onClick={() => onSend("send")}
           type="button"
         >
-          {status === "active" ? "Regenerar enlace" : "Generar enlace"}
+          {status === "used"
+            ? "Configuración completada"
+            : status === "active"
+              ? "Reenviar al propietario"
+              : "Enviar enlace al propietario"}
         </button>
       </div>
       <AlertDialog
@@ -3130,7 +3068,11 @@ function SetupLinkOperations({
               disabled={isPending}
               onClick={() => {
                 if (pendingAction === null) return;
-                onManage(pendingAction, actionReason.trim() || undefined);
+                if (pendingAction === "revoke") {
+                  onManage("revoke", actionReason.trim() || undefined);
+                } else {
+                  onSend("regenerate", actionReason.trim() || undefined);
+                }
                 setPendingAction(null);
                 setActionReason("");
               }}
@@ -3177,12 +3119,18 @@ function onboardingConnectionStatusLabel(status: string) {
   return labels[status] ?? "Estado no disponible";
 }
 
-function preflightStatusLabel(status: string) {
+function preflightStatusLabel(
+  status: string,
+  provider: "kapso" | "simulated" | undefined,
+) {
   const labels: Record<string, string> = {
     blocked: "Bloqueado",
     "not-run": "No ejecutado",
     passed: "Sin bloqueos conocidos",
-    unavailable: "Kapso no disponible",
+    unavailable:
+      provider === "simulated"
+        ? "Proveedor simulado no disponible"
+        : "Kapso no disponible",
   };
   return labels[status] ?? "Estado no disponible";
 }
