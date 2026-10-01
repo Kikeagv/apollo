@@ -36,7 +36,7 @@ describe("excepción de roundtrip controlado con circuit breaker abierto", () =>
     ).resolves.toBe(true);
   });
 
-  it("rechaza un bloqueo de Conexión que no produjo el circuito abierto", async () => {
+  it("acepta el reto activo aunque difieran las razones de Conexión y circuito", async () => {
     const transaction = createTransaction();
     const message = {
       connectionReference: "phone-1",
@@ -50,7 +50,28 @@ describe("excepción de roundtrip controlado con circuit breaker abierto", () =>
 
     await expect(
       isActiveControlledSmokeChallenge(transaction, {
-        connection: createConnection("Bloqueo por operador"),
+        connection: createConnection("Todos los gates técnicos están correctos"),
+        message,
+        now,
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("rechaza la excepción si la Conexión está bloqueada y el circuito está cerrado", async () => {
+    const transaction = createTransaction({ circuitStatus: "closed" });
+    const message = {
+      connectionReference: "phone-1",
+      customerReference: "customer-1",
+      phoneE164: "+50370000001",
+      text: `PRUEBA WHATSAPP ${runId}`,
+    } as Pick<
+      WhatsAppInboundMessage,
+      "connectionReference" | "customerReference" | "phoneE164" | "text"
+    >;
+
+    await expect(
+      isActiveControlledSmokeChallenge(transaction, {
+        connection: createConnection(),
         message,
         now,
       }),
@@ -124,6 +145,7 @@ function createConnection(statusReason = "high-failure-rate") {
 function createTransaction(
   input: {
     numberHealthCheckedAt?: Date | null;
+    circuitStatus?: "closed" | "open";
     steps?: Array<{
       code: string;
       passed: boolean;
@@ -184,7 +206,7 @@ function createTransaction(
       whatsappCircuitBreakers: {
         findFirst: vi.fn().mockResolvedValue({
           reason: "high-failure-rate",
-          status: "open",
+          status: input.circuitStatus ?? "open",
         }),
       },
       whatsappReadiness: { findFirst: vi.fn().mockResolvedValue(readiness) },

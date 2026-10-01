@@ -194,7 +194,7 @@ async function readCurrentControlledSmokeRun(
       where: eq(whatsappReadiness.clinicId, input.clinicId),
     }),
     transaction.query.whatsappCircuitBreakers.findFirst({
-      columns: { reason: true, status: true },
+      columns: { status: true },
       where: eq(whatsappCircuitBreakers.clinicId, input.clinicId),
     }),
     transaction
@@ -212,10 +212,10 @@ async function readCurrentControlledSmokeRun(
           healthCheckedAt: readiness.numberHealthCheckedAt,
           now: input.now,
         });
+  // The Connection reason describes readiness; the breaker reason describes
+  // the operational cut. They are separate gates, so compare their states.
   const blockedByCurrentCircuit =
-    input.connection.status !== "blocked" ||
-    (circuit?.status === "open" &&
-      circuit.reason === input.connection.metadata.statusReason);
+    input.connection.status !== "blocked" || circuit?.status === "open";
   if (
     readiness === undefined ||
     !blockedByCurrentCircuit ||
