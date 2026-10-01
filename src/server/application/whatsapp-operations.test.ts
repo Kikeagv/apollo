@@ -702,6 +702,42 @@ describe("operaciones finales de WhatsApp", () => {
     expect(runner.run).not.toHaveBeenCalled();
   });
 
+  it("inicia la prueba de Contacto controlado con circuito abierto y Conexión bloqueada por el breaker", async () => {
+    const initial = makeSnapshot({
+      circuitStatus: "open",
+      connection: { ...makeSnapshot().connection!, status: "blocked" },
+      technicalReadiness: {
+        blockers: ["Las plantillas aún esperan aprobación"],
+        status: "blocked",
+      },
+    });
+    const { smokeRuns, store } = makeStore(initial);
+    const runner = {
+      run: vi.fn().mockResolvedValue({
+        evidence: "Preflight del webhook de proyecto confirmado",
+        providerTransportVerified: false,
+        realPatientsEnabled: false,
+        steps: {},
+        syntheticContact: false,
+      }),
+    };
+
+    const result = await startWhatsAppInboundRoundtrip(
+      {
+        actorIdentityId: "superadmin-92",
+        clinicId: initial.clinicId,
+        now,
+        testContactPhoneE164: "+50370000092",
+      },
+      { idGenerator: () => "smoke-open-breaker-92", runner, store },
+    );
+
+    expect(result.status).toBe("pending");
+    expect(result.realPatientsEnabled).toBe(false);
+    expect(smokeRuns).toHaveLength(1);
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
   it("inicia el roundtrip real sin llamar el preflight de Kapso", async () => {
     const { smokeRuns, store } = makeStore();
     const runner = {

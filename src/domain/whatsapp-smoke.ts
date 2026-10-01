@@ -162,6 +162,112 @@ export type WhatsAppSyntheticSmokeStepInput = {
   status?: "failed" | "passed" | "pending" | "skipped";
 };
 
+const whatsappSmokeRunIdPattern =
+  "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+export function hasWhatsAppSmokeChallengePrefix(text: string | null) {
+  return text !== null && /^PRUEBA WHATSAPP(?:\s|$)/i.test(text.trim());
+}
+
+export function parseWhatsAppSmokeChallenge(text: string | null) {
+  if (text === null) return null;
+  const match = new RegExp(
+    `^PRUEBA WHATSAPP (${whatsappSmokeRunIdPattern})$`,
+    "i",
+  ).exec(text.trim());
+  return match?.[1] ?? null;
+}
+
+export function parseWhatsAppSmokeReplyIdempotencyKey(key: string) {
+  const match = new RegExp(
+    `^whatsapp-smoke:(${whatsappSmokeRunIdPattern}):reply$`,
+    "i",
+  ).exec(key);
+  return match?.[1] ?? null;
+}
+
+type WhatsAppSmokeRunGuardSnapshot = {
+  id: string;
+  provisioningEventId: string | null;
+  realPatientsEnabled: boolean;
+  requiresRealRoundtrip: boolean;
+  status: "failed" | "passed" | "pending";
+  steps: ReadonlyArray<
+    Pick<WhatsAppSyntheticSmokeStep, "code" | "passed" | "status">
+  >;
+  syntheticContact: boolean;
+  testContactId: string | null;
+  timeoutAt: Date | null;
+};
+
+export function isWhatsAppSmokeRunAwaitingInbound(input: {
+  now: Date;
+  provisioningEventId: string | null;
+  run: WhatsAppSmokeRunGuardSnapshot | undefined;
+  runId: string | null;
+}) {
+  const run = input.run;
+  const reception = run?.steps.find((step) => step.code === "real-reception");
+  const processing = run?.steps.find((step) => step.code === "real-processing");
+  const response = run?.steps.find((step) => step.code === "real-response");
+  const delivery = run?.steps.find((step) => step.code === "real-delivery");
+  return (
+    input.runId !== null &&
+    run?.id === input.runId &&
+    run.status === "pending" &&
+    run.requiresRealRoundtrip &&
+    !run.syntheticContact &&
+    !run.realPatientsEnabled &&
+    run.testContactId !== null &&
+    run.timeoutAt !== null &&
+    run.timeoutAt > input.now &&
+    run.provisioningEventId !== null &&
+    run.provisioningEventId === input.provisioningEventId &&
+    reception?.status === "pending" &&
+    !reception.passed &&
+    processing?.status === "pending" &&
+    !processing.passed &&
+    response?.status === "pending" &&
+    !response.passed &&
+    delivery?.status === "pending" &&
+    !delivery.passed
+  );
+}
+
+export function isWhatsAppSmokeRunAwaitingReply(input: {
+  now: Date;
+  provisioningEventId: string | null;
+  run: WhatsAppSmokeRunGuardSnapshot | undefined;
+  runId: string | null;
+}) {
+  const run = input.run;
+  const reception = run?.steps.find((step) => step.code === "real-reception");
+  const processing = run?.steps.find((step) => step.code === "real-processing");
+  const response = run?.steps.find((step) => step.code === "real-response");
+  const delivery = run?.steps.find((step) => step.code === "real-delivery");
+  return (
+    input.runId !== null &&
+    run?.id === input.runId &&
+    run.status === "pending" &&
+    run.requiresRealRoundtrip &&
+    !run.syntheticContact &&
+    !run.realPatientsEnabled &&
+    run.testContactId !== null &&
+    run.timeoutAt !== null &&
+    run.timeoutAt > input.now &&
+    run.provisioningEventId !== null &&
+    run.provisioningEventId === input.provisioningEventId &&
+    reception?.status === "passed" &&
+    reception.passed &&
+    processing?.status === "passed" &&
+    processing.passed &&
+    response?.status === "pending" &&
+    !response.passed &&
+    delivery?.status === "pending" &&
+    !delivery.passed
+  );
+}
+
 /**
  * Normaliza el contrato del runner y falla cerrado ante pasos requeridos
  * ausentes, Contactos no controlados o intentos de habilitar Pacientes reales.

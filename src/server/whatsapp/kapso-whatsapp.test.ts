@@ -76,6 +76,32 @@ describe("adaptador de envío Kapso", () => {
     });
   });
 
+  it("revalida la Conexión justo antes del POST", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const requireConnection = vi
+      .fn()
+      .mockResolvedValueOnce(connection)
+      .mockRejectedValueOnce(new WhatsAppConnectionRequiredError());
+    const sender = createKapsoWhatsAppSenders({
+      apiKey: "kapso-secret",
+      fetchImpl,
+      requireConnection,
+      reserveSendSlot: async () => 0,
+    });
+
+    await expect(
+      sender.sendConversationReply({
+        clinicId: "clinic-1",
+        idempotencyKey: "reply-becomes-blocked",
+        recipientPhoneE164: "+50370000001",
+        text: "No debe salir si el circuito abrió durante la espera.",
+      }),
+    ).rejects.toBeInstanceOf(WhatsAppConnectionRequiredError);
+
+    expect(requireConnection).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("reserva capacidad antes del POST y la liquida con el resultado aceptado", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ messages: [{ id: "wamid-capacity" }] }), {
@@ -132,18 +158,26 @@ describe("adaptador de envío Kapso", () => {
   });
 
   it("usa el bypass de readiness solo para la respuesta del smoke real", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ messages: [{ id: "wamid-smoke" }] }), {
-        status: 200,
-      }),
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ messages: [{ id: "wamid-smoke" }] }), {
+          status: 200,
+        }),
     );
     const requireConnection = vi.fn().mockResolvedValue(connection);
     const requireSmokeReplyConnection = vi.fn().mockResolvedValue(connection);
+    const reserve = vi
+      .fn<WhatsAppBillingCapacityStore["reserve"]>()
+      .mockResolvedValue({ reserved: true, status: "reserved" });
+    const settle = vi
+      .fn<WhatsAppBillingCapacityStore["settle"]>()
+      .mockResolvedValue(undefined);
     const sender = createKapsoWhatsAppSenders({
       apiKey: "kapso-secret",
       fetchImpl,
       requireConnection,
       requireSmokeReplyConnection,
+      reserveCapacity: { reserve, settle },
       reserveSendSlot: async () => 0,
     });
     const runId = "3a1917e2-bd36-4b45-9b61-e3810fd28051";
@@ -162,6 +196,11 @@ describe("adaptador de envío Kapso", () => {
       recipientPhoneE164: "+50370000001",
     });
     expect(requireConnection).not.toHaveBeenCalled();
+    expect(reserve.mock.calls[0]?.[0]).toMatchObject({
+      allowOpenCircuitForSmoke: true,
+      reservationKey: `whatsapp-smoke:${runId}:reply`,
+      recipientPhoneE164: "+50370000001",
+    });
 
     await sender.sendConversationReply({
       clinicId: "clinic-1",
@@ -174,7 +213,11 @@ describe("adaptador de envío Kapso", () => {
       clinicId: "clinic-1",
       provider: "kapso",
     });
-    expect(requireSmokeReplyConnection).toHaveBeenCalledTimes(1);
+    expect(requireSmokeReplyConnection).toHaveBeenCalledTimes(2);
+    expect(reserve.mock.calls[1]?.[0]).toMatchObject({
+      allowOpenCircuitForSmoke: false,
+      reservationKey: "ordinary-reply-1",
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -189,11 +232,13 @@ describe("adaptador de envío Kapso", () => {
     );
     const requireSmokeConnection = vi.fn().mockResolvedValue(connection);
     const requireConnection = vi.fn().mockResolvedValue(connection);
+    const requireSmokeTemplateConsent = vi.fn().mockResolvedValue(undefined);
     const sender = createKapsoWhatsAppSenders({
       apiKey: "kapso-secret",
       fetchImpl,
       requireConnection,
       requireSmokeConnection,
+      requireSmokeTemplateConsent,
       reserveSendSlot: async () => 0,
     });
     const idempotencyKey =

@@ -24,6 +24,7 @@ import {
   type WhatsAppInboundMessage,
   type WhatsAppInboundMessageOrigin,
 } from "~/domain/whatsapp-inbound";
+import { isWhatsAppSmokeRunAwaitingInbound } from "~/domain/whatsapp-smoke";
 import {
   buildWhatsAppConsentPolicy,
   WHATSAPP_CONSENT_PROVIDER,
@@ -44,6 +45,10 @@ import {
   smokeResultFromRow,
 } from "~/server/db/whatsapp-smoke-run-store";
 import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
+import {
+  isActiveControlledSmokeChallenge,
+  isActiveControlledSmokeReply,
+} from "~/server/db/whatsapp-smoke-circuit-exception";
 import type { db } from "~/server/db";
 import {
   clinics,
@@ -305,7 +310,6 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
       for (const candidate of candidates) {
         const connection =
           await transaction.query.whatsappConnections.findFirst({
-            columns: { clinicId: true, status: true },
             where: eq(
               whatsappConnections.phoneNumberId,
               candidate.phoneNumberId,
@@ -317,7 +321,17 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
           (await isWhatsAppCircuitOpenInTransaction(
             transaction,
             connection.clinicId,
-          ))
+          )) &&
+          !(await isActiveControlledSmokeChallenge(transaction, {
+            connection,
+            message: {
+              connectionReference: candidate.phoneNumberId,
+              customerReference: candidate.customerId,
+              phoneE164: candidate.phoneE164,
+              text: candidate.text,
+            },
+            now,
+          }))
         ) {
           // La entrada permanece pendiente para conservar el evento y
           // procesarlo cuando el superadmin reactive la Clínica.
@@ -365,7 +379,7 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
     });
   },
 
-  async resolveMessage({ message, mode = "live" }) {
+  async resolveMessage({ message, mode = "live", now = new Date() }) {
     return inWhatsAppInboundWorkerTransaction(async (transaction) => {
       const connection = await transaction.query.whatsappConnections.findFirst({
         where: eq(
@@ -395,20 +409,31 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
       const businessAppContinuity = isBusinessAppContinuityAllowed(
         message.origin,
       );
-      if (
+      const circuitOpen =
         !businessAppContinuity &&
         (await isWhatsAppCircuitOpenInTransaction(
           transaction,
           connection.clinicId,
-        ))
-      ) {
+        ));
+      const controlledSmokeChallenge =
+        circuitOpen &&
+        (await isActiveControlledSmokeChallenge(transaction, {
+          connection,
+          message,
+          now,
+        }));
+      if (circuitOpen && !controlledSmokeChallenge) {
         return {
           kind: "circuit-open",
           reason:
             "El circuit breaker de la Clínica está abierto; el mensaje queda pendiente",
         } satisfies WhatsAppInboundResolution;
       }
-      if (connection.status !== "ready" && !businessAppContinuity) {
+      if (
+        connection.status !== "ready" &&
+        !businessAppContinuity &&
+        !controlledSmokeChallenge
+      ) {
         return {
           kind: "connection-not-ready",
           reason:
@@ -596,6 +621,16 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
         )
         .for("update");
       if (run === undefined) return false;
+      if (
+        !isWhatsAppSmokeRunAwaitingInbound({
+          now: input.now,
+          provisioningEventId: run.provisioningEventId,
+          run,
+          runId: input.runId,
+        })
+      ) {
+        return false;
+      }
       const connection = await transaction.query.whatsappConnections.findFirst({
         columns: { metadata: true, provider: true },
         where: eq(whatsappConnections.clinicId, input.clinicId),
@@ -773,10 +808,16 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
       const claimed: WhatsAppOutboundReply[] = [];
       for (const candidate of candidates) {
         if (
-          await isWhatsAppCircuitOpenInTransaction(
+          (await isWhatsAppCircuitOpenInTransaction(
             transaction,
             candidate.clinicId,
-          )
+          )) &&
+          !(await isActiveControlledSmokeReply(transaction, {
+            clinicId: candidate.clinicId,
+            idempotencyKey: candidate.idempotencyKey,
+            now,
+            recipientPhoneE164: candidate.recipientPhoneE164,
+          }))
         ) {
           continue;
         }

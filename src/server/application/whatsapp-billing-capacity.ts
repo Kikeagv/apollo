@@ -20,8 +20,10 @@ export type WhatsAppBillingCapacityStore = {
   reserve(input: {
     clinicId: string;
     estimatedMetaChargesCents?: number;
+    allowOpenCircuitForSmoke?: boolean;
     now: Date;
     quotaUnits?: number;
+    recipientPhoneE164?: string | null;
     reservationKey: string;
   }): Promise<WhatsAppBillingCapacityReservationResult>;
   settle(input: {

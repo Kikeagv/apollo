@@ -11,6 +11,7 @@ import {
   lockWhatsAppCircuit,
 } from "~/server/db/clinic-context";
 import { openWhatsAppCircuitInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
+import { isActiveControlledSmokeReply } from "~/server/db/whatsapp-smoke-circuit-exception";
 import type { ClinicTransaction } from "~/server/db/clinic-context";
 import {
   clinics,
@@ -30,7 +31,16 @@ export const drizzleWhatsAppBillingCapacityStore: WhatsAppBillingCapacityStore =
         await lockCapacity(transaction, input.clinicId);
 
         const circuit = await readCircuitStatus(transaction, input.clinicId);
-        if (circuit === "open") {
+        if (
+          circuit === "open" &&
+          (input.allowOpenCircuitForSmoke !== true ||
+            !(await isActiveControlledSmokeReply(transaction, {
+              clinicId: input.clinicId,
+              idempotencyKey: input.reservationKey,
+              now: input.now,
+              recipientPhoneE164: input.recipientPhoneE164 ?? null,
+            })))
+        ) {
           return { reason: "circuit-open", reserved: false } as const;
         }
 

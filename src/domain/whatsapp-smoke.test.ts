@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateWhatsAppSyntheticSmoke,
   expireWhatsAppSyntheticSmoke,
+  hasWhatsAppSmokeChallengePrefix,
+  isWhatsAppSmokeRunAwaitingInbound,
+  isWhatsAppSmokeRunAwaitingReply,
+  parseWhatsAppSmokeChallenge,
+  parseWhatsAppSmokeReplyIdempotencyKey,
   recordWhatsAppSyntheticSmokeStep,
   whatsappSyntheticSmokeStepCodes,
   whatsappSyntheticSmokeRoundtripStepCodes,
@@ -22,6 +27,142 @@ function passingSteps(): Partial<
 }
 
 describe("smoke sintético de WhatsApp", () => {
+  it("reconoce únicamente el código UUID exacto del desafío y la respuesta del smoke", () => {
+    const runId = "9ac3c6f1-3e1a-4966-a487-94ee7afbc523";
+
+    expect(hasWhatsAppSmokeChallengePrefix(`PRUEBA WHATSAPP ${runId}`)).toBe(
+      true,
+    );
+    expect(parseWhatsAppSmokeChallenge(` prueba whatsapp ${runId} `)).toBe(
+      runId,
+    );
+    expect(parseWhatsAppSmokeChallenge(`PRUEBA WHATSAPP ${runId} extra`)).toBe(
+      null,
+    );
+    expect(
+      parseWhatsAppSmokeReplyIdempotencyKey(`whatsapp-smoke:${runId}:reply`),
+    ).toBe(runId);
+    expect(
+      parseWhatsAppSmokeReplyIdempotencyKey(`whatsapp-smoke:${runId}:other`),
+    ).toBe(null);
+  });
+
+  it("solo permite la fase que corresponda al estado pendiente del roundtrip", () => {
+    const now = new Date("2026-10-01T12:00:00.000Z");
+    const baseRun = {
+      id: "9ac3c6f1-3e1a-4966-a487-94ee7afbc523",
+      provisioningEventId: "generation-92",
+      realPatientsEnabled: false,
+      requiresRealRoundtrip: true,
+      status: "pending" as const,
+      steps: [
+        {
+          code: "real-reception" as const,
+          passed: false,
+          status: "pending" as const,
+        },
+        {
+          code: "real-processing" as const,
+          passed: false,
+          status: "pending" as const,
+        },
+        {
+          code: "real-response" as const,
+          passed: false,
+          status: "pending" as const,
+        },
+        {
+          code: "real-delivery" as const,
+          passed: false,
+          status: "pending" as const,
+        },
+      ],
+      syntheticContact: false,
+      testContactId: "contact-92",
+      timeoutAt: new Date(now.valueOf() + 60_000),
+    };
+
+    expect(
+      isWhatsAppSmokeRunAwaitingInbound({
+        now,
+        provisioningEventId: "generation-92",
+        run: baseRun,
+        runId: baseRun.id,
+      }),
+    ).toBe(true);
+    expect(
+      isWhatsAppSmokeRunAwaitingInbound({
+        now,
+        provisioningEventId: "old-generation",
+        run: baseRun,
+        runId: baseRun.id,
+      }),
+    ).toBe(false);
+    expect(
+      isWhatsAppSmokeRunAwaitingInbound({
+        now,
+        provisioningEventId: "generation-92",
+        run: { ...baseRun, timeoutAt: now },
+        runId: baseRun.id,
+      }),
+    ).toBe(false);
+    expect(
+      isWhatsAppSmokeRunAwaitingInbound({
+        now,
+        provisioningEventId: "generation-92",
+        run: {
+          ...baseRun,
+          steps: baseRun.steps.map((step) =>
+            step.code === "real-reception" ? { ...step, passed: true } : step,
+          ),
+        },
+        runId: baseRun.id,
+      }),
+    ).toBe(false);
+
+    const awaitingReply = {
+      ...baseRun,
+      steps: [
+        {
+          code: "real-reception" as const,
+          passed: true,
+          status: "passed" as const,
+        },
+        {
+          code: "real-processing" as const,
+          passed: true,
+          status: "passed" as const,
+        },
+        {
+          code: "real-response" as const,
+          passed: false,
+          status: "pending" as const,
+        },
+        {
+          code: "real-delivery" as const,
+          passed: false,
+          status: "pending" as const,
+        },
+      ],
+    };
+    expect(
+      isWhatsAppSmokeRunAwaitingReply({
+        now,
+        provisioningEventId: "generation-92",
+        run: awaitingReply,
+        runId: baseRun.id,
+      }),
+    ).toBe(true);
+    expect(
+      isWhatsAppSmokeRunAwaitingReply({
+        now,
+        provisioningEventId: "generation-92",
+        run: baseRun,
+        runId: baseRun.id,
+      }),
+    ).toBe(false);
+  });
+
   it("exige todos los pasos, conserva evidencia sintética y nunca habilita pacientes reales", () => {
     const result = evaluateWhatsAppSyntheticSmoke({
       realPatientsEnabled: false,

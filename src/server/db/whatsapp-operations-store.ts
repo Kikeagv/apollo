@@ -846,11 +846,19 @@ async function readSnapshot(
     latestOffboarding === undefined
       ? []
       : await readOffboardingSteps(transaction, latestOffboarding.id);
-  const blockers = readinessBlockers(connection, readiness, templates, billing);
+  const blockers = readinessBlockers(
+    connection,
+    readiness,
+    templates,
+    billing,
+    circuit?.status === "open",
+  );
   const technicalStatus =
     connection?.status === "disconnected" || blockers.length > 0
       ? "blocked"
-      : (readiness?.technicalStatus ?? "pending");
+      : circuit?.status === "open" && connection?.status === "blocked"
+        ? "ready"
+        : (readiness?.technicalStatus ?? "pending");
 
   return {
     circuitStatus: circuit?.status ?? "closed",
@@ -952,6 +960,7 @@ function readinessBlockers(
   readiness: typeof whatsappReadiness.$inferSelect | undefined,
   templates: Array<typeof whatsappCriticalTemplates.$inferSelect>,
   billing: typeof whatsappBilling.$inferSelect | undefined,
+  allowCircuitRecovery = false,
 ) {
   const blockers: string[] = [];
   if (connection === undefined) {
@@ -1013,6 +1022,7 @@ function readinessBlockers(
         healthCheckedAt: readiness.numberHealthCheckedAt,
       },
       now: new Date(),
+      allowConnectionRecovery: allowCircuitRecovery,
       templatesSync: { status: readiness.templatesSyncStatus },
       templates: templates.map((template) => ({
         category: template.category,
@@ -1039,7 +1049,10 @@ function readinessBlockers(
         .filter((gate) => gate.code !== "e2e" && gate.status !== "ready")
         .map((gate) => gate.message),
     );
-    if (readiness.technicalStatus !== "ready") {
+    if (
+      readiness.technicalStatus !== "ready" &&
+      !(allowCircuitRecovery && connection?.status === "blocked")
+    ) {
       blockers.push(readiness.statusReason);
     }
 

@@ -9,6 +9,7 @@ import {
   isWhatsAppNumberMessagingAvailable,
   type WhatsAppReadinessInput,
 } from "~/domain/whatsapp-readiness";
+import { parseWhatsAppSmokeReplyIdempotencyKey } from "~/domain/whatsapp-smoke";
 import { evaluateWhatsAppRealTraffic } from "~/domain/whatsapp-traffic";
 import type { WhatsAppProviderId } from "~/domain/whatsapp-runtime";
 import type { WhatsAppConnectionReader } from "~/server/application/whatsapp-connections";
@@ -24,6 +25,7 @@ import {
   setWhatsAppWorkerClinicContext,
 } from "~/server/db/clinic-context";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
+import { isActiveControlledSmokeReply } from "~/server/db/whatsapp-smoke-circuit-exception";
 import {
   clinicUsers,
   contactPatientLinks,
@@ -159,105 +161,58 @@ export async function requireWhatsAppSmokeReplyConnectionReady(input: {
   provider: WhatsAppProviderId;
   recipientPhoneE164: string | null;
 }) {
-  const match = /^whatsapp-smoke:([0-9a-f-]{36}):reply$/i.exec(
-    input.idempotencyKey,
-  );
-  if (match === null || input.provider !== "kapso") {
+  if (
+    parseWhatsAppSmokeReplyIdempotencyKey(input.idempotencyKey) === null ||
+    input.provider !== "kapso"
+  ) {
     throw new WhatsAppConnectionRequiredError();
   }
   const connection = await inWhatsAppProviderTransaction(
     input.clinicId,
     async (transaction) => {
+      if (
+        !(await setWhatsAppWorkerClinicContext(transaction, input.clinicId))
+      ) {
+        return undefined;
+      }
       const current = await transaction.query.whatsappConnections.findFirst({
         where: and(
           eq(whatsappConnections.clinicId, input.clinicId),
           eq(whatsappConnections.provider, "kapso"),
         ),
       });
-      if (
-        current?.status !== "ready" ||
-        current.phoneNumberId === null ||
-        current.realTrafficStatus === "offboarded"
-      ) {
+      if (current?.phoneNumberId == null) {
         return undefined;
       }
-      const [circuit, latestRun] = await Promise.all([
-        transaction.query.whatsappCircuitBreakers.findFirst({
+      const circuit = await transaction.query.whatsappCircuitBreakers.findFirst(
+        {
+          columns: { status: true },
           where: eq(whatsappCircuitBreakers.clinicId, input.clinicId),
-        }),
-        transaction
-          .select()
-          .from(whatsappSmokeRuns)
-          .where(eq(whatsappSmokeRuns.clinicId, input.clinicId))
-          .orderBy(desc(whatsappSmokeRuns.startedAt))
-          .limit(1),
-      ]);
-      const run = latestRun[0];
-      const now = new Date();
-      const currentGeneration = current.metadata.provisioningEventId ?? null;
-      if (
-        circuit?.status !== "closed" ||
-        run === undefined ||
-        run.id !== match[1] ||
-        run.status !== "pending" ||
-        !run.requiresRealRoundtrip ||
-        run.syntheticContact ||
-        run.realPatientsEnabled ||
-        run.testContactId === null ||
-        run.timeoutAt === null ||
-        run.timeoutAt <= now ||
-        run.provisioningEventId === null ||
-        run.provisioningEventId !== currentGeneration ||
-        input.recipientPhoneE164 === null
-      ) {
-        return undefined;
-      }
-      const testContactId = run.testContactId;
-      const reception = run.steps.find(
-        (step) => step.code === "real-reception",
+        },
       );
-      const processing = run.steps.find(
-        (step) => step.code === "real-processing",
-      );
-      const response = run.steps.find((step) => step.code === "real-response");
-      const delivery = run.steps.find((step) => step.code === "real-delivery");
+      const circuitOpen = circuit?.status === "open";
       if (
-        reception?.status !== "passed" ||
-        !reception.passed ||
-        processing?.status !== "passed" ||
-        !processing.passed ||
-        response?.status !== "pending" ||
-        delivery?.status !== "pending"
-      ) {
-        return undefined;
-      }
-      const [contact, patientLink] = await Promise.all([
-        transaction.query.contacts.findFirst({
-          columns: { id: true, phoneE164: true },
-          where: and(
-            eq(contacts.clinicId, input.clinicId),
-            eq(contacts.id, testContactId),
-          ),
-        }),
-        transaction.query.contactPatientLinks.findFirst({
-          columns: { id: true },
-          where: and(
-            eq(contactPatientLinks.clinicId, input.clinicId),
-            eq(contactPatientLinks.contactId, testContactId),
-          ),
-        }),
-      ]);
-      if (
-        contact?.phoneE164 == null ||
-        contact.phoneE164 !== input.recipientPhoneE164 ||
-        patientLink !== undefined
+        circuit === undefined ||
+        (circuitOpen
+          ? current.status !== "ready" && current.status !== "blocked"
+          : current.status !== "ready") ||
+        !(await isActiveControlledSmokeReply(transaction, {
+          clinicId: input.clinicId,
+          connection: current,
+          idempotencyKey: input.idempotencyKey,
+          now: new Date(),
+          recipientPhoneE164: input.recipientPhoneE164,
+        }))
       ) {
         return undefined;
       }
       return current;
     },
   );
-  if (connection === undefined || !isWhatsAppConnectionReady(connection)) {
+  if (
+    connection === undefined ||
+    (connection.status !== "ready" && connection.status !== "blocked")
+  ) {
     throw new WhatsAppConnectionRequiredError();
   }
   return connection;

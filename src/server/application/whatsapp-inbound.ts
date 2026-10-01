@@ -3,6 +3,10 @@ import {
   type WhatsAppInboundMessage,
 } from "~/domain/whatsapp-inbound";
 import {
+  hasWhatsAppSmokeChallengePrefix,
+  parseWhatsAppSmokeChallenge,
+} from "~/domain/whatsapp-smoke";
+import {
   classifyWhatsAppConsentSafeRoute,
   isWhatsAppConsentOptOut,
   type WhatsAppConsentSafeRoute,
@@ -125,6 +129,7 @@ export type WhatsAppInboundStore = {
   resolveMessage(input: {
     mode?: "historical" | "live";
     message: WhatsAppInboundEvent;
+    now?: Date;
   }): Promise<WhatsAppInboundResolution>;
   recordSyntheticSmokeInbound?(input: {
     clinicId: string;
@@ -367,6 +372,7 @@ async function processInboundEvent(input: {
   const resolved = await store.resolveMessage({
     message: event,
     mode: handling === "history-sync" ? "historical" : "live",
+    now,
   });
   if (resolved.kind === "conflict") {
     await store.markConflict({
@@ -750,16 +756,6 @@ function notInboundReason(event: WhatsAppInboundEvent) {
   return event.direction === "outbound"
     ? "El evento Kapso es saliente"
     : "El evento Kapso no confirma una entrada del contacto";
-}
-
-function hasWhatsAppSmokeChallengePrefix(text: string | null) {
-  return text !== null && /^PRUEBA WHATSAPP(?:\s|$)/i.test(text.trim());
-}
-
-function parseWhatsAppSmokeChallenge(text: string | null) {
-  if (text === null) return null;
-  const match = /^PRUEBA WHATSAPP ([0-9a-f-]{36})$/i.exec(text.trim());
-  return match?.[1] ?? null;
 }
 
 function requireLeaseToken(event: WhatsAppInboundEvent) {

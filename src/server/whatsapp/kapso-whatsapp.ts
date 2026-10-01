@@ -5,6 +5,7 @@ import { env } from "~/env";
 import type { AppointmentReminderSender } from "~/server/application/appointment-reminders";
 import type { ManualAppointmentTransactionalMessage } from "~/server/application/manual-appointments";
 import type { WhatsAppInboundReplySender } from "~/server/application/whatsapp-inbound";
+import { parseWhatsAppSmokeReplyIdempotencyKey } from "~/domain/whatsapp-smoke";
 import type {
   WhatsAppBillingCapacityReservationResult,
   WhatsAppBillingCapacityStore,
@@ -147,9 +148,8 @@ export function createKapsoWhatsAppSenders(
         }),
     },
     sendConversationReply: (input) => {
-      const isSmokeReply = /^whatsapp-smoke:[0-9a-f-]{36}:reply$/i.test(
-        input.idempotencyKey,
-      );
+      const isSmokeReply =
+        parseWhatsAppSmokeReplyIdempotencyKey(input.idempotencyKey) !== null;
       const requireReplyConnection = isSmokeReply
         ? ({ clinicId, provider }: Parameters<typeof requireConnection>[0]) =>
             requireSmokeReplyConnection({
@@ -161,6 +161,7 @@ export function createKapsoWhatsAppSenders(
         : requireConnection;
       return sendKapsoMessage({
         apiKey,
+        allowOpenCircuitForSmoke: isSmokeReply,
         clinicId: input.clinicId,
         fetchImpl,
         idempotencyKey: input.idempotencyKey,
@@ -294,6 +295,7 @@ async function sendReminder(input: {
 }
 
 async function sendKapsoMessage(input: {
+  allowOpenCircuitForSmoke?: boolean;
   apiKey: string | undefined;
   beforeSend?: () => Promise<void>;
   clinicId: string;
@@ -326,8 +328,10 @@ async function sendKapsoMessage(input: {
   let capacityReserved = false;
   if (input.reserveCapacity !== undefined) {
     const reservation = await input.reserveCapacity.reserve({
+      allowOpenCircuitForSmoke: input.allowOpenCircuitForSmoke,
       clinicId: input.clinicId,
       now: input.now(),
+      recipientPhoneE164: input.recipientPhoneE164,
       reservationKey: input.idempotencyKey,
     });
     if (!reservation.reserved) {
@@ -351,6 +355,13 @@ async function sendKapsoMessage(input: {
       phoneNumberId: connection.phoneNumberId,
     });
     if (waitMs > 0) await waitForRateLimit(waitMs);
+    const currentConnection = await input.requireConnection({
+      clinicId: input.clinicId,
+      provider: "kapso",
+    });
+    if (currentConnection.phoneNumberId !== connection.phoneNumberId) {
+      throw new WhatsAppConnectionRequiredError();
+    }
     await input.beforeSend?.();
   } catch (error) {
     await settleCapacity({

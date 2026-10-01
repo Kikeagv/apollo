@@ -315,14 +315,19 @@ export async function startWhatsAppInboundRoundtrip(
   const runId = dependencies.idGenerator?.() ?? randomUUID();
   const snapshot = await dependencies.store.read(input);
   const isKapso = snapshot.connection?.provider === "kapso";
+  const connectionCanRunSmoke =
+    snapshot.circuitStatus === "open"
+      ? snapshot.connection?.status === "ready" ||
+        snapshot.connection?.status === "blocked"
+      : snapshot.connection?.status === "ready";
   const canStartKapsoSmoke =
     isKapso &&
     !snapshot.clinicIsSynthetic &&
     snapshot.trafficStatus === "blocked" &&
-    snapshot.circuitStatus === "closed" &&
-    snapshot.connection?.status === "ready" &&
+    connectionCanRunSmoke &&
     snapshot.connection?.phoneNumberId !== null &&
-    snapshot.connection?.projectWebhookId !== null;
+    snapshot.connection?.projectWebhookId !== null &&
+    snapshot.connection?.phoneNumberWebhookId !== null;
   const testContact = canStartKapsoSmoke
     ? await resolveSmokeTestContact(input, dependencies.store)
     : null;
@@ -335,7 +340,7 @@ export async function startWhatsAppInboundRoundtrip(
       connection?.provisioningEventId == null
     ) {
       throw new Error(
-        "Se requiere una Clínica real, una Conexión Kapso lista y el circuito cerrado para iniciar la prueba",
+        "La prueba requiere una Clínica real con Kapso y ambos webhooks listos, tráfico real bloqueado y un Contacto controlado sin vínculo a Paciente",
       );
     }
     const result = evaluateWhatsAppSyntheticSmoke({
