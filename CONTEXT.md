@@ -57,8 +57,12 @@ La representación de un Contacto en el canal de una Clínica. Conserva el `phon
 _Avoid_: usar el teléfono como clave primaria, fusionar identidades por similitud o asumir que todo mensaje trae número
 
 **Paciente**:
-La persona para quien se gestiona una cita dentro de una clínica. En Panacea su ficha administrativa mínima conserva nombre y fecha de nacimiento. No tiene identidad compartida entre clínicas.
+La persona para quien se gestiona una cita dentro de una clínica. En Panacea su ficha administrativa mínima conserva nombre y fecha de nacimiento. Una ficha puede marcarse explícitamente como **Paciente de prueba** cuando representa datos ficticios para probar el transporte; un Contacto controlado solo puede usar el smoke si todos sus Pacientes vinculados están marcados así. No tiene identidad compartida entre clínicas.
 _Avoid_: contacto cuando se habla de la persona atendida
+
+**Paciente de prueba**:
+Un Paciente identificado expresamente como ficticio para validar el transporte de WhatsApp con un Contacto controlado. No es un Paciente real; si un Contacto también está vinculado a cualquier Paciente real, no puede usarse para la prueba controlada.
+_Avoid_: marcar una ficha real como prueba para evadir los controles del smoke
 
 **Ficha de Paciente incompleta**:
 La ficha administrativa de un Paciente que todavía no tiene ningún Contacto vinculado. Puede conservarse para completarla después, pero no cumple el requisito para crear una Cita manual hasta que se le vincule un Contacto.

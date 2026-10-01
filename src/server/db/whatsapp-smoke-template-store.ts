@@ -6,6 +6,7 @@ import { evaluateWhatsAppRealTraffic } from "~/domain/whatsapp-traffic";
 import { recordWhatsAppSyntheticSmokeStep } from "~/domain/whatsapp-smoke";
 import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
+import { isWhatsAppSmokeContactEligibleInTransaction } from "~/server/db/whatsapp-smoke-contact";
 import type { WhatsAppCriticalTemplateKind } from "~/domain/whatsapp-readiness";
 import type {
   PreparedWhatsAppTemplateSmoke,
@@ -26,7 +27,6 @@ import {
   apoloAuditEvents,
   apoloSuperadmins,
   clinics,
-  contactPatientLinks,
   contacts,
   whatsappCircuitBreakers,
   whatsappConnections,
@@ -768,15 +768,12 @@ async function readSmokeContact(
   if (contact?.phoneE164 == null) {
     throw new Error("El Contacto de prueba ya no tiene un teléfono válido");
   }
-  const patientLink = await transaction.query.contactPatientLinks.findFirst({
-    columns: { id: true },
-    where: and(
-      eq(contactPatientLinks.clinicId, clinicId),
-      eq(contactPatientLinks.contactId, contactId),
-    ),
-  });
-  if (patientLink !== undefined) {
-    throw new Error("El Contacto de prueba ya está vinculado a un Paciente");
+  const eligible = await isWhatsAppSmokeContactEligibleInTransaction(
+    transaction,
+    { clinicId, contactId },
+  );
+  if (!eligible) {
+    throw new Error("El Contacto de prueba está vinculado a un Paciente real");
   }
   return { phoneE164: contact.phoneE164 };
 }

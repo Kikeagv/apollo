@@ -2638,6 +2638,7 @@ export const patients = createTable(
     name: text("name").notNull(),
     /** Las fichas previas a APO-38 no tenían fecha; al editarlas se completa. */
     birthDate: date("birth_date", { mode: "string" }),
+    isTest: boolean("is_test").notNull().default(false),
     dui: text("dui"),
     registrationMessageId: text("registration_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true })

@@ -13,6 +13,7 @@ export type Contact = {
 export type Patient = {
   birthDate: string | null;
   id: string;
+  isTest: boolean;
   name: string;
 };
 
@@ -153,6 +154,7 @@ export type AdministrativeRecordsStore = {
       | { kind: "new"; name: string; phoneE164: string };
     guardianDui: string | null;
     identityId: string;
+    isTest: boolean;
     patientName: string;
     relationship: ContactPatientRelationship;
   }): Promise<PatientRegistration>;
@@ -297,6 +299,7 @@ export async function registerPatient(
     contact: PatientContactSelection;
     guardianDui?: string;
     identityId: string;
+    isTest?: boolean;
     patientName: string;
     relationship?: ContactPatientRelationship;
   },
@@ -323,6 +326,7 @@ export async function registerPatient(
           },
     guardianDui,
     identityId: input.identityId,
+    isTest: input.isTest ?? false,
     patientName,
     relationship,
   });

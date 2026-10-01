@@ -256,7 +256,7 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
     return inClinicTransaction(input, async (transaction) => {
       await setPatientOperation(transaction);
       const patient = await transaction.query.patients.findFirst({
-        columns: { birthDate: true, id: true, name: true },
+        columns: { birthDate: true, id: true, isTest: true, name: true },
         where: and(
           eq(patients.clinicId, input.clinicId),
           eq(patients.id, input.patientId),
@@ -462,7 +462,7 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
             where: eq(contacts.clinicId, input.clinicId),
           }),
           transaction.query.patients.findMany({
-            columns: { birthDate: true, id: true, name: true },
+            columns: { birthDate: true, id: true, isTest: true, name: true },
             orderBy: [asc(patients.name), asc(patients.id)],
             where: eq(patients.clinicId, input.clinicId),
           }),
@@ -615,6 +615,7 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
         .values({
           birthDate: input.birthDate,
           clinicId: input.clinicId,
+          isTest: input.isTest,
           name: input.patientName,
         })
         .returning(patientFields);
@@ -839,7 +840,7 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
           where: eq(contacts.clinicId, input.clinicId),
         }),
         transaction.query.patients.findMany({
-          columns: { birthDate: true, id: true, name: true },
+          columns: { birthDate: true, id: true, isTest: true, name: true },
           orderBy: [asc(patients.name), asc(patients.id)],
           where: eq(patients.clinicId, input.clinicId),
         }),
@@ -881,6 +882,7 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
           id: contactPatientLinks.id,
           patientBirthDate: patients.birthDate,
           patientId: patients.id,
+          patientIsTest: patients.isTest,
           patientName: patients.name,
           tutorId: contacts.id,
           tutorName: contacts.name,
@@ -919,6 +921,7 @@ export const drizzleAdministrativeRecordsStore: AdministrativeRecordsStore = {
                 patient: {
                   birthDate: task.patientBirthDate,
                   id: task.patientId,
+                  isTest: task.patientIsTest,
                   name: task.patientName,
                 },
                 tutor: {
@@ -971,6 +974,7 @@ type ContactRow = {
 const patientFields = {
   birthDate: patients.birthDate,
   id: patients.id,
+  isTest: patients.isTest,
   name: patients.name,
 };
 

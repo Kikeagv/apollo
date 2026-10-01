@@ -272,6 +272,7 @@ describe("gestionar fichas administrativas", () => {
       },
       guardianDui: null,
       identityId: "operator-1",
+      isTest: false,
       patientName: "Pablo Adulto",
       relationship: "contact",
     });
@@ -309,6 +310,7 @@ describe("gestionar fichas administrativas", () => {
           },
           guardianDui: "01234567-8",
           identityId: "operator-1",
+          isTest: true,
           patientName: " Lucía  Martínez ",
           relationship: "tutor",
         },
@@ -329,6 +331,7 @@ describe("gestionar fichas administrativas", () => {
       },
       guardianDui: "01234567-8",
       identityId: "operator-1",
+      isTest: true,
       patientName: "Lucía Martínez",
       relationship: "tutor",
     });
@@ -378,6 +381,7 @@ describe("gestionar fichas administrativas", () => {
       contact: { contactId: "contact-family", kind: "existing" },
       guardianDui: "01234567-8",
       identityId: "operator-1",
+      isTest: false,
       patientName: "Mateo Martínez",
       relationship: "tutor",
     });

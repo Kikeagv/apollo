@@ -247,6 +247,7 @@ export function AdministrativeRecordsSection() {
               phone,
             },
       guardianDui: isMinor ? guardianDui : undefined,
+      isTest: data.get("isTestPatient") === "true",
       patientName,
       relationship: isMinor ? "tutor" : "contact",
     });
@@ -452,6 +453,24 @@ export function AdministrativeRecordsSection() {
               type="date"
               value={registrationBirthDate}
             />
+            <Field orientation="horizontal">
+              <input
+                className="accent-primary focus-visible:border-ring focus-visible:ring-ring/30 size-11 rounded outline-none focus-visible:ring-3"
+                id="registration-is-test-patient"
+                name="isTestPatient"
+                type="checkbox"
+                value="true"
+              />
+              <FieldContent>
+                <FieldLabel htmlFor="registration-is-test-patient">
+                  Paciente de prueba
+                </FieldLabel>
+                <FieldDescription>
+                  Márcalo solo para el Paciente ficticio asociado al Contacto
+                  controlado de WhatsApp.
+                </FieldDescription>
+              </FieldContent>
+            </Field>
             <h3 className="font-medium">Contacto</h3>
             <FieldDescription>
               Al guardar, se concederá a este Contacto permiso para recibir por
@@ -749,6 +768,9 @@ function PatientDirectoryList({
                 >
                   {patient.contactCount === 0 ? "Ficha incompleta" : "Completa"}
                 </Badge>
+                {patient.isTest ? (
+                  <Badge variant="outline">Prueba</Badge>
+                ) : null}
                 <span className="text-muted-foreground hidden text-xs sm:inline">
                   {patient.contactCount} Contacto(s) ·{" "}
                   {patient.appointmentCount} Cita(s)

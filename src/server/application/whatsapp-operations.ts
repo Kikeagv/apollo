@@ -340,7 +340,7 @@ export async function startWhatsAppInboundRoundtrip(
       connection?.provisioningEventId == null
     ) {
       throw new Error(
-        "La prueba requiere una Clínica real con Kapso y ambos webhooks listos, tráfico real bloqueado y un Contacto controlado sin vínculo a Paciente",
+        "La prueba requiere una Clínica real con Kapso y ambos webhooks listos, tráfico real bloqueado y un Contacto controlado sin Pacientes reales vinculados",
       );
     }
     const result = evaluateWhatsAppSyntheticSmoke({
@@ -502,7 +502,7 @@ async function resolveSmokeTestContact(
   const phoneE164 = input.testContactPhoneE164?.trim();
   if (phoneE164 === undefined || !isValidE164PhoneNumber(phoneE164)) {
     throw new Error(
-      "Indique el teléfono E.164 de un Contacto de prueba sin vínculo a Paciente",
+      "Indique el teléfono E.164 de un Contacto controlado sin Pacientes reales vinculados",
     );
   }
   return store.resolveSyntheticSmokeContact({

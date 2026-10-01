@@ -525,7 +525,7 @@ describe("operaciones finales de WhatsApp", () => {
     );
   });
 
-  it("conserva fallos de regresión sin hacer fallar el smoke operativo", async () => {
+  it("deja sin ejecutar los escenarios de regresión en el smoke operativo", async () => {
     const { smokeRuns, store } = makeStore();
     const runner = {
       run: vi.fn().mockResolvedValue({
@@ -560,8 +560,8 @@ describe("operaciones finales de WhatsApp", () => {
       "sandbox",
     );
     expect(
-      failed.steps.find((step) => step.code === "adult-flow")?.passed,
-    ).toBe(true);
+      failed.steps.find((step) => step.code === "adult-flow"),
+    ).toMatchObject({ passed: false, status: "skipped" });
     expect(smokeRuns).toHaveLength(1);
 
     runner.run.mockResolvedValueOnce({
@@ -587,8 +587,9 @@ describe("operaciones finales de WhatsApp", () => {
     expect(passed.status).toBe("pending");
     expect(passed.providerTransportVerified).toBe(false);
     expect(
-      passed.steps.find((step) => step.code === "guardian-pending")?.passed,
-    ).toBe(true);
+      passed.steps.find((step) => step.code === "guardian-pending"),
+    ).toMatchObject({ passed: false, status: "skipped" });
+    expect(runner.run).not.toHaveBeenCalled();
   });
 
   it("mantiene pendiente un smoke Kapso basado solo en contratos locales", async () => {
@@ -621,7 +622,7 @@ describe("operaciones finales de WhatsApp", () => {
     expect(result.providerTransportVerified).toBe(false);
   });
 
-  it("mantiene el roundtrip pendiente cuando falla el preflight independiente", async () => {
+  it("mantiene el roundtrip pendiente sin ejecutar el preflight opcional", async () => {
     const { store } = makeStore();
     const runner = {
       run: vi
@@ -644,8 +645,7 @@ describe("operaciones finales de WhatsApp", () => {
     expect(
       result.steps.find((step) => step.code === "webhook-preflight"),
     ).toMatchObject({
-      message: "Kapso no confirmó el preflight",
-      status: "failed",
+      status: "skipped",
       passed: false,
     });
     expect(
@@ -698,7 +698,7 @@ describe("operaciones finales de WhatsApp", () => {
         },
         { runner, store },
       ),
-    ).rejects.toThrow(/E\.164 de un Contacto de prueba/i);
+    ).rejects.toThrow(/E\.164 de un Contacto controlado/i);
     expect(runner.run).not.toHaveBeenCalled();
   });
 
@@ -805,7 +805,7 @@ describe("operaciones finales de WhatsApp", () => {
     });
   });
 
-  it("marca como obsoleto un smoke si la Conexión cambia de generación durante la ejecución", async () => {
+  it("conserva en el reto la generación de la Conexión al iniciar el smoke", async () => {
     const initial = makeSnapshot();
     const changed = makeSnapshot({
       connection: {
@@ -840,11 +840,13 @@ describe("operaciones finales de WhatsApp", () => {
       { runner, store },
     );
 
-    expect(result.blockers.map((blocker) => blocker.code)).toContain(
-      "smoke-generation-stale",
-    );
-    expect(result.status).toBe("failed");
-    expect(smokeRuns[0]).toMatchObject({ provisioningEventId: null });
+    expect(result.status).toBe("pending");
+    expect(result.blockers).toEqual([]);
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(smokeRuns[0]).toMatchObject({
+      provisioningEventId: "generation-92",
+      result: { status: "pending" },
+    });
   });
 
   it("ejecuta el smoke simulado aunque no existan IDs remotos", async () => {
@@ -908,17 +910,16 @@ describe("operaciones finales de WhatsApp", () => {
     const { store } = makeStore(snapshot);
     const runner = { run: vi.fn() };
 
-    const result = await startWhatsAppInboundRoundtrip(
-      {
-        actorIdentityId: "superadmin-92",
-        clinicId: snapshot.clinicId,
-        now,
-      },
-      { runner, store },
-    );
-
-    expect(result.status).toBe("failed");
-    expect(result.blockers.map((blocker) => blocker.code)).toContain("runner");
+    await expect(
+      startWhatsAppInboundRoundtrip(
+        {
+          actorIdentityId: "superadmin-92",
+          clinicId: snapshot.clinicId,
+          now,
+        },
+        { runner, store },
+      ),
+    ).rejects.toThrow(/Clínica real con Kapso/);
     expect(runner.run).not.toHaveBeenCalled();
   });
 

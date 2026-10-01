@@ -50,11 +50,59 @@ describe("excepción de roundtrip controlado con circuit breaker abierto", () =>
 
     await expect(
       isActiveControlledSmokeChallenge(transaction, {
-        connection: createConnection("Todos los gates técnicos están correctos"),
+        connection: createConnection(
+          "Todos los gates técnicos están correctos",
+        ),
         message,
         now,
       }),
     ).resolves.toBe(true);
+  });
+
+  it("acepta el Contacto controlado vinculado a un Paciente de prueba", async () => {
+    const transaction = createTransaction({
+      linkedPatients: [{ isTest: true }],
+    });
+    const message = {
+      connectionReference: "phone-1",
+      customerReference: "customer-1",
+      phoneE164: "+50370000001",
+      text: `PRUEBA WHATSAPP ${runId}`,
+    } as Pick<
+      WhatsAppInboundMessage,
+      "connectionReference" | "customerReference" | "phoneE164" | "text"
+    >;
+
+    await expect(
+      isActiveControlledSmokeChallenge(transaction, {
+        connection: createConnection(),
+        message,
+        now,
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("rechaza el Contacto controlado si también está vinculado a un Paciente real", async () => {
+    const transaction = createTransaction({
+      linkedPatients: [{ isTest: true }, { isTest: false }],
+    });
+    const message = {
+      connectionReference: "phone-1",
+      customerReference: "customer-1",
+      phoneE164: "+50370000001",
+      text: `PRUEBA WHATSAPP ${runId}`,
+    } as Pick<
+      WhatsAppInboundMessage,
+      "connectionReference" | "customerReference" | "phoneE164" | "text"
+    >;
+
+    await expect(
+      isActiveControlledSmokeChallenge(transaction, {
+        connection: createConnection(),
+        message,
+        now,
+      }),
+    ).resolves.toBe(false);
   });
 
   it("rechaza la excepción si la Conexión está bloqueada y el circuito está cerrado", async () => {
@@ -78,7 +126,7 @@ describe("excepción de roundtrip controlado con circuit breaker abierto", () =>
     ).resolves.toBe(false);
   });
 
-  it("rechaza el reto si la salud de Kapso quedó antigua", async () => {
+  it("permite probar el transporte cuando la última salud de Kapso ya quedó antigua", async () => {
     const transaction = createTransaction({
       numberHealthCheckedAt: new Date(now.valueOf() - 16 * 60_000),
     });
@@ -98,7 +146,28 @@ describe("excepción de roundtrip controlado con circuit breaker abierto", () =>
         message,
         now,
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBe(true);
+  });
+
+  it("deja que el reto controlado pruebe el transporte si la salud está pendiente", async () => {
+    const transaction = createTransaction({ numberHealth: "unknown" });
+    const message = {
+      connectionReference: "phone-1",
+      customerReference: "customer-1",
+      phoneE164: "+50370000001",
+      text: `PRUEBA WHATSAPP ${runId}`,
+    } as Pick<
+      WhatsAppInboundMessage,
+      "connectionReference" | "customerReference" | "phoneE164" | "text"
+    >;
+
+    await expect(
+      isActiveControlledSmokeChallenge(transaction, {
+        connection: createConnection("high-failure-rate", "unknown"),
+        message,
+        now,
+      }),
+    ).resolves.toBe(true);
   });
 
   it("permite solo la respuesta de la misma ejecución después de procesar el reto", async () => {
@@ -123,12 +192,15 @@ describe("excepción de roundtrip controlado con circuit breaker abierto", () =>
   });
 });
 
-function createConnection(statusReason = "high-failure-rate") {
+function createConnection(
+  statusReason = "high-failure-rate",
+  health: "healthy" | "limited" | "unknown" = "healthy",
+) {
   return {
     clinicId,
     businessAccountId: "waba-1",
     metadata: {
-      health: "healthy",
+      health,
       projectId: "project-1",
       provisioningEventId,
       statusReason,
@@ -145,7 +217,9 @@ function createConnection(statusReason = "high-failure-rate") {
 function createTransaction(
   input: {
     numberHealthCheckedAt?: Date | null;
+    numberHealth?: "healthy" | "limited" | "unknown";
     circuitStatus?: "closed" | "open";
+    linkedPatients?: Array<{ isTest: boolean }>;
     steps?: Array<{
       code: string;
       passed: boolean;
@@ -175,7 +249,7 @@ function createTransaction(
   const readiness = {
     businessAccountId: "waba-1",
     numberEnvironment: "production",
-    numberHealth: "healthy",
+    numberHealth: input.numberHealth ?? "healthy",
     numberHealthCheckedAt: input.numberHealthCheckedAt ?? now,
     phoneNumberId: "phone-1",
     phoneNumberWebhookId: "phone-webhook-1",
@@ -189,6 +263,27 @@ function createTransaction(
     technicalStatus: "blocked",
     statusReason: "Las plantillas aún esperan aprobación",
   };
+
+  const selectRuns = vi.fn((selection?: { isTest?: unknown }) => {
+    if (selection !== undefined) {
+      return {
+        from: vi.fn(() => ({
+          innerJoin: vi.fn(() => ({
+            where: vi.fn().mockResolvedValue(input.linkedPatients ?? []),
+          })),
+        })),
+      };
+    }
+    return {
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          orderBy: vi.fn(() => ({
+            limit: vi.fn().mockResolvedValue([run]),
+          })),
+        })),
+      })),
+    };
+  });
 
   return {
     execute: vi.fn().mockResolvedValue(undefined),
@@ -211,14 +306,6 @@ function createTransaction(
       },
       whatsappReadiness: { findFirst: vi.fn().mockResolvedValue(readiness) },
     },
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({
-          orderBy: vi.fn(() => ({
-            limit: vi.fn().mockResolvedValue([run]),
-          })),
-        })),
-      })),
-    })),
+    select: selectRuns,
   } as unknown as ClinicTransaction;
 }

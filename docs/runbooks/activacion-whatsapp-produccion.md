@@ -77,6 +77,11 @@ Contacto. El paso 4 prueba el inicio proactivo con plantilla fuera de esa
 ventana. La aceptación de un endpoint de webhook o un estado `accepted` de API
 no sustituye la confirmación de entrega.
 
+Para ambas pruebas, usa un número controlado y un Contacto vinculado solo a
+Pacientes marcados como prueba. Puedes crear esa ficha ficticia desde la
+Clínica; un vínculo adicional a cualquier Paciente real impide usar el
+Contacto en estos recorridos.
+
 ### Trabajo automático de la plataforma
 
 Al recibir `whatsapp.phone_number.created`, Praxia asocia el customer, la

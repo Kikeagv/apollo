@@ -72,6 +72,14 @@ export function isWhatsAppNumberMessagingAvailable(health: unknown) {
   return health === "healthy" || health === "limited";
 }
 
+/**
+ * Unknown health permits only the controlled smoke path: the actual delivery
+ * attempt is the check. Known degraded or unhealthy states remain blocked.
+ */
+export function isWhatsAppNumberSmokeCheckAllowed(health: unknown) {
+  return isWhatsAppNumberMessagingAvailable(health) || health === "unknown";
+}
+
 export const whatsappE2EEvidenceScopes = [
   "message-roundtrip",
   "webhook-preflight",

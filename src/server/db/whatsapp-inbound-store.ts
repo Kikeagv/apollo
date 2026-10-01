@@ -45,6 +45,7 @@ import {
   smokeResultFromRow,
 } from "~/server/db/whatsapp-smoke-run-store";
 import { isWhatsAppCircuitOpenInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
+import { isWhatsAppSmokeContactEligibleInTransaction } from "~/server/db/whatsapp-smoke-contact";
 import {
   isActiveControlledSmokeChallenge,
   isActiveControlledSmokeReply,
@@ -62,7 +63,6 @@ import {
   whatsappInboundMessages,
   whatsappInboundAlerts,
   whatsappInboundReplies,
-  contactPatientLinks,
   whatsappSmokeRuns,
 } from "~/server/db/schema";
 import type {
@@ -642,16 +642,14 @@ export const drizzleWhatsAppInboundStore: WhatsAppInboundPersistenceStore = {
       ) {
         return false;
       }
-      const patientLink = await transaction.query.contactPatientLinks.findFirst(
-        {
-          columns: { id: true },
-          where: and(
-            eq(contactPatientLinks.clinicId, input.clinicId),
-            eq(contactPatientLinks.contactId, input.contactId),
-          ),
-        },
-      );
-      if (patientLink !== undefined) return false;
+      if (
+        !(await isWhatsAppSmokeContactEligibleInTransaction(transaction, {
+          clinicId: input.clinicId,
+          contactId: input.contactId,
+        }))
+      ) {
+        return false;
+      }
 
       let result = smokeResultFromRow(run);
       result = recordWhatsAppSyntheticSmokeStep(result, {

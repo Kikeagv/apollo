@@ -559,6 +559,7 @@ export const panaceaRouter = {
         birthDate: z.string().max(10),
         contact: patientContactInput,
         guardianDui: z.string().max(10).optional(),
+        isTest: z.boolean().default(false),
         patientName: z.string().max(120),
         relationship: z.enum(["contact", "tutor"]).default("contact"),
       }),

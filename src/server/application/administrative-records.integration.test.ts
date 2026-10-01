@@ -547,6 +547,7 @@ describe("fichas administrativas persistentes", () => {
             },
             guardianDui: null,
             identityId: fixture.primary.identityId,
+            isTest: false,
             patientName: "Paciente que debe revertirse",
             relationship: "contact",
           }),

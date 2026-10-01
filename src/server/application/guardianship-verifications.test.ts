@@ -10,6 +10,7 @@ describe("verificaciones de tutela pendientes", () => {
       patient: {
         birthDate: "2018-04-02",
         id: "patient-1",
+        isTest: false,
         name: "Lucía Pérez",
       },
       tutor: {

@@ -306,9 +306,9 @@ export function ClinicActivationJourneyPanel({
                       />
                     </label>
                     <p className="text-muted-foreground text-xs">
-                      Usa un Contacto de esta Clínica sin vínculo a Paciente y
-                      con un número que controles. Si aún no existe, créalo
-                      aquí.
+                      Usa un Contacto de esta Clínica sin Pacientes reales
+                      vinculados y con un número que controles. Los vínculos a
+                      Pacientes marcados como prueba sí son válidos.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <button

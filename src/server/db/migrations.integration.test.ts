@@ -1787,6 +1787,10 @@ describe("migraciones de PostgreSQL", () => {
                 table_name: "pg-drizzle_whatsapp_readiness",
               },
               {
+                name: "whatsapp_readiness_inbound_smoke_read",
+                table_name: "pg-drizzle_whatsapp_readiness",
+              },
+              {
                 name: "whatsapp_critical_template_superadmin_manage",
                 table_name: "pg-drizzle_whatsapp_critical_template",
               },
@@ -1860,12 +1864,93 @@ describe("migraciones de PostgreSQL", () => {
           const alertClinicId = randomUUID();
           const otherAlertClinicId = randomUUID();
           const alertEventId = randomUUID();
+          const inboundSmokeGeneration = randomUUID();
+          const otherSmokeGeneration = randomUUID();
+          const inboundSmokeProjectId = `project-${randomUUID()}`;
+          const otherSmokeProjectId = `project-${randomUUID()}`;
+          const inboundSmokePhoneNumberId = `phone-${randomUUID()}`;
+          const otherSmokePhoneNumberId = `phone-${randomUUID()}`;
           await migrated`
             insert into "pg-drizzle_clinic" (id, name, subscription_status)
             values
               (${alertClinicId}, 'Clínica alerta APO-101', 'active'),
               (${otherAlertClinicId}, 'Otra Clínica APO-101', 'active')
           `;
+          await migrated`
+            insert into "pg-drizzle_whatsapp_connection" (
+              clinic_id, provider, status, connection_type, customer,
+              phone_number_id, metadata, business_account_id
+            ) values
+              (
+                ${alertClinicId}, 'kapso', 'blocked', 'coexistence',
+                ${`customer-${randomUUID()}`}, ${inboundSmokePhoneNumberId},
+                jsonb_build_object(
+                  'projectId', ${inboundSmokeProjectId}::text,
+                  'provisioningEventId', ${inboundSmokeGeneration}::text
+                ),
+                ${`waba-${randomUUID()}`}
+              ),
+              (
+                ${otherAlertClinicId}, 'kapso', 'blocked', 'coexistence',
+                ${`customer-${randomUUID()}`}, ${otherSmokePhoneNumberId},
+                jsonb_build_object(
+                  'projectId', ${otherSmokeProjectId}::text,
+                  'provisioningEventId', ${otherSmokeGeneration}::text
+                ),
+                ${`waba-${randomUUID()}`}
+              )
+          `;
+          await migrated`
+            insert into "pg-drizzle_whatsapp_readiness" (
+              clinic_id, phone_number_id, business_account_id, project_id,
+              provisioning_event_id, status_reason
+            )
+            select clinic_id, phone_number_id, business_account_id,
+              metadata->>'projectId',
+              (metadata->>'provisioningEventId')::uuid,
+              'Readiness de prueba'
+            from "pg-drizzle_whatsapp_connection"
+            where clinic_id in (${alertClinicId}, ${otherAlertClinicId})
+          `;
+          const readinessHiddenFromRegularInboundWorker = await migrated.begin(
+            async (transaction) => {
+              await transaction`set local role panacea_clinical_access`;
+              await transaction`
+                select set_config('app.whatsapp_inbound_worker', 'true', true)
+              `;
+              await transaction`
+                select set_config('app.clinic_id', ${alertClinicId}, true)
+              `;
+              await transaction`
+                select set_config('app.subscription_status', 'active', true)
+              `;
+              return transaction<Array<{ clinic_id: string }>>`
+                select clinic_id from "pg-drizzle_whatsapp_readiness"
+              `;
+            },
+          );
+          expect(readinessHiddenFromRegularInboundWorker).toEqual([]);
+          const smokeWorkerReadiness = await migrated.begin(
+            async (transaction) => {
+              await transaction`set local role panacea_clinical_access`;
+              await transaction`
+                select set_config('app.whatsapp_inbound_worker', 'true', true)
+              `;
+              await transaction`
+                select set_config('app.whatsapp_inbound_smoke_read', 'true', true)
+              `;
+              await transaction`
+                select set_config('app.clinic_id', ${alertClinicId}, true)
+              `;
+              await transaction`
+                select set_config('app.subscription_status', 'active', true)
+              `;
+              return transaction<Array<{ clinic_id: string }>>`
+                select clinic_id from "pg-drizzle_whatsapp_readiness"
+              `;
+            },
+          );
+          expect(smokeWorkerReadiness).toEqual([{ clinic_id: alertClinicId }]);
           await migrated`
             insert into "pg-drizzle_whatsapp_webhook_event" (
               id, idempotency_key, event_name, payload, status

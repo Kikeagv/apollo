@@ -29,6 +29,7 @@ import {
   type ClinicTransaction,
 } from "~/server/db/clinic-context";
 import { openWhatsAppCircuitInTransaction } from "~/server/db/whatsapp-circuit-breaker-store";
+import { isWhatsAppSmokeContactEligibleInTransaction } from "~/server/db/whatsapp-smoke-contact";
 import { WhatsAppRealTrafficBlockedError } from "~/server/application/whatsapp-provider";
 import type {
   WhatsAppOperationsOffboardingStep,
@@ -40,7 +41,6 @@ import { evaluateWhatsAppOperationsTraffic } from "~/server/application/whatsapp
 import {
   apoloAuditEvents,
   clinics,
-  contactPatientLinks,
   contacts,
   whatsappBilling,
   whatsappCircuitBreakers,
@@ -131,17 +131,13 @@ export const drizzleWhatsAppOperationsStore: WhatsAppOperationsStore = {
             "El teléfono indicado no pertenece a un Contacto de esta Clínica",
           );
         }
-        const patientLink =
-          await transaction.query.contactPatientLinks.findFirst({
-            columns: { id: true },
-            where: and(
-              eq(contactPatientLinks.clinicId, input.clinicId),
-              eq(contactPatientLinks.contactId, contact.id),
-            ),
-          });
-        if (patientLink !== undefined) {
+        const eligible = await isWhatsAppSmokeContactEligibleInTransaction(
+          transaction,
+          { clinicId: input.clinicId, contactId: contact.id },
+        );
+        if (!eligible) {
           throw new Error(
-            "El Contacto de prueba tiene un vínculo a Paciente y no se puede usar",
+            "El Contacto de prueba está vinculado a un Paciente real y no se puede usar",
           );
         }
         return { id: contact.id, maskedPhone: maskPhone(input.phoneE164) };

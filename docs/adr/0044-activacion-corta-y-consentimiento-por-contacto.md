@@ -43,6 +43,10 @@ El recorrido visible tiene cuatro pasos:
 4. Después de aprobar una plantilla, iniciar con ella una conversación de
    prueba y confirmar su entrega.
 
+El Contacto controlado puede estar vinculado a Pacientes marcados
+explícitamente como prueba. Si está vinculado a algún Paciente real, no puede
+usarse para comprobar el transporte.
+
 La aprobación de la prueba del paso 4 habilita el tráfico real automáticamente.
 No hay confirmación manual ni gates separados de activación después de esa
 prueba. Cada envío proactivo a un Contacto sigue sujeto al consentimiento

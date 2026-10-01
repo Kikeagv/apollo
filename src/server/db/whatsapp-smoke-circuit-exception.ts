@@ -6,7 +6,7 @@ import {
 } from "~/domain/whatsapp-inbound";
 import {
   currentWhatsAppNumberHealth,
-  isWhatsAppNumberMessagingAvailable,
+  isWhatsAppNumberSmokeCheckAllowed,
 } from "~/domain/whatsapp-readiness";
 import {
   isWhatsAppSmokeRunAwaitingInbound,
@@ -15,9 +15,9 @@ import {
   parseWhatsAppSmokeReplyIdempotencyKey,
 } from "~/domain/whatsapp-smoke";
 import type { ClinicTransaction } from "~/server/db/clinic-context";
+import { isWhatsAppSmokeContactEligibleInTransaction } from "~/server/db/whatsapp-smoke-contact";
 import {
   clinics,
-  contactPatientLinks,
   contacts,
   whatsappConnections,
   whatsappCircuitBreakers,
@@ -70,7 +70,7 @@ export async function isActiveControlledSmokeChallenge(
   ) {
     return false;
   }
-  const [contact, patientLink] = await Promise.all([
+  const [contact, eligible] = await Promise.all([
     transaction.query.contacts.findFirst({
       columns: { phoneE164: true },
       where: and(
@@ -78,19 +78,16 @@ export async function isActiveControlledSmokeChallenge(
         eq(contacts.id, run.testContactId),
       ),
     }),
-    transaction.query.contactPatientLinks.findFirst({
-      columns: { id: true },
-      where: and(
-        eq(contactPatientLinks.clinicId, input.connection.clinicId),
-        eq(contactPatientLinks.contactId, run.testContactId),
-      ),
+    isWhatsAppSmokeContactEligibleInTransaction(transaction, {
+      clinicId: input.connection.clinicId,
+      contactId: run.testContactId,
     }),
   ]);
   return (
     contact !== undefined &&
     contact.phoneE164 !== null &&
     contact.phoneE164 === input.message.phoneE164 &&
-    patientLink === undefined
+    eligible
   );
 }
 
@@ -132,7 +129,7 @@ export async function isActiveControlledSmokeReply(
   ) {
     return false;
   }
-  const [contact, patientLink] = await Promise.all([
+  const [contact, eligible] = await Promise.all([
     transaction.query.contacts.findFirst({
       columns: { phoneE164: true },
       where: and(
@@ -140,19 +137,16 @@ export async function isActiveControlledSmokeReply(
         eq(contacts.id, run.testContactId),
       ),
     }),
-    transaction.query.contactPatientLinks.findFirst({
-      columns: { id: true },
-      where: and(
-        eq(contactPatientLinks.clinicId, input.clinicId),
-        eq(contactPatientLinks.contactId, run.testContactId),
-      ),
+    isWhatsAppSmokeContactEligibleInTransaction(transaction, {
+      clinicId: input.clinicId,
+      contactId: run.testContactId,
     }),
   ]);
   return (
     contact !== undefined &&
     contact.phoneE164 !== null &&
     contact.phoneE164 === input.recipientPhoneE164 &&
-    patientLink === undefined
+    eligible
   );
 }
 
@@ -184,11 +178,14 @@ async function readCurrentControlledSmokeRun(
     input.connection.realTrafficStatus === "offboarded" ||
     (input.connection.status !== "ready" &&
       input.connection.status !== "blocked") ||
-    !isWhatsAppNumberMessagingAvailable(input.connection.metadata.health) ||
+    !isWhatsAppNumberSmokeCheckAllowed(input.connection.metadata.health) ||
     input.connection.metadata.webhookStatus !== "ready"
   ) {
     return undefined;
   }
+  await transaction.execute(
+    sql`select set_config('app.whatsapp_inbound_smoke_read', 'true', true)`,
+  );
   const [readiness, circuit, latestRuns] = await Promise.all([
     transaction.query.whatsappReadiness.findFirst({
       where: eq(whatsappReadiness.clinicId, input.clinicId),
@@ -220,8 +217,8 @@ async function readCurrentControlledSmokeRun(
     readiness === undefined ||
     !blockedByCurrentCircuit ||
     readiness.numberEnvironment !== "production" ||
-    !isWhatsAppNumberMessagingAvailable(currentHealth) ||
-    !isWhatsAppNumberMessagingAvailable(input.connection.metadata.health) ||
+    !isWhatsAppNumberSmokeCheckAllowed(currentHealth) ||
+    !isWhatsAppNumberSmokeCheckAllowed(input.connection.metadata.health) ||
     input.connection.businessAccountId === null ||
     readiness.businessAccountId !== input.connection.businessAccountId ||
     readiness.projectWebhookStatus !== "ready" ||

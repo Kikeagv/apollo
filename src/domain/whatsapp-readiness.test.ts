@@ -5,12 +5,25 @@ import {
   evaluateWhatsAppReadiness,
   getWhatsAppReadinessGeneration,
   isSameWhatsAppReadinessGeneration,
+  isWhatsAppNumberSmokeCheckAllowed,
   whatsappCriticalTemplateCatalog,
   type WhatsAppReadinessInput,
   type WhatsAppTemplateSnapshot,
 } from "./whatsapp-readiness";
 
 const now = new Date("2026-09-07T12:00:00.000Z");
+
+describe("salud del número para el smoke controlado", () => {
+  it("permite un intento de prueba si la salud es desconocida", () => {
+    expect(isWhatsAppNumberSmokeCheckAllowed("unknown")).toBe(true);
+  });
+
+  it("bloquea el intento de prueba ante una salud conocida no disponible", () => {
+    expect(isWhatsAppNumberSmokeCheckAllowed("degraded")).toBe(false);
+    expect(isWhatsAppNumberSmokeCheckAllowed("unhealthy")).toBe(false);
+    expect(isWhatsAppNumberSmokeCheckAllowed("error")).toBe(false);
+  });
+});
 
 function approvedTemplates(
   overrides: Partial<WhatsAppTemplateSnapshot> = {},
@@ -346,7 +359,7 @@ describe("readiness técnico de la Conexión de WhatsApp", () => {
   it("requiere revalidar la salud antes de permitir envíos", () => {
     const result = evaluateWhatsAppReadiness(
       readyInput({
-        now: new Date(now.valueOf() + 6 * 60_000),
+        now: new Date(now.valueOf() + 16 * 60_000),
         number: {
           environment: "production",
           health: "healthy",
