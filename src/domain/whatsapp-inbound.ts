@@ -85,13 +85,16 @@ export function classifyWhatsAppInboundMessage(
   return "unsupported";
 }
 
-/** La Conexión sólo acepta eventos vinculados a su customer de Kapso. */
+/**
+ * El phone_number_id ya resuelve una Conexión única. Si Kapso incluye customer,
+ * se exige que coincida; algunos webhooks normalizados omiten esa referencia.
+ */
 export function matchesWhatsAppCustomer(input: {
   connectionCustomerReference: string;
   messageCustomerReference: string | null;
 }) {
   return (
-    input.messageCustomerReference !== null &&
+    input.messageCustomerReference === null ||
     input.messageCustomerReference === input.connectionCustomerReference
   );
 }
