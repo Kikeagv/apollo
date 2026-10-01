@@ -53,6 +53,7 @@ export function ClinicActivationJourneyPanel({
   isLoading,
   isSending,
   isKapso,
+  isVerifyingProviderHealth = false,
   isRunningSmoke,
   isCreatingTestContact,
   isSendingTemplateTest,
@@ -85,6 +86,7 @@ export function ClinicActivationJourneyPanel({
   isLoading: boolean;
   isSending: boolean;
   isKapso: boolean;
+  isVerifyingProviderHealth?: boolean;
   isRunningSmoke: boolean;
   isCreatingTestContact: boolean;
   isSendingTemplateTest: boolean;
@@ -507,7 +509,9 @@ export function ClinicActivationJourneyPanel({
             Salud operativa del proveedor
           </h3>
           <p className="text-sm" role="status">
-            {providerHealthLabel(journey.providerHealth.status)}
+            {isVerifyingProviderHealth
+              ? "Verificando la salud del número en Kapso…"
+              : providerHealthLabel(journey.providerHealth.status)}
           </p>
           <p className="text-muted-foreground text-xs">
             {journey.providerHealth.checkedAt
