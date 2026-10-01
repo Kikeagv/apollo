@@ -35,6 +35,71 @@ const message = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("payloads entrantes de Kapso", () => {
+  it("reconoce el webhook normalizado que Kapso envía a producción", () => {
+    const [parsed] = parseKapsoInboundMessagePayload(
+      {
+        message: {
+          id: "wamid.HBgLNTAzNzQ3ODAyNjQVAgASGBYzRUIwMTMxODJEMTc3MUExODlBQjZEAA==",
+          from: "50374780264",
+          text: {
+            body: "PRUEBA WHATSAPP 9ac3c6f1-3e1a-4966-a487-94ee7afbc523",
+          },
+          type: "text",
+          timestamp: "1790821693",
+        },
+        conversation: {
+          id: "e0884f17-9d2b-4764-b0e7-408d7c22540d",
+          status: "active",
+          phone_number: "50374780264",
+          phone_number_id: "1224269064112903",
+          business_scoped_user_id: "SV.2167664630769569",
+        },
+        phone_number_id: "1224269064112903",
+        is_new_conversation: false,
+        type: "whatsapp.message.received",
+      },
+      "whatsapp.message.received",
+    );
+
+    expect(parsed).toMatchObject({
+      businessScopedUserId: "SV.2167664630769569",
+      connectionReference: "1224269064112903",
+      conversationId: "e0884f17-9d2b-4764-b0e7-408d7c22540d",
+      customerReference: null,
+      direction: "inbound",
+      eventName: "whatsapp.message.received",
+      fromWaId: "50374780264",
+      origin: "api",
+      phoneE164: "+50374780264",
+      text: "PRUEBA WHATSAPP 9ac3c6f1-3e1a-4966-a487-94ee7afbc523",
+      type: "text",
+    });
+    expect(classifyWhatsAppInboundMessage(parsed!)).toBe("assistant");
+  });
+
+  it("no procesa como inbound un evento sent sin direction explícita", () => {
+    const [parsed] = parseKapsoInboundMessagePayload(
+      {
+        message: {
+          id: "wamid.sent-1",
+          from: "50373556692",
+          to: "50374780264",
+          text: { body: "Respuesta de la Clínica" },
+          type: "text",
+        },
+        conversation: {
+          phone_number: "50374780264",
+          phone_number_id: "1224269064112903",
+        },
+        phone_number_id: "1224269064112903",
+      },
+      "whatsapp.message.sent",
+    );
+
+    expect(parsed?.direction).toBe("outbound");
+    expect(classifyWhatsAppInboundMessage(parsed!)).toBe("not-inbound");
+  });
+
   it("traduce los tipos conservados a etiquetas seguras para la atención humana", () => {
     expect(whatsappInboundMessageTypeLabel("audio")).toBe("Audio");
     expect(whatsappInboundMessageTypeLabel("image")).toBe("Imagen");
@@ -135,11 +200,11 @@ describe("payloads entrantes de Kapso", () => {
   });
 
   it.each([
-    ["sin customer en el evento", null, false],
+    ["sin customer en el evento", null, true],
     ["customer asociado", "customer-1", true],
     ["customer de otra Conexión", "customer-2", false],
   ])(
-    "valida el customer requerido: %s",
+    "valida customer si está presente: %s",
     (_label, messageCustomerId, expected) => {
       expect(
         matchesWhatsAppCustomer({

@@ -73,9 +73,14 @@ function parseInboundMessage(
     );
   }
 
-  const direction = parseDirection(
-    firstString(kapso.direction, message.direction),
-  );
+  const rawDirection = firstString(kapso.direction, message.direction);
+  const parsedDirection = parseDirection(rawDirection);
+  const direction =
+    parsedDirection !== "unknown"
+      ? parsedDirection
+      : rawDirection === null
+        ? directionFromEventName(input.eventName)
+        : "unknown";
   const to = optionalRecord(message.to);
   const recipient = optionalRecord(message.recipient);
   const rawCounterparty = firstString(
@@ -118,7 +123,16 @@ function parseInboundMessage(
   const type = readString(message.type) ?? "unknown";
   const rawText = asRecord(message.text)?.body;
   const interactiveAction = parseInteractiveAction(message, type);
-  const origin = parseOrigin(readString(kapso.origin));
+  const rawOrigin = firstString(kapso.origin, message.origin);
+  const parsedOrigin = parseOrigin(rawOrigin);
+  const origin =
+    parsedOrigin !== "unknown"
+      ? parsedOrigin
+      : rawOrigin === null &&
+          input.eventName === "whatsapp.message.received" &&
+          direction === "inbound"
+        ? "api"
+        : "unknown";
 
   return {
     batchFirstSequence: input.batchFirstSequence,
@@ -357,6 +371,12 @@ function normalizePhoneNumber(value: string) {
 function parseDirection(value: string | null): WhatsAppInboundMessageDirection {
   if (value === "inbound" || value === "outbound") return value;
   return "unknown";
+}
+
+function directionFromEventName(
+  eventName: WhatsAppInboundEventName,
+): WhatsAppInboundMessageDirection {
+  return eventName === "whatsapp.message.received" ? "inbound" : "outbound";
 }
 
 function parseOrigin(value: string | null): WhatsAppInboundMessageOrigin {
