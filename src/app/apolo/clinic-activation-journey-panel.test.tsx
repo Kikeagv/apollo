@@ -62,6 +62,7 @@ function makeSmokeRun(): WhatsAppOperationsSmokeRun {
 function renderPanel(
   latestSmoke: WhatsAppOperationsSmokeRun,
   currentProvisioningEventId: string,
+  isVerifyingProviderHealth = false,
 ) {
   return renderToStaticMarkup(
     createElement(ClinicActivationJourneyPanel, {
@@ -71,6 +72,7 @@ function renderPanel(
       isLoading: false,
       isSending: false,
       isKapso: true,
+      isVerifyingProviderHealth,
       isRunningSmoke: false,
       isCreatingTestContact: false,
       isSendingTemplateTest: false,
@@ -112,7 +114,7 @@ describe("panel del recorrido de Activación de WhatsApp", () => {
     expect(html).toContain("Procesamiento del mensaje entrante");
     expect(html).toContain("Respuesta administrativa aceptada");
     expect(html).toContain("Delivery confirmado del asistente de la clínica");
-    expect(html).toContain("Preflight del webhook");
+    expect(html).toContain("Diagnóstico opcional del webhook");
     expect(html).toContain("falló");
     expect(html).toContain("+••••••0115");
     expect(html).toContain("La Clínica no se marca lista para tráfico real");
@@ -128,5 +130,11 @@ describe("panel del recorrido de Activación de WhatsApp", () => {
     expect(html).toContain("Pendiente de la prueba real");
     expect(html).not.toContain("Roundtrip entregado al Contacto controlado");
     expect(html).not.toContain("roundtrip-run-115");
+  });
+
+  it("indica que está consultando Kapso mientras revalida la salud", () => {
+    const html = renderPanel(makeSmokeRun(), "generation-115", true);
+
+    expect(html).toContain("Verificando la salud del número en Kapso");
   });
 });

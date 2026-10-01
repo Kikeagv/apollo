@@ -49,6 +49,7 @@ import {
   SupervisionTechnicalDetails,
 } from "./supervision-diagnostics";
 import { ClinicActivationJourneyPanel } from "./clinic-activation-journey-panel";
+import { shouldAutomaticallyRevalidateWhatsAppHealth } from "./whatsapp-health-revalidation";
 
 const operationStatusLabels = {
   idle: "Sin operación",
@@ -70,6 +71,7 @@ export function ApoloOperations() {
   const clinicId = searchParams.get("clinicId") ?? "";
   const activeTab = getSupervisionTab(searchParams.get("tab"));
   const previousClinicId = useRef(clinicId);
+  const automaticHealthChecks = useRef(new Set<string>());
   const updateSupervisionContext = (changes: {
     clinicId?: string;
     tab?: SupervisionTabId;
@@ -247,6 +249,43 @@ export function ApoloOperations() {
       refreshSupervisionSummary();
     },
   });
+  const retryReadinessMutation = retryReadiness.mutate;
+  const isRetryingReadiness = retryReadiness.isPending;
+  useEffect(() => {
+    const connection = operationConnection;
+    if (
+      !clinicId ||
+      !readiness.data ||
+      !shouldAutomaticallyRevalidateWhatsAppHealth({
+        activationVisible,
+        health: readiness.data.numberHealth,
+        phoneNumberId: connection?.phoneNumberId ?? null,
+        provider: connection?.provider ?? null,
+      }) ||
+      connection?.provider !== "kapso" ||
+      connection.phoneNumberId === null ||
+      isRetryingReadiness
+    ) {
+      return;
+    }
+
+    const checkKey = [
+      clinicId,
+      connection.phoneNumberId,
+      connection.provisioningEventId ?? "connection",
+    ].join(":");
+    if (automaticHealthChecks.current.has(checkKey)) return;
+
+    automaticHealthChecks.current.add(checkKey);
+    retryReadinessMutation({ action: "reactivate", clinicId });
+  }, [
+    activationVisible,
+    clinicId,
+    isRetryingReadiness,
+    operationConnection,
+    readiness.data,
+    retryReadinessMutation,
+  ]);
   const openCircuitBreaker = api.apolo.openWhatsAppCircuitBreaker.useMutation({
     onSuccess: () => {
       setOpenReason("");
@@ -603,6 +642,10 @@ export function ApoloOperations() {
               }
               isSending={sendSetupLink.isPending}
               isKapso={operationConnection?.provider === "kapso"}
+              isVerifyingProviderHealth={
+                retryReadiness.isPending &&
+                retryReadiness.variables?.action === "reactivate"
+              }
               isRunningSmoke={startInboundRoundtrip.isPending}
               isCreatingTestContact={createTestContact.isPending}
               isSendingTemplateTest={runApprovedTemplateSmoke.isPending}
@@ -714,6 +757,10 @@ export function ApoloOperations() {
           }
           isSending={sendSetupLink.isPending}
           isKapso={operationConnection?.provider === "kapso"}
+          isVerifyingProviderHealth={
+            retryReadiness.isPending &&
+            retryReadiness.variables?.action === "reactivate"
+          }
           isRunningSmoke={startInboundRoundtrip.isPending}
           isCreatingTestContact={createTestContact.isPending}
           isSendingTemplateTest={runApprovedTemplateSmoke.isPending}
@@ -1680,7 +1727,8 @@ export function ApoloOperations() {
                         gate.code === "billing" ||
                         gate.code === "e2e" ||
                         (gate.code === "number" &&
-                          (readiness.data.connection?.status === "blocked" ||
+                          (readiness.data.numberHealth === "unknown" ||
+                            readiness.data.connection?.status === "blocked" ||
                             readiness.data.connection?.status ===
                               "degraded")) ||
                         gate.action ===
@@ -1705,17 +1753,20 @@ export function ApoloOperations() {
                             }
                             type="button"
                           >
-                            {apoloReadinessActionLabel(
-                              gate.code === "webhooks"
-                                ? "webhooks"
-                                : gate.code === "templates"
-                                  ? "templates"
-                                  : gate.code === "billing"
-                                    ? "billing"
-                                    : gate.code === "e2e"
-                                      ? "e2e"
-                                      : "reactivate",
-                            )}
+                            {gate.code === "number" &&
+                            readiness.data.numberHealth === "unknown"
+                              ? "Verificar salud en Kapso"
+                              : apoloReadinessActionLabel(
+                                  gate.code === "webhooks"
+                                    ? "webhooks"
+                                    : gate.code === "templates"
+                                      ? "templates"
+                                      : gate.code === "billing"
+                                        ? "billing"
+                                        : gate.code === "e2e"
+                                          ? "e2e"
+                                          : "reactivate",
+                                )}
                           </button>
                         ) : null}
                       </li>
