@@ -869,6 +869,13 @@
       "when": 1790810000000,
       "tag": "0128_apo116_template_delivery_activation_gate",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1790882000000,
+      "tag": "0129_apo116_whatsapp_generation_guard_worker_rls",
+      "breakpoints": true
     }
   ]
 }

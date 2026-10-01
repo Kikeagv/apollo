@@ -1240,6 +1240,76 @@ describe("migraciones de PostgreSQL", () => {
             { clinic_id: otherClinicId },
           ]);
 
+          const inboundWorkerSmokeUpdate = await restricted.begin(
+            async (transaction) => {
+              await transaction`set local role panacea_clinical_access`;
+              await transaction`select set_config(
+                'app.whatsapp_inbound_worker', 'true', true
+              )`;
+              await transaction`select set_config(
+                'app.whatsapp_inbound', 'true', true
+              )`;
+              await transaction`select set_config(
+                'app.clinic_id', ${rlsClinicId}, true
+              )`;
+              await transaction`select set_config(
+                'app.subscription_status', 'active', true
+              )`;
+              const [generationVisibility] = await transaction<
+                Array<{ provisioningSteps: number; readiness: number }>
+              >`
+                select
+                  (
+                    select count(*)::int
+                    from "pg-drizzle_whatsapp_provisioning_step"
+                    where clinic_id = ${rlsClinicId}
+                      and event_id = ${apo92Generations.clinic}
+                  ) as "provisioningSteps",
+                  (
+                    select count(*)::int
+                    from "pg-drizzle_whatsapp_readiness"
+                    where clinic_id = ${rlsClinicId}
+                      and provisioning_event_id = ${apo92Generations.clinic}
+                  ) as readiness
+              `;
+              const updated = await transaction<Array<{ id: string }>>`
+                update "pg-drizzle_whatsapp_smoke_run"
+                set evidence = 'Persisted by the inbound worker'
+                where clinic_id = ${rlsClinicId}
+                  and id = ${apo92SmokeRuns.clinic}
+                returning id
+              `;
+              return { generationVisibility, updated };
+            },
+          );
+          expect(inboundWorkerSmokeUpdate.generationVisibility).toEqual({
+            provisioningSteps: 0,
+            readiness: 0,
+          });
+          expect(inboundWorkerSmokeUpdate.updated).toEqual([
+            { id: apo92SmokeRuns.clinic },
+          ]);
+
+          await expect(
+            restricted.begin(async (transaction) => {
+              await transaction`set local role panacea_clinical_access`;
+              await transaction`select set_config(
+                'app.whatsapp_inbound_worker', 'true', true
+              )`;
+              await transaction`select set_config(
+                'app.clinic_id', ${rlsClinicId}, true
+              )`;
+              return transaction`
+                update "pg-drizzle_whatsapp_smoke_run"
+                set provisioning_event_id = ${apo92Generations.other}
+                where clinic_id = ${rlsClinicId}
+                  and id = ${apo92SmokeRuns.clinic}
+              `;
+            }),
+          ).rejects.toThrow(
+            /generación de provisión.*no pertenece a la Clínica/i,
+          );
+
           const ownerAuthorization = await withClinicContext(
             restricted,
             {
