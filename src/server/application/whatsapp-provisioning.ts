@@ -7,6 +7,7 @@ import {
 } from "~/domain/whatsapp-delivery-events";
 import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
 import {
+  kapsoCreatedPhoneNumberConnectionMissingReason,
   KapsoLifecycleEventError,
   isKapsoPhoneNumberLifecycleEventName,
   isKapsoPhoneNumberWebhookEventName,
@@ -581,7 +582,7 @@ async function processEventUnderLifecycleLock(
   if (resolved.kind !== "matched") {
     throw new KapsoProvisioningRejectedError(
       resolved.kind === "unknown"
-        ? "El número de Kapso no está asociado a ninguna Clínica"
+        ? kapsoCreatedPhoneNumberConnectionMissingReason
         : "La identidad de Kapso cruza la asociación de otra Clínica",
     );
   }

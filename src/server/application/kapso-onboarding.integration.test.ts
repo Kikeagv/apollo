@@ -4,13 +4,16 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
+import { kapsoCreatedPhoneNumberConnectionMissingReason } from "~/domain/whatsapp-kapso-provisioning";
 import { db } from "~/server/db";
 import {
   inClinicTransaction,
   inWhatsAppSetupLinkReturnTransaction,
+  inWhatsAppProvisioningWorkerTransaction,
   inSuperadminTransaction,
 } from "~/server/db/clinic-context";
 import { drizzleKapsoOnboardingStore } from "~/server/db/kapso-onboarding-store";
+import { drizzleWhatsAppProvisioningStore } from "~/server/db/whatsapp-provisioning-store";
 import {
   apoloSuperadmins,
   clinicUsers,
@@ -20,12 +23,117 @@ import {
   whatsappOnboardingAuditEvents,
   whatsappPreflights,
   whatsappSetupLinks,
+  whatsappWebhookEvents,
 } from "~/server/db/schema";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("persistencia y RLS del onboarding Kapso", () => {
+  databaseTest(
+    "reencola el phone_number.created rechazado cuando el preflight asocia el número a la Clínica",
+    async () => {
+      const suffix = randomUUID();
+      const superadminIdentityId = `apo-83-superadmin-${suffix}`;
+      const fixture = await createFixture({
+        otherOwnerIdentityId: `apo-83-other-owner-${suffix}`,
+        primaryOwnerIdentityId: `apo-83-primary-owner-${suffix}`,
+        superadminIdentityId,
+      });
+      let eventId: string | undefined;
+
+      try {
+        const lifecycleEvent = {
+          businessAccountId: null,
+          customerId: "kapso-customer-retry",
+          displayPhoneE164: "+50370000000",
+          eventName: "whatsapp.phone_number.created" as const,
+          phoneNumberId: "phone-apo-83-retry",
+          projectId: "kapso-project-apo-83",
+        };
+        const queued = await drizzleWhatsAppProvisioningStore.enqueue({
+          event: lifecycleEvent,
+          idempotencyKey: `kapso-created-${suffix}`,
+        });
+        eventId = queued.eventId;
+        await inSuperadminTransaction(superadminIdentityId, (transaction) =>
+          transaction
+            .update(whatsappWebhookEvents)
+            .set({
+              attempts: 1,
+              lastError: kapsoCreatedPhoneNumberConnectionMissingReason,
+              rejectedAt: new Date("2026-09-06T12:00:00.000Z"),
+              status: "rejected",
+            })
+            .where(eq(whatsappWebhookEvents.id, queued.eventId)),
+        );
+
+        const checkedAt = new Date("2026-09-06T12:10:00.000Z");
+        await drizzleKapsoOnboardingStore.save({
+          actorIdentityId: superadminIdentityId,
+          auditEvents: [],
+          clinicId: fixture.primaryClinicId,
+          connection: {
+            connectionType: "coexistence",
+            metadata: { mode: "coexistence", source: "kapso-onboarding" },
+            phoneNumberE164: "+50370000000",
+            phoneNumberId: lifecycleEvent.phoneNumberId,
+            provider: "kapso",
+            status: "pending",
+          },
+          customerId: lifecycleEvent.customerId,
+          preflight: {
+            blockers: [],
+            checkedAt,
+            checks: {
+              metaAuthority: "confirmed",
+              numberAssociation: "same-customer",
+              numberConnectionType: "coexistence",
+              numberOwnedByClinic: true,
+              ownerConfirmed: true,
+              phoneNumberE164: "+50370000000",
+              qrDeviceAvailable: true,
+              whatsappBusinessApp: "active",
+            },
+            nextAction: "Esperar la provisión de WhatsApp",
+            reason: null,
+            status: "passed",
+          },
+        });
+
+        await expect(
+          inSuperadminTransaction(superadminIdentityId, (transaction) =>
+            transaction.query.whatsappWebhookEvents.findFirst({
+              columns: {
+                attempts: true,
+                lastError: true,
+                nextAttemptAt: true,
+                rejectedAt: true,
+                status: true,
+              },
+              where: eq(whatsappWebhookEvents.id, queued.eventId),
+            }),
+          ),
+        ).resolves.toMatchObject({
+          attempts: 0,
+          lastError: null,
+          nextAttemptAt: checkedAt,
+          rejectedAt: null,
+          status: "pending",
+        });
+      } finally {
+        if (eventId !== undefined) {
+          await inWhatsAppProvisioningWorkerTransaction((transaction) =>
+            transaction
+              .delete(whatsappWebhookEvents)
+              .where(eq(whatsappWebhookEvents.id, eventId!)),
+          );
+        }
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "aísla el preflight por Clínica, autoriza solo al superadmin para mutar y permite lectura al owner",
     async () => {

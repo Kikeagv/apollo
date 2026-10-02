@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { WhatsAppConnection } from "~/domain/whatsapp-connection";
 import type {
   KapsoWhatsAppOnboardingSnapshot,
   KapsoWhatsAppOnboardingStore,
@@ -167,6 +168,75 @@ describe("caso de uso de onboarding Kapso", () => {
       provider: "kapso",
       status: "ready",
     });
+  });
+
+  it("corrige la modalidad de una Conexión bloqueada cuando Kapso confirma la nueva modalidad", async () => {
+    const blockedConnection: WhatsAppConnection = {
+      clinicId: "clinic-1",
+      connectionType: "dedicated",
+      createdAt: new Date("2026-09-01T00:00:00.000Z"),
+      customer: "kapso-customer-1",
+      businessAccountId: null,
+      lastTestAt: null,
+      metadata: { mode: "dedicated", source: "kapso-onboarding" },
+      phoneNumberE164: "+50370000000",
+      phoneNumberId: "existing-phone",
+      provider: "kapso",
+      status: "blocked",
+      updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+    };
+    const provider = providerFixture({
+      customer: customerFixture(),
+      phoneNumberId: "existing-phone",
+    });
+    const store = storeFixture({ connection: blockedConnection });
+
+    const result = await prepareKapsoWhatsAppOnboarding(
+      { ...baseInput, onboardingMode: "coexistence" },
+      { provider, store },
+    );
+
+    expect(result.preflight?.status).toBe("passed");
+    expect(store.saved?.connection).toMatchObject({
+      connectionType: "coexistence",
+      provider: "kapso",
+      status: "pending",
+    });
+  });
+
+  it("no cambia la modalidad si la Conexión ya tiene una generación de provisioning", async () => {
+    const provisionedConnection: WhatsAppConnection = {
+      clinicId: "clinic-1",
+      connectionType: "dedicated",
+      createdAt: new Date("2026-09-01T00:00:00.000Z"),
+      customer: "kapso-customer-1",
+      businessAccountId: null,
+      lastTestAt: null,
+      metadata: {
+        mode: "dedicated",
+        provisioningEventId: "event-1",
+        source: "kapso-onboarding",
+      },
+      phoneNumberE164: "+50370000000",
+      phoneNumberId: "existing-phone",
+      provider: "kapso",
+      status: "blocked",
+      updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+    };
+    const provider = providerFixture({
+      customer: customerFixture(),
+      phoneNumberId: "existing-phone",
+    });
+    const store = storeFixture({ connection: provisionedConnection });
+
+    await expect(
+      prepareKapsoWhatsAppOnboarding(
+        { ...baseInput, onboardingMode: "coexistence" },
+        { provider, store },
+      ),
+    ).rejects.toThrow(
+      "La Conexión de WhatsApp debe conservar su modalidad original",
+    );
   });
 
   it("reintenta la consulta cuando la creación responde conflicto", async () => {
@@ -518,6 +588,8 @@ function providerFixture(options: {
 function storeFixture(
   options: {
     connectionStatus?: "blocked" | "disconnected" | "ready";
+    connection?: WhatsAppConnection;
+    preflight?: KapsoWhatsAppOnboardingSnapshot["preflight"];
     readyKapso?: boolean;
     withoutOwner?: boolean;
   } = {},
@@ -527,7 +599,7 @@ function storeFixture(
   let snapshot: KapsoWhatsAppOnboardingSnapshot = {
     clinicId: "clinic-1",
     clinicName: "Clínica Aurora",
-    connection: {
+    connection: options.connection ?? {
       clinicId: "clinic-1",
       connectionType:
         options.readyKapso || options.connectionStatus !== undefined
@@ -557,7 +629,7 @@ function storeFixture(
     },
     customerId: null,
     ownerName: options.withoutOwner ? null : "Dra. Ana Reyes",
-    preflight: null,
+    preflight: options.preflight ?? null,
     setupLink: null,
     setupLinkHistory: [],
     setupLinkProviderError: null,

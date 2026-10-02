@@ -56,6 +56,12 @@ export async function manageKapsoWhatsAppSetupLink(
     return revokeSetupLink(input, current, reason, dependencies, now());
   }
 
+  if (current.preflight?.status !== "passed") {
+    throw new Error(
+      "Completa y aprueba el preflight de WhatsApp antes de generar o enviar el enlace de configuración.",
+    );
+  }
+
   const customerId = await ensureCustomerId(input, current, dependencies);
   current = { ...current, customerId };
   const reconnectPhoneNumber = resolveReconnectPhoneNumber(current);

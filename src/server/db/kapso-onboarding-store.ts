@@ -12,6 +12,7 @@ import type {
   KapsoWhatsAppSetupLinkReturnRecord,
   KapsoWhatsAppSetupLinkReturnStore,
 } from "~/server/application/whatsapp-setup-link-return";
+import { kapsoCreatedPhoneNumberConnectionMissingReason } from "~/domain/whatsapp-kapso-provisioning";
 import {
   type ClinicTransaction,
   inClinicTransaction,
@@ -28,6 +29,7 @@ import {
   whatsappOnboardingAuditEvents,
   whatsappPreflights,
   whatsappSetupLinks,
+  whatsappWebhookEvents,
 } from "~/server/db/schema";
 
 export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore &
@@ -355,6 +357,47 @@ export const drizzleKapsoOnboardingStore: KapsoWhatsAppOnboardingStore &
         await transaction
           .insert(whatsappOnboardingAuditEvents)
           .values(input.auditEvents.map((event) => toAuditRow(input, event)));
+      }
+
+      const phoneNumberId = input.connection?.phoneNumberId;
+      const preflightMode = input.preflight?.onboardingMode ?? "coexistence";
+      if (
+        input.preflight?.status === "passed" &&
+        input.connection?.provider === "kapso" &&
+        input.connection.connectionType === preflightMode &&
+        input.preflight.checks.numberAssociation === "same-customer" &&
+        input.preflight.checks.numberConnectionType === preflightMode &&
+        phoneNumberId !== null &&
+        phoneNumberId !== undefined &&
+        input.customerId !== null
+      ) {
+        await transaction
+          .update(whatsappWebhookEvents)
+          .set({
+            attempts: 0,
+            lastError: null,
+            leaseExpiresAt: null,
+            leaseToken: null,
+            nextAttemptAt: input.preflight.checkedAt,
+            processedAt: null,
+            rejectedAt: null,
+            status: "pending",
+          })
+          .where(
+            and(
+              eq(
+                whatsappWebhookEvents.eventName,
+                "whatsapp.phone_number.created",
+              ),
+              eq(whatsappWebhookEvents.status, "rejected"),
+              eq(
+                whatsappWebhookEvents.lastError,
+                kapsoCreatedPhoneNumberConnectionMissingReason,
+              ),
+              sql`${whatsappWebhookEvents.payload}->>'phoneNumberId' = ${phoneNumberId}`,
+              sql`${whatsappWebhookEvents.payload}->>'customerId' = ${input.customerId}`,
+            ),
+          );
       }
     };
 

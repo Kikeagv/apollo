@@ -2810,6 +2810,7 @@ function SetupLinkOperations({
   onManage: (action: "revoke", reason?: string) => void;
   onSend: (action: "send" | "regenerate", reason?: string) => void;
   snapshot: {
+    preflight: { status: string } | null;
     setupLink: WhatsAppSetupLink | null;
     setupLinkProviderError: string | null;
     setupLinkProviderStatus: string | null;
@@ -2827,6 +2828,7 @@ function SetupLinkOperations({
   const [actionReason, setActionReason] = useState("");
   const setupLink = snapshot.setupLink;
   const status = setupLink === null ? null : whatsappSetupLinkStatus(setupLink);
+  const preflightPassed = snapshot.preflight?.status === "passed";
 
   return (
     <section
@@ -2903,6 +2905,13 @@ function SetupLinkOperations({
           ))}
         </ol>
       ) : null}
+      {!preflightPassed && status !== "used" ? (
+        <p className="text-warning-foreground" role="status">
+          Completa y aprueba el preflight de WhatsApp antes de enviar este
+          enlace. Así Praxia puede recibir y asociar correctamente el alta del
+          número.
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {setupLink !== null && status === "active" ? (
           <>
@@ -2926,7 +2935,9 @@ function SetupLinkOperations({
         ) : null}
         <button
           className="bg-primary text-primary-foreground rounded px-3 py-2 font-medium disabled:opacity-50"
-          disabled={!clinicId || isPending || status === "used"}
+          disabled={
+            !clinicId || isPending || status === "used" || !preflightPassed
+          }
           onClick={() => onSend("send")}
           type="button"
         >

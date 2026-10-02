@@ -52,6 +52,26 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
     );
   });
 
+  it("no genera ni envía un enlace si el preflight no está aprobado", async () => {
+    const store = storeFixture({ preflightStatus: "blocked" });
+    const provider = providerFixture();
+
+    await expect(
+      manageKapsoWhatsAppSetupLink(
+        {
+          action: "generate",
+          actorIdentityId: "superadmin-1",
+          actorType: "superadmin",
+          clinicId: "clinic-1",
+        },
+        { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+      ),
+    ).rejects.toThrow("Completa y aprueba el preflight de WhatsApp");
+
+    expect(provider.findCustomerByExternalId).not.toHaveBeenCalled();
+    expect(provider.createSetupLink).not.toHaveBeenCalled();
+  });
+
   it("genera un enlace exclusivo para dedicated", async () => {
     const store = storeFixture({ onboardingMode: "dedicated" });
     const provider = providerFixture();
@@ -422,25 +442,27 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
     expect(store.saveAccesses).toContain("clinic-owner");
   });
 
-  it("genera el enlace aunque el preflight esté bloqueado", async () => {
+  it("no genera un enlace si no existe preflight aprobado", async () => {
     const store = storeFixture({ preflightStatus: "blocked" });
     const provider = providerFixture();
 
-    const result = await manageKapsoWhatsAppSetupLink(
-      {
-        action: "generate",
-        actorIdentityId: "superadmin-1",
-        actorType: "superadmin",
-        clinicId: "clinic-1",
-      },
-      { appUrl: "https://app.praxia.test", now: () => now, provider, store },
-    );
+    await expect(
+      manageKapsoWhatsAppSetupLink(
+        {
+          action: "generate",
+          actorIdentityId: "superadmin-1",
+          actorType: "superadmin",
+          clinicId: "clinic-1",
+        },
+        { appUrl: "https://app.praxia.test", now: () => now, provider, store },
+      ),
+    ).rejects.toThrow("Completa y aprueba el preflight de WhatsApp");
 
-    expect(result.setupLink?.status).toBe("active");
-    expect(provider.createSetupLink).toHaveBeenCalledTimes(1);
+    expect(provider.listSetupLinks).not.toHaveBeenCalled();
+    expect(provider.createSetupLink).not.toHaveBeenCalled();
   });
 
-  it("crea el customer idempotentemente y genera el enlace sin preflight", async () => {
+  it("no crea un customer de Kapso antes del preflight", async () => {
     const store = storeFixture({ customerId: null, preflight: null });
     const provider = providerFixture();
 
@@ -456,22 +478,13 @@ describe("caso de uso del ciclo de vida del enlace de configuración", () => {
       provider,
       store,
     };
-    const first = await manageKapsoWhatsAppSetupLink(input, dependencies);
-    const second = await manageKapsoWhatsAppSetupLink(input, dependencies);
+    await expect(
+      manageKapsoWhatsAppSetupLink(input, dependencies),
+    ).rejects.toThrow("Completa y aprueba el preflight de WhatsApp");
 
-    expect(provider.findCustomerByExternalId).toHaveBeenCalledWith(
-      "praxia-clinic:clinic-1",
-    );
-    expect(provider.createCustomer).toHaveBeenCalledTimes(1);
-    expect(first.customerId).toBe("kapso-customer-1");
-    expect(second.customerId).toBe("kapso-customer-1");
-    expect(store.auditEvents).toContainEqual(
-      expect.objectContaining({
-        action: "customer-created",
-        customerId: "kapso-customer-1",
-        result: "succeeded",
-      }),
-    );
+    expect(provider.findCustomerByExternalId).not.toHaveBeenCalled();
+    expect(provider.createCustomer).not.toHaveBeenCalled();
+    expect(provider.createSetupLink).not.toHaveBeenCalled();
   });
 
   it("audita el fallo de Kapso y no expone secretos", async () => {

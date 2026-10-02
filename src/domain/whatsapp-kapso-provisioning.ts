@@ -28,6 +28,9 @@ export const kapsoProvisioningStepNames = [
   "phone-number-webhook",
 ] as const;
 
+export const kapsoCreatedPhoneNumberConnectionMissingReason =
+  "El número de Kapso no está asociado a ninguna Clínica";
+
 export type KapsoProvisioningStepName =
   (typeof kapsoProvisioningStepNames)[number];
 

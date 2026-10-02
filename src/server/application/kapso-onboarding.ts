@@ -402,7 +402,17 @@ export async function prepareKapsoWhatsAppOnboarding(
       }
       assertSameConfiguredPhone(kapsoConnection, input.phoneNumberE164);
       assertSameConfiguredPhoneAssociation(kapsoConnection, phoneResolution);
-      if (kapsoConnection.connectionType !== onboardingMode) {
+      const canCorrectBlockedMode =
+        kapsoConnection.status === "blocked" &&
+        kapsoConnection.metadata.source === "kapso-onboarding" &&
+        !kapsoConnection.metadata.provisioningEventId &&
+        kapsoConnection.businessAccountId == null &&
+        phoneResolution.association === "same-customer" &&
+        evaluation.status === "passed";
+      if (
+        kapsoConnection.connectionType !== onboardingMode &&
+        !canCorrectBlockedMode
+      ) {
         throw new Error(
           "La Conexión de WhatsApp debe conservar su modalidad original",
         );
