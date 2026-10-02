@@ -7,6 +7,7 @@ import {
   appointmentEventTypes,
   appointmentOutboundEventTypes,
 } from "~/domain/appointment-events";
+import { evaluateWhatsAppSyntheticSmoke } from "~/domain/whatsapp-smoke";
 import { buildWhatsAppConsentPolicy } from "~/domain/whatsapp-consent";
 import { createSimulatedWhatsAppConnection } from "~/domain/whatsapp-connection";
 import type { WhatsAppInboundMessage } from "~/domain/whatsapp-inbound";
@@ -105,12 +106,143 @@ import {
   whatsappInboundMessages,
   whatsappInboundAlerts,
   whatsappInboundReplies,
+  whatsappSmokeRuns,
 } from "../db/schema";
 
 const databaseTest =
   process.env.RUN_DATABASE_INTEGRATION_TESTS === "true" ? it : it.skip;
 
 describe("Reserva simulada de WhatsApp persistente", () => {
+  databaseTest(
+    "correlaciona la entrega de una respuesta smoke por phone number ID",
+    async () => {
+      const fixture = await createFixture();
+      const now = new Date();
+      const smokeRunId = randomUUID();
+      const phoneNumberId = `phone-${randomUUID()}`;
+      const providerMessageId = `wamid-smoke-${randomUUID()}`;
+      const providerEventId = `kapso-event-${randomUUID()}`;
+      const idempotencyKey = `whatsapp-smoke:${smokeRunId}:reply`;
+      const timeoutAt = new Date(now.valueOf() + 5 * 60_000);
+      const smoke = evaluateWhatsAppSyntheticSmoke({
+        realPatientsEnabled: false,
+        requireRealRoundtrip: true,
+        steps: {
+          "real-processing": {
+            evidence: "Mensaje de prueba procesado",
+            eventId: `inbound-${smokeRunId}`,
+            observedAt: now,
+            passed: true,
+            source: "application",
+            status: "passed",
+          },
+          "real-reception": {
+            evidence: "Mensaje de prueba recibido",
+            eventId: `inbound-${smokeRunId}`,
+            observedAt: now,
+            passed: true,
+            source: "provider",
+            status: "passed",
+          },
+          "real-response": {
+            evidence: "Respuesta aceptada por Kapso",
+            eventId: `response-${smokeRunId}`,
+            observedAt: now,
+            passed: true,
+            source: "provider",
+            status: "passed",
+          },
+        },
+        syntheticContact: false,
+        testContactId: fixture.contactId,
+        testContactMaskedPhone: "••••0264",
+        timeoutAt,
+      });
+      try {
+        await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            await transaction
+              .update(whatsappConnections)
+              .set({
+                connectionType: "coexistence",
+                phoneNumberId,
+                provider: "kapso",
+              })
+              .where(eq(whatsappConnections.clinicId, fixture.clinicId));
+            await transaction.insert(whatsappSmokeRuns).values({
+              actorIdentityId: fixture.superadminIdentityId,
+              clinicId: fixture.clinicId,
+              id: smokeRunId,
+              providerTransportVerified: true,
+              realPatientsEnabled: false,
+              requiresRealRoundtrip: true,
+              startedAt: now,
+              status: "pending",
+              steps: smoke.steps,
+              syntheticContact: false,
+              testContactId: fixture.contactId,
+              testContactMaskedPhone: "••••0264",
+              timeoutAt,
+            });
+            await transaction.insert(whatsappInboundReplies).values({
+              clinicId: fixture.clinicId,
+              idempotencyKey,
+              nextAttemptAt: now,
+              providerMessageId,
+              recipientPhoneE164: fixture.contactPhone,
+              status: "accepted",
+              text: "Respuesta de prueba",
+            });
+          },
+        );
+
+        await drizzleTransactionalDeliveryCallbackStore.recordProviderCallback({
+          phoneNumberId,
+          providerEventId,
+          providerMessageId,
+          status: "delivered",
+        });
+
+        const state = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            await transaction.execute(
+              sql`select set_config('app.clinic_id', ${fixture.clinicId}, true)`,
+            );
+            const [reply] = await transaction
+              .select({ status: whatsappInboundReplies.status })
+              .from(whatsappInboundReplies)
+              .where(eq(whatsappInboundReplies.idempotencyKey, idempotencyKey));
+            const [run] = await transaction
+              .select({ steps: whatsappSmokeRuns.steps })
+              .from(whatsappSmokeRuns)
+              .where(eq(whatsappSmokeRuns.id, smokeRunId));
+            return {
+              deliveryStep: run?.steps.find(
+                (step) => step.code === "real-delivery",
+              ),
+              replyStatus: reply?.status,
+            };
+          },
+        );
+
+        expect(state.replyStatus).toBe("delivered");
+        expect(state.deliveryStep).toMatchObject({
+          eventId: providerEventId,
+          passed: true,
+          source: "provider",
+          status: "passed",
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
   databaseTest(
     "el consentimiento del Contacto cubre Pacientes futuros y Tutores pendientes vinculados, pero no Pacientes sin vínculo",
     async () => {
