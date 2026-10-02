@@ -16,6 +16,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import {
   appointmentReminderCheckpoints,
@@ -94,6 +95,14 @@ const LEASE_MS = 10 * 60_000;
 const RETAIN_MS = 365 * 24 * HOUR_MS;
 const REMINDER_CATCH_UP_MS = 15 * 60_000;
 const CIRCUIT_RETRY_DELAY_MS = 60_000;
+const transactionalDeliveryCallback = alias(
+  transactionalDeliveries,
+  "transactionalDeliveryCallback",
+);
+const whatsappInboundReplyCallback = alias(
+  whatsappInboundReplies,
+  "whatsappInboundReplyCallback",
+);
 
 export function shouldSuppressWhatsAppReminder(input: {
   hasCurrentConsent: boolean;
@@ -1899,13 +1908,18 @@ async function findDeliveryForCallback(
   const predicates = [
     ...(input.idempotencyKey === undefined || input.idempotencyKey === null
       ? []
-      : [eq(transactionalDeliveries.idempotencyKey, input.idempotencyKey)]),
+      : [
+          eq(
+            transactionalDeliveryCallback.idempotencyKey,
+            input.idempotencyKey,
+          ),
+        ]),
     ...(input.providerMessageId === undefined ||
     input.providerMessageId === null
       ? []
       : [
           eq(
-            transactionalDeliveries.providerMessageId,
+            transactionalDeliveryCallback.providerMessageId,
             input.providerMessageId,
           ),
         ]),
@@ -1920,7 +1934,7 @@ async function findDeliveryForCallback(
                 and(
                   eq(
                     whatsappConnections.clinicId,
-                    transactionalDeliveries.clinicId,
+                    transactionalDeliveryCallback.clinicId,
                   ),
                   eq(whatsappConnections.phoneNumberId, input.phoneNumberId),
                   eq(whatsappConnections.provider, "kapso"),
@@ -1930,21 +1944,23 @@ async function findDeliveryForCallback(
         ]),
   ];
   if (predicates.length === 0) return undefined;
-  return transaction.query.transactionalDeliveries.findFirst({
-    columns: {
-      clinicId: true,
-      deliveredAt: true,
-      id: true,
-      idempotencyKey: true,
-      kind: true,
-      lastError: true,
-      payload: true,
-      providerMessageId: true,
-      retainUntil: true,
-      status: true,
-    },
-    where: and(...predicates),
-  });
+  const [delivery] = await transaction
+    .select({
+      clinicId: transactionalDeliveryCallback.clinicId,
+      deliveredAt: transactionalDeliveryCallback.deliveredAt,
+      id: transactionalDeliveryCallback.id,
+      idempotencyKey: transactionalDeliveryCallback.idempotencyKey,
+      kind: transactionalDeliveryCallback.kind,
+      lastError: transactionalDeliveryCallback.lastError,
+      payload: transactionalDeliveryCallback.payload,
+      providerMessageId: transactionalDeliveryCallback.providerMessageId,
+      retainUntil: transactionalDeliveryCallback.retainUntil,
+      status: transactionalDeliveryCallback.status,
+    })
+    .from(transactionalDeliveryCallback)
+    .where(and(...predicates))
+    .limit(1);
+  return delivery;
 }
 
 async function findReplyForCallback(
@@ -1958,12 +1974,17 @@ async function findReplyForCallback(
   const predicates = [
     ...(input.idempotencyKey === undefined || input.idempotencyKey === null
       ? []
-      : [eq(whatsappInboundReplies.idempotencyKey, input.idempotencyKey)]),
+      : [
+          eq(whatsappInboundReplyCallback.idempotencyKey, input.idempotencyKey),
+        ]),
     ...(input.providerMessageId === undefined ||
     input.providerMessageId === null
       ? []
       : [
-          eq(whatsappInboundReplies.providerMessageId, input.providerMessageId),
+          eq(
+            whatsappInboundReplyCallback.providerMessageId,
+            input.providerMessageId,
+          ),
         ]),
     ...(input.phoneNumberId === undefined || input.phoneNumberId === null
       ? []
@@ -1976,7 +1997,7 @@ async function findReplyForCallback(
                 and(
                   eq(
                     whatsappConnections.clinicId,
-                    whatsappInboundReplies.clinicId,
+                    whatsappInboundReplyCallback.clinicId,
                   ),
                   eq(whatsappConnections.phoneNumberId, input.phoneNumberId),
                   eq(whatsappConnections.provider, "kapso"),
@@ -1988,17 +2009,18 @@ async function findReplyForCallback(
   if (predicates.length === 0) return undefined;
   const [reply] = await transaction
     .select({
-      buttonLabel: whatsappInboundReplies.buttonLabel,
-      clinicId: whatsappInboundReplies.clinicId,
-      id: whatsappInboundReplies.id,
-      idempotencyKey: whatsappInboundReplies.idempotencyKey,
-      lastProviderEventId: whatsappInboundReplies.lastProviderEventId,
-      providerMessageId: whatsappInboundReplies.providerMessageId,
-      sentAt: whatsappInboundReplies.sentAt,
-      status: whatsappInboundReplies.status,
+      buttonLabel: whatsappInboundReplyCallback.buttonLabel,
+      clinicId: whatsappInboundReplyCallback.clinicId,
+      id: whatsappInboundReplyCallback.id,
+      idempotencyKey: whatsappInboundReplyCallback.idempotencyKey,
+      lastProviderEventId: whatsappInboundReplyCallback.lastProviderEventId,
+      providerMessageId: whatsappInboundReplyCallback.providerMessageId,
+      sentAt: whatsappInboundReplyCallback.sentAt,
+      status: whatsappInboundReplyCallback.status,
     })
-    .from(whatsappInboundReplies)
+    .from(whatsappInboundReplyCallback)
     .where(and(...predicates))
+    .limit(1)
     .for("update");
   return reply;
 }
