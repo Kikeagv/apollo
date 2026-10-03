@@ -122,6 +122,7 @@ describe("fichas administrativas persistentes", () => {
               birthDate: "2018-04-03",
               contactIds: [contact.id],
               id: patient.id,
+              isTest: false,
               name: "Lucía Reyes",
             },
           ],
@@ -335,6 +336,7 @@ describe("fichas administrativas persistentes", () => {
               birthDate: "1990-04-02",
               contactIds: [registered.contact.id],
               id: registered.patient.id,
+              isTest: false,
               name: "Lucía Inline",
             },
           ],
@@ -386,6 +388,7 @@ describe("fichas administrativas persistentes", () => {
               birthDate: "1990-04-02",
               contactIds: [registered.contact.id],
               id: registered.patient.id,
+              isTest: false,
               name: "Lucía Inline",
             },
           ],
@@ -722,6 +725,7 @@ describe("fichas administrativas persistentes", () => {
             contact: { contactId: initialContact.id, kind: "existing" },
             guardianDui: "01234567-8",
             identityId: fixture.primary.identityId,
+            isTest: true,
             patientName: "Lucía Martínez",
             relationship: "tutor",
           },
@@ -783,6 +787,26 @@ describe("fichas administrativas persistentes", () => {
         await expect(
           outboundDecision(registration.contact.id),
         ).resolves.toMatchObject({ decision: "allowed" });
+        const superadminTemplateDecision = await inSuperadminTransaction(
+          fixture.superadminIdentityId,
+          async (transaction) => {
+            expect(
+              await setWhatsAppWorkerClinicContext(
+                transaction,
+                fixture.primary.clinicId,
+              ),
+            ).toBe(true);
+            return readWhatsAppConsentSnapshot(transaction, {
+              clinicId: fixture.primary.clinicId,
+              contactId: registration.contact.id,
+              now,
+              patientId: registration.patient.id,
+            });
+          },
+        );
+        expect(superadminTemplateDecision).toMatchObject({
+          decision: "allowed",
+        });
         await expect(
           outboundDecision(otherContact.contact.id),
         ).resolves.toMatchObject({ decision: "blocked" });
@@ -905,6 +929,7 @@ async function createFixture() {
     other,
     primary,
     secretary,
+    superadminIdentityId: identitiesByRole.superadmin,
     async cleanup() {
       for (const { clinicId } of [primary, other]) {
         await inSuperadminTransaction(

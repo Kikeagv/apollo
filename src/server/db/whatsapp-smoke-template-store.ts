@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import { evaluateWhatsAppRealTraffic } from "~/domain/whatsapp-traffic";
 import { recordWhatsAppSyntheticSmokeStep } from "~/domain/whatsapp-smoke";
@@ -28,6 +28,8 @@ import {
   apoloSuperadmins,
   clinics,
   contacts,
+  contactPatientLinks,
+  patients,
   whatsappCircuitBreakers,
   whatsappConnections,
   whatsappCriticalTemplates,
@@ -49,7 +51,11 @@ export const drizzleWhatsAppTemplateSmokeStore: WhatsAppTemplateSmokeStore = {
       input.actorIdentityId,
       async (transaction) => {
         await lockWhatsAppCircuit(transaction, input.clinicId);
-        await setClinicContext(transaction, input.clinicId);
+        if (
+          !(await setWhatsAppWorkerClinicContext(transaction, input.clinicId))
+        ) {
+          throw new Error("La Clínica no tiene una suscripción activa");
+        }
 
         const [clinic, connection, readiness, circuit] = await Promise.all([
           transaction.query.clinics.findFirst({
@@ -150,7 +156,7 @@ export const drizzleWhatsAppTemplateSmokeStore: WhatsAppTemplateSmokeStore = {
           clinicId: input.clinicId,
           contactId: latest.testContactId,
           now: input.now,
-          patientId: null,
+          patientId: contact.patientId,
         });
         const acceptedAt = consent.acceptedAt;
         if (consent.decision !== "allowed" || acceptedAt === null) {
@@ -466,18 +472,21 @@ export async function recordSmokeTemplateOutcome(
       ),
     ),
   });
+  let contactStillControlled = true;
+  let contactPatientId: string | null = null;
+  try {
+    contactPatientId = (
+      await readSmokeContact(transaction, clinicId, latest.testContactId)
+    ).patientId;
+  } catch {
+    contactStillControlled = false;
+  }
   const consent = await readWhatsAppConsentSnapshot(transaction, {
     clinicId,
     contactId: latest.testContactId,
     now: input.now,
-    patientId: null,
+    patientId: contactPatientId,
   });
-  let contactStillControlled = true;
-  try {
-    await readSmokeContact(transaction, clinicId, latest.testContactId);
-  } catch {
-    contactStillControlled = false;
-  }
   const consentStillMatches = isCapturedConsentCurrent(step, consent);
   const callbackStatus =
     input.status === "failed" ||
@@ -660,12 +669,15 @@ async function enableRealTrafficAfterTemplateDelivery(
   ) {
     return;
   }
+  let contactPatientId: string;
   try {
-    await readSmokeContact(
-      transaction,
-      input.clinicId,
-      input.run.testContactId,
-    );
+    contactPatientId = (
+      await readSmokeContact(
+        transaction,
+        input.clinicId,
+        input.run.testContactId,
+      )
+    ).patientId;
   } catch {
     return;
   }
@@ -676,7 +688,7 @@ async function enableRealTrafficAfterTemplateDelivery(
     clinicId: input.clinicId,
     contactId: input.run.testContactId,
     now: input.now,
-    patientId: null,
+    patientId: contactPatientId,
   });
   if (
     deliveryStep === undefined ||
@@ -775,7 +787,31 @@ async function readSmokeContact(
   if (!eligible) {
     throw new Error("El Contacto de prueba está vinculado a un Paciente real");
   }
-  return { phoneE164: contact.phoneE164 };
+  const [testPatient] = await transaction
+    .select({ id: patients.id })
+    .from(contactPatientLinks)
+    .innerJoin(
+      patients,
+      and(
+        eq(patients.clinicId, contactPatientLinks.clinicId),
+        eq(patients.id, contactPatientLinks.patientId),
+        eq(patients.isTest, true),
+      ),
+    )
+    .where(
+      and(
+        eq(contactPatientLinks.clinicId, clinicId),
+        eq(contactPatientLinks.contactId, contactId),
+      ),
+    )
+    .orderBy(asc(patients.id))
+    .limit(1);
+  if (testPatient === undefined) {
+    throw new Error(
+      "El Contacto de prueba debe estar vinculado a un Paciente de prueba para recibir la plantilla",
+    );
+  }
+  return { patientId: testPatient.id, phoneE164: contact.phoneE164 };
 }
 
 function hasCompletedInboundRoundtrip(
@@ -860,13 +896,4 @@ function smokeTemplateName(run: typeof whatsappSmokeRuns.$inferSelect) {
     (candidate) => candidate.code === TEMPLATE_DELIVERY_CODE,
   );
   return step?.templateName ?? null;
-}
-
-async function setClinicContext(
-  transaction: ClinicTransaction,
-  clinicId: string,
-) {
-  await transaction.execute(
-    sql`select set_config('app.clinic_id', ${clinicId}, true)`,
-  );
 }
