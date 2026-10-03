@@ -24,6 +24,7 @@ export type TransactionalDeliveryStatusEvent = {
   idempotencyKey: string;
   leaseToken: string | null;
   payload: Record<string, unknown>;
+  receivedAt: Date;
   status: "pending" | "processing";
 };
 
@@ -77,6 +78,7 @@ export async function runTransactionalDeliveryStatusWorker(
           ? {}
           : { idempotencyKey: status.correlationKey }),
         phoneNumberId: status.phoneNumberId,
+        providerEventReceivedAt: event.receivedAt,
         providerMessageId: status.messageId,
         providerEventId: event.id,
         ...(status.error === null ? {} : { error: status.error }),

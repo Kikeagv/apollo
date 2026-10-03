@@ -138,6 +138,7 @@ export type TransactionalDeliveryCallbackStore = {
     phoneNumberId?: string | null;
     providerMessageId?: string | null;
     providerEventId?: string | null;
+    providerEventReceivedAt?: Date;
     error?: string | null;
     status: "accepted" | "sent" | "delivered" | "read" | "failed";
   }): Promise<TransactionalDeliveryCallbackObservation | void>;

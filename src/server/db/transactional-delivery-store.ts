@@ -525,6 +525,8 @@ export const drizzleTransactionalDeliveryCallbackStore: TransactionalDeliveryCal
             now: callbackNow,
             phoneNumberId: input.phoneNumberId ?? null,
             providerEventId: input.providerEventId,
+            providerEventReceivedAt:
+              input.providerEventReceivedAt ?? callbackNow,
             providerMessageId: input.providerMessageId,
             status: input.status === "accepted" ? "sent" : input.status,
             error: input.error,
@@ -728,6 +730,7 @@ export const drizzleTransactionalDeliveryStatusStore: TransactionalDeliveryStatu
             idempotencyKey: event.idempotencyKey,
             leaseToken: event.leaseToken,
             payload: event.payload,
+            receivedAt: event.receivedAt,
             status: "processing",
           });
         }

@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import { evaluateWhatsAppRealTraffic } from "~/domain/whatsapp-traffic";
-import { recordWhatsAppSyntheticSmokeStep } from "~/domain/whatsapp-smoke";
+import {
+  isWhatsAppSmokeCallbackWithinDeadline,
+  recordWhatsAppSyntheticSmokeStep,
+} from "~/domain/whatsapp-smoke";
 import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
 import { isWhatsAppSmokeContactEligibleInTransaction } from "~/server/db/whatsapp-smoke-contact";
@@ -374,6 +377,7 @@ export async function recordSmokeTemplateOutcome(
     now: Date;
     phoneNumberId: string | null;
     providerEventId?: string | null;
+    providerEventReceivedAt: Date;
     providerMessageId?: string | null;
     status: "sent" | "delivered" | "read" | "failed";
     error?: string | null;
@@ -432,8 +436,10 @@ export async function recordSmokeTemplateOutcome(
   );
   if (
     latest?.testContactId == null ||
-    latest.timeoutAt === null ||
-    latest.timeoutAt <= input.now ||
+    !isWhatsAppSmokeCallbackWithinDeadline({
+      receivedAt: input.providerEventReceivedAt,
+      timeoutAt: latest.timeoutAt,
+    }) ||
     latest.provisioningEventId === null ||
     connection.metadata.provisioningEventId !== latest.provisioningEventId
   ) {
@@ -516,7 +522,7 @@ export async function recordSmokeTemplateOutcome(
         ? `Kapso confirmó fallo de entrega de la plantilla ${templateName}`
         : `Kapso confirmó ${input.status === "read" ? "lectura" : "entrega"} de la plantilla ${templateName}`,
     message: failureMessage,
-    observedAt: input.now,
+    observedAt: input.providerEventReceivedAt,
     source: "provider",
     status: callbackStatus,
     attemptId,
@@ -550,6 +556,7 @@ export async function recordSmokeTemplateOutcome(
   await enableRealTrafficAfterTemplateDelivery(transaction, {
     clinicId,
     now: input.now,
+    providerEventReceivedAt: input.providerEventReceivedAt,
     run: latest,
     result,
     templateKind,
@@ -566,6 +573,7 @@ async function enableRealTrafficAfterTemplateDelivery(
   input: {
     clinicId: string;
     now: Date;
+    providerEventReceivedAt: Date;
     run: typeof whatsappSmokeRuns.$inferSelect;
     result: ReturnType<typeof smokeResultFromRow>;
     templateKind: WhatsAppCriticalTemplateKind;
@@ -663,8 +671,10 @@ async function enableRealTrafficAfterTemplateDelivery(
     superadmin === undefined ||
     circuit?.status !== "closed" ||
     input.run.testContactId === null ||
-    input.run.timeoutAt === null ||
-    input.run.timeoutAt <= input.now ||
+    !isWhatsAppSmokeCallbackWithinDeadline({
+      receivedAt: input.providerEventReceivedAt,
+      timeoutAt: input.run.timeoutAt,
+    }) ||
     !hasCompletedInboundRoundtrip(input.run.steps)
   ) {
     return;

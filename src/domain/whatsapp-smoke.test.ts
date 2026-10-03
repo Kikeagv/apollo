@@ -4,6 +4,7 @@ import {
   evaluateWhatsAppSyntheticSmoke,
   expireWhatsAppSyntheticSmoke,
   hasWhatsAppSmokeChallengePrefix,
+  isWhatsAppSmokeCallbackWithinDeadline,
   isWhatsAppSmokeRunAwaitingInbound,
   isWhatsAppSmokeRunAwaitingReply,
   parseWhatsAppSmokeChallenge,
@@ -526,6 +527,23 @@ describe("smoke sintético de WhatsApp", () => {
       status: "failed",
     });
     expect(timedOut.timedOutAt).toEqual(new Date("2026-09-25T12:05:00.000Z"));
+  });
+
+  it("cuenta un callback recibido antes del límite aunque se procese después", () => {
+    const timeoutAt = new Date("2026-10-03T20:00:15.272Z");
+    const receivedAt = new Date("2026-10-03T19:55:24.042Z");
+    const processedAt = new Date("2026-10-03T20:01:06.548Z");
+
+    expect(processedAt.valueOf()).toBeGreaterThan(timeoutAt.valueOf());
+    expect(
+      isWhatsAppSmokeCallbackWithinDeadline({ receivedAt, timeoutAt }),
+    ).toBe(true);
+    expect(
+      isWhatsAppSmokeCallbackWithinDeadline({
+        receivedAt: timeoutAt,
+        timeoutAt,
+      }),
+    ).toBe(false);
   });
 
   it("falla si Kapso reporta delivery fallido aunque la respuesta fuera aceptada", () => {

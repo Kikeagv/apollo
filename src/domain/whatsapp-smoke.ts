@@ -634,6 +634,16 @@ export function expireWhatsAppSyntheticSmoke(
   });
 }
 
+export function isWhatsAppSmokeCallbackWithinDeadline(input: {
+  receivedAt: Date;
+  timeoutAt: Date | null;
+}) {
+  return (
+    input.timeoutAt !== null &&
+    input.receivedAt.valueOf() < input.timeoutAt.valueOf()
+  );
+}
+
 /** Redacta secretos antes de que el resultado llegue a UI, auditoría o JSONB. */
 export function sanitizeWhatsAppSyntheticSmokeResult(
   result: WhatsAppSyntheticSmokeResult,

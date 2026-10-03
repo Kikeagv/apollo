@@ -18,6 +18,7 @@ describe("worker de estados de Entrega transaccional", () => {
         message: { id: "wamid-1" },
         phone_number_id: "phone-1",
       },
+      receivedAt: new Date("2026-09-09T12:00:00.000Z"),
       status: "processing" as const,
     };
     const queue = {
@@ -39,6 +40,7 @@ describe("worker de estados de Entrega transaccional", () => {
     expect(callback).toHaveBeenCalledWith({
       idempotencyKey: "appointment-1:24h:contact-1",
       phoneNumberId: "phone-1",
+      providerEventReceivedAt: new Date("2026-09-09T12:00:00.000Z"),
       providerEventId: "event-1",
       providerMessageId: "wamid-1",
       status: "delivered",
@@ -61,6 +63,7 @@ describe("worker de estados de Entrega transaccional", () => {
         message: { id: "wamid-1" },
         phone_number_id: "phone-1",
       },
+      receivedAt: new Date("2026-09-09T12:00:00.000Z"),
       status: "processing" as const,
     };
     const queue = {
@@ -79,10 +82,44 @@ describe("worker de estados de Entrega transaccional", () => {
 
     expect(callback).toHaveBeenCalledWith({
       phoneNumberId: "phone-1",
+      providerEventReceivedAt: new Date("2026-09-09T12:00:00.000Z"),
       providerEventId: "event-1",
       providerMessageId: "wamid-1",
       status: "sent",
     });
+  });
+
+  it("conserva la hora de recepción si el worker procesa el acuse después del timeout", async () => {
+    const receivedAt = new Date("2026-10-03T19:55:24.042Z");
+    const processedAt = new Date("2026-10-03T20:01:06.548Z");
+    const event = {
+      attempts: 1,
+      eventName: "whatsapp.message.delivered",
+      id: "template-delivery-event",
+      idempotencyKey: "kapso-event-1",
+      leaseToken: "lease-1",
+      payload: {
+        message: { id: "wamid-template-smoke" },
+        phone_number_id: "phone-1",
+      },
+      receivedAt,
+      status: "processing" as const,
+    };
+    const queue = {
+      claimDueStatusEvents: vi.fn().mockResolvedValue([event]),
+      markStatusProcessed: vi.fn().mockResolvedValue(undefined),
+      markStatusRejected: vi.fn(),
+      scheduleStatusRetry: vi.fn(),
+    };
+    const callback = vi.fn().mockResolvedValue(undefined);
+
+    await runTransactionalDeliveryStatusWorker({ now: processedAt }, queue, {
+      recordProviderCallback: callback,
+    });
+
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({ providerEventReceivedAt: receivedAt }),
+    );
   });
 
   it("publica el estado persistido como métrica operacional", async () => {
@@ -96,6 +133,7 @@ describe("worker de estados de Entrega transaccional", () => {
         message: { id: "wamid-1" },
         phone_number_id: "phone-1",
       },
+      receivedAt: new Date("2026-09-09T12:00:00.000Z"),
       status: "processing" as const,
     };
     const queue = {
@@ -151,6 +189,7 @@ describe("worker de estados de Entrega transaccional", () => {
         message: { id: "wamid-read-1" },
         phone_number_id: "phone-1",
       },
+      receivedAt: new Date("2026-09-09T12:00:00.000Z"),
       status: "processing" as const,
     };
     const queue = {
@@ -202,6 +241,7 @@ describe("worker de estados de Entrega transaccional", () => {
             message: { id: "wamid-1" },
             phone_number_id: "phone-1",
           },
+          receivedAt: new Date("2026-09-09T12:00:00.000Z"),
           status: "processing" as const,
         },
       ]),
@@ -237,6 +277,7 @@ describe("worker de estados de Entrega transaccional", () => {
         message: { id: "wamid-1" },
         phone_number_id: "phone-1",
       },
+      receivedAt: new Date("2026-09-09T12:00:00.000Z"),
       status: "processing" as const,
     };
     const queue = {
@@ -310,6 +351,7 @@ describe("worker de estados de Entrega transaccional", () => {
             message: { id: "wamid-1" },
             phone_number_id: "phone-1",
           },
+          receivedAt: new Date("2026-09-09T12:00:00.000Z"),
           status: "processing" as const,
         },
       ]),
@@ -347,6 +389,7 @@ describe("worker de estados de Entrega transaccional", () => {
             message: { id: "wamid-1" },
             phone_number_id: "phone-1",
           },
+          receivedAt: new Date("2026-09-09T12:00:00.000Z"),
           status: "processing" as const,
         },
       ]),
