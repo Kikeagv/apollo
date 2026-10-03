@@ -26,9 +26,9 @@ import {
 } from "~/server/db/clinic-context";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
 import { isActiveControlledSmokeReply } from "~/server/db/whatsapp-smoke-circuit-exception";
+import { isWhatsAppSmokeContactEligibleInTransaction } from "~/server/db/whatsapp-smoke-contact";
 import {
   clinicUsers,
-  contactPatientLinks,
   contacts,
   whatsappConnections,
   whatsappCircuitBreakers,
@@ -108,7 +108,7 @@ export async function requireWhatsAppSmokeTemplateConsent(input: {
       ) {
         return false;
       }
-      const [contact, patientLink] = await Promise.all([
+      const [contact, smokeContactIsEligible] = await Promise.all([
         transaction.query.contacts.findFirst({
           columns: { phoneE164: true },
           where: and(
@@ -116,23 +116,19 @@ export async function requireWhatsAppSmokeTemplateConsent(input: {
             eq(contacts.id, input.contactId),
           ),
         }),
-        transaction.query.contactPatientLinks.findFirst({
-          columns: { id: true },
-          where: and(
-            eq(contactPatientLinks.clinicId, input.clinicId),
-            eq(contactPatientLinks.contactId, input.contactId),
-          ),
+        isWhatsAppSmokeContactEligibleInTransaction(transaction, {
+          clinicId: input.clinicId,
+          contactId: input.contactId,
         }),
       ]);
       const consent = await readWhatsAppConsentSnapshot(transaction, {
         clinicId: input.clinicId,
         contactId: input.contactId,
         now: input.now,
-        patientId: null,
       });
       return (
         contact?.phoneE164 === input.phoneE164 &&
-        patientLink === undefined &&
+        smokeContactIsEligible &&
         consent.decision === "allowed" &&
         consent.reference === input.consentEvidence.reference &&
         consent.acceptedAt?.valueOf() ===

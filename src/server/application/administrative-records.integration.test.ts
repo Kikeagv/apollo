@@ -30,6 +30,7 @@ import {
   setWhatsAppWorkerClinicContext,
 } from "../db/clinic-context";
 import { readWhatsAppConsentSnapshot } from "../db/whatsapp-consent-query";
+import { requireWhatsAppSmokeTemplateConsent } from "../db/whatsapp-connection-store";
 import {
   drizzleAdministrativeRecordsStore,
   TutorOnlyForMinorPatientError,
@@ -850,6 +851,101 @@ describe("fichas administrativas persistentes", () => {
             }),
           ),
         ).rejects.toMatchObject({ cause: { code: "42501" } });
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  databaseTest(
+    "revalida el consentimiento de un Contacto vinculado solo a Pacientes de prueba para el smoke de plantilla",
+    async () => {
+      const fixture = await createFixture();
+      try {
+        const registration = await registerPatient(
+          {
+            birthDate: "2018-04-02",
+            clinicId: fixture.primary.clinicId,
+            contact: {
+              kind: "new",
+              name: "Contacto de prueba de plantilla",
+              phone: "+50370000002",
+            },
+            guardianDui: "01234567-8",
+            identityId: fixture.primary.identityId,
+            isTest: true,
+            patientName: "Paciente de prueba de plantilla",
+            relationship: "tutor",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        const consent = await inClinicTransaction(
+          fixture.primary,
+          (transaction) =>
+            transaction.query.whatsappContactConsents.findFirst({
+              where: and(
+                eq(whatsappContactConsents.clinicId, fixture.primary.clinicId),
+                eq(whatsappContactConsents.contactId, registration.contact.id),
+              ),
+              orderBy: [
+                desc(whatsappContactConsents.acceptedAt),
+                desc(whatsappContactConsents.createdAt),
+              ],
+            }),
+        );
+        if (consent === undefined || registration.contact.phoneE164 === null) {
+          throw new Error("Falta la evidencia del Contacto de prueba");
+        }
+
+        await expect(
+          requireWhatsAppSmokeTemplateConsent({
+            clinicId: fixture.primary.clinicId,
+            contactId: registration.contact.id,
+            consentEvidence: {
+              acceptedAt: consent.acceptedAt,
+              privacyVersion: consent.privacyVersion,
+              reference: consent.id,
+              termsVersion: consent.termsVersion,
+              textReference: consent.textReference,
+            },
+            now: new Date(Date.now() + 10_000),
+            phoneE164: registration.contact.phoneE164,
+          }),
+        ).resolves.toBeUndefined();
+
+        const realPatient = await createPatient(
+          {
+            birthDate: "1980-04-02",
+            clinicId: fixture.primary.clinicId,
+            identityId: fixture.primary.identityId,
+            name: "Paciente real no elegible para smoke",
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        await createContactPatientLink(
+          {
+            clinicId: fixture.primary.clinicId,
+            contactId: registration.contact.id,
+            identityId: fixture.primary.identityId,
+            patientId: realPatient.id,
+          },
+          drizzleAdministrativeRecordsStore,
+        );
+        await expect(
+          requireWhatsAppSmokeTemplateConsent({
+            clinicId: fixture.primary.clinicId,
+            contactId: registration.contact.id,
+            consentEvidence: {
+              acceptedAt: consent.acceptedAt,
+              privacyVersion: consent.privacyVersion,
+              reference: consent.id,
+              termsVersion: consent.termsVersion,
+              textReference: consent.textReference,
+            },
+            now: new Date(Date.now() + 10_000),
+            phoneE164: registration.contact.phoneE164,
+          }),
+        ).rejects.toMatchObject({ realTrafficBlocked: true });
       } finally {
         await fixture.cleanup();
       }
