@@ -29,7 +29,6 @@ import {
 } from "~/server/db/whatsapp-smoke-run-store";
 import {
   apoloAuditEvents,
-  apoloSuperadmins,
   clinics,
   contacts,
   contactPatientLinks,
@@ -603,49 +602,61 @@ async function enableRealTrafficAfterTemplateDelivery(
   if (input.run.provisioningEventId === null || input.phoneNumberId === null) {
     return;
   }
-  const [clinic, connection, readiness, circuit, template, superadmin] =
-    await Promise.all([
-      transaction.query.clinics.findFirst({
-        columns: { isSynthetic: true },
-        where: eq(clinics.id, input.clinicId),
-      }),
-      transaction.query.whatsappConnections.findFirst({
-        where: eq(whatsappConnections.clinicId, input.clinicId),
-      }),
-      transaction.query.whatsappReadiness.findFirst({
-        where: eq(whatsappReadiness.clinicId, input.clinicId),
-      }),
-      transaction.query.whatsappCircuitBreakers.findFirst({
-        columns: { status: true },
-        where: eq(whatsappCircuitBreakers.clinicId, input.clinicId),
-      }),
-      transaction.query.whatsappCriticalTemplates.findFirst({
-        where: and(
-          eq(whatsappCriticalTemplates.clinicId, input.clinicId),
-          eq(whatsappCriticalTemplates.kind, input.templateKind),
-          eq(whatsappCriticalTemplates.name, input.templateName),
-          eq(
-            whatsappCriticalTemplates.providerTemplateId,
-            input.providerTemplateId,
-          ),
-          eq(
-            whatsappCriticalTemplates.catalogVersion,
-            input.templateCatalogVersion,
-          ),
-          eq(whatsappCriticalTemplates.status, "APPROVED"),
-          eq(whatsappCriticalTemplates.category, "UTILITY"),
-          eq(whatsappCriticalTemplates.provisioningStatus, "approved"),
-          eq(
-            whatsappCriticalTemplates.provisioningEventId,
-            input.run.provisioningEventId,
-          ),
+  await transaction.execute(
+    sql`select set_config('app.superadmin_id', ${input.run.actorIdentityId}, true)`,
+  );
+  await transaction.execute(
+    sql`select set_config('app.whatsapp_template_delivery_worker', 'true', true)`,
+  );
+  const [
+    clinic,
+    connection,
+    readiness,
+    circuit,
+    template,
+    superadminAuthorization,
+  ] = await Promise.all([
+    transaction.query.clinics.findFirst({
+      columns: { isSynthetic: true },
+      where: eq(clinics.id, input.clinicId),
+    }),
+    transaction.query.whatsappConnections.findFirst({
+      where: eq(whatsappConnections.clinicId, input.clinicId),
+    }),
+    transaction.query.whatsappReadiness.findFirst({
+      where: eq(whatsappReadiness.clinicId, input.clinicId),
+    }),
+    transaction.query.whatsappCircuitBreakers.findFirst({
+      columns: { status: true },
+      where: eq(whatsappCircuitBreakers.clinicId, input.clinicId),
+    }),
+    transaction.query.whatsappCriticalTemplates.findFirst({
+      where: and(
+        eq(whatsappCriticalTemplates.clinicId, input.clinicId),
+        eq(whatsappCriticalTemplates.kind, input.templateKind),
+        eq(whatsappCriticalTemplates.name, input.templateName),
+        eq(
+          whatsappCriticalTemplates.providerTemplateId,
+          input.providerTemplateId,
         ),
-      }),
-      transaction.query.apoloSuperadmins.findFirst({
-        columns: { identityId: true },
-        where: eq(apoloSuperadmins.identityId, input.run.actorIdentityId),
-      }),
-    ]);
+        eq(
+          whatsappCriticalTemplates.catalogVersion,
+          input.templateCatalogVersion,
+        ),
+        eq(whatsappCriticalTemplates.status, "APPROVED"),
+        eq(whatsappCriticalTemplates.category, "UTILITY"),
+        eq(whatsappCriticalTemplates.provisioningStatus, "approved"),
+        eq(
+          whatsappCriticalTemplates.provisioningEventId,
+          input.run.provisioningEventId,
+        ),
+      ),
+    }),
+    transaction.execute<{ authorized: boolean }>(
+      sql`select public.apolo_whatsapp_template_delivery_actor_authorized() as authorized`,
+    ),
+  ]);
+  const superadminAuthorized = superadminAuthorization[0]?.authorized === true;
   const currentGeneration = connection?.metadata.provisioningEventId ?? null;
   const templateDeliveryVerified =
     input.result.steps.find((step) => step.code === TEMPLATE_DELIVERY_CODE)
@@ -685,7 +696,7 @@ async function enableRealTrafficAfterTemplateDelivery(
     readiness.provisioningEventId !== currentGeneration ||
     readiness.phoneNumberId !== connection.phoneNumberId ||
     template === undefined ||
-    superadmin === undefined ||
+    !superadminAuthorized ||
     circuit?.status !== "closed" ||
     input.run.testContactId === null ||
     !isWhatsAppSmokeCallbackWithinDeadline({
@@ -727,9 +738,6 @@ async function enableRealTrafficAfterTemplateDelivery(
     return;
   }
 
-  await transaction.execute(
-    sql`select set_config('app.whatsapp_template_delivery_worker', 'true', true)`,
-  );
   const [updated] = await transaction
     .update(whatsappConnections)
     .set({
