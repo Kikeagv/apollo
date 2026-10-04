@@ -897,6 +897,13 @@
       "when": 1791050000000,
       "tag": "0132_apo118_template_delivery_actor_authorization",
       "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1791080331000,
+      "tag": "0133_apo118_template_delivery_connection_guard",
+      "breakpoints": true
     }
   ]
 }

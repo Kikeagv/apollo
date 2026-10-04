@@ -52,6 +52,51 @@ describe("autorización de entrega de plantilla de WhatsApp", () => {
             insert into public."pg-drizzle_superadmin" (identity_id)
             values (${identityId})
           `;
+          const [clinic] = await migrated<Array<{ id: string }>>`
+            insert into public."pg-drizzle_clinic" (name, is_synthetic)
+            values ('Clínica de prueba APO-118', false)
+            returning id
+          `;
+          if (!clinic) throw new Error("No se creó la Clínica de prueba");
+          const phoneNumberId = `apo-118-${randomUUID()}`;
+          await migrated`
+            insert into public."pg-drizzle_whatsapp_connection" (
+              clinic_id,
+              provider,
+              status,
+              connection_type,
+              customer,
+              phone_number_id
+            ) values (
+              ${clinic.id}, 'kapso', 'ready', 'coexistence',
+              ${`apo-118:${randomUUID()}`}, ${phoneNumberId}
+            )
+          `;
+          const [connectionBeforeActivation] = await migrated<
+            Array<{
+              clinic_id: string;
+              status: string;
+              provider: string;
+              phone_number_id: string | null;
+              real_traffic_status: string;
+            }>
+          >`
+            select
+              clinic_id,
+              status,
+              provider,
+              phone_number_id,
+              real_traffic_status
+            from public."pg-drizzle_whatsapp_connection"
+            where clinic_id = ${clinic.id}
+          `;
+          expect(connectionBeforeActivation).toEqual({
+            clinic_id: clinic.id,
+            status: "ready",
+            provider: "kapso",
+            phone_number_id: phoneNumberId,
+            real_traffic_status: "blocked",
+          });
 
           const [tableAccess] = await migrated<
             Array<{ can_read_superadmins: boolean }>
@@ -123,6 +168,83 @@ describe("autorización de entrega de plantilla de WhatsApp", () => {
               return authorization?.authorized;
             }),
           ).resolves.toBe(false);
+
+          const updateConnectionAsTemplateWorker = (
+            actorId: string,
+            mutatePhoneNumber = false,
+          ) =>
+            migrated.begin(async (transaction) => {
+              await transaction`
+                select set_config('app.clinic_id', ${clinic.id}, true)
+              `;
+              await transaction`
+                select set_config('app.whatsapp_outbound_worker', 'true', true)
+              `;
+              await transaction`
+                select set_config(
+                  'app.whatsapp_template_delivery_worker', 'true', true
+                )
+              `;
+              await transaction`
+                select set_config('app.superadmin_id', ${actorId}, true)
+              `;
+              const rows = mutatePhoneNumber
+                ? await transaction<Array<{ clinic_id: string }>>`
+                    update public."pg-drizzle_whatsapp_connection"
+                    set real_traffic_status = 'enabled',
+                        real_traffic_enabled_at = now(),
+                        real_traffic_enabled_by_identity_id = ${actorId},
+                        phone_number_e164 = '+15555550199',
+                        updated_at = now()
+                    where clinic_id = ${clinic.id}
+                      and provider = 'kapso'
+                      and status = 'ready'
+                      and phone_number_id = ${phoneNumberId}
+                      and real_traffic_status = 'blocked'
+                    returning clinic_id
+                  `
+                : await transaction<Array<{ clinic_id: string }>>`
+                    update public."pg-drizzle_whatsapp_connection"
+                    set real_traffic_status = 'enabled',
+                        real_traffic_enabled_at = now(),
+                        real_traffic_enabled_by_identity_id = ${actorId},
+                        updated_at = now()
+                    where clinic_id = ${clinic.id}
+                      and provider = 'kapso'
+                      and status = 'ready'
+                      and phone_number_id = ${phoneNumberId}
+                      and real_traffic_status = 'blocked'
+                    returning clinic_id
+                  `;
+              return rows[0]?.clinic_id;
+            });
+
+          await expect(
+            updateConnectionAsTemplateWorker(
+              `not-a-superadmin-${randomUUID()}`,
+            ),
+          ).rejects.toThrow();
+          await expect(
+            updateConnectionAsTemplateWorker(identityId, true),
+          ).rejects.toThrow(/entrega de plantilla.*tráfico real autorizado/i);
+          await expect(
+            updateConnectionAsTemplateWorker(identityId),
+          ).resolves.toBe(clinic.id);
+
+          const [connectionState] = await migrated<
+            Array<{
+              real_traffic_status: string;
+              phone_number_e164: string | null;
+            }>
+          >`
+            select real_traffic_status, phone_number_e164
+            from public."pg-drizzle_whatsapp_connection"
+            where clinic_id = ${clinic.id}
+          `;
+          expect(connectionState).toEqual({
+            real_traffic_status: "enabled",
+            phone_number_e164: null,
+          });
         } finally {
           await migrated.end();
         }
