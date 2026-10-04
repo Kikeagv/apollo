@@ -36,6 +36,33 @@ describe("eventos de estado de Entrega de Kapso", () => {
     });
   });
 
+  it("extrae la correlación opaca de los status anidados del envelope de Kapso", () => {
+    expect(
+      parseKapsoDeliveryStatusPayload("whatsapp.message.delivered", {
+        message: {
+          id: "wamid-template-1",
+          kapso: {
+            origin: "cloud_api",
+            statuses: [
+              {
+                biz_opaque_callback_data:
+                  "whatsapp-smoke:run-1:template:attempt-1",
+                id: "wamid-template-1",
+                status: "delivered",
+              },
+            ],
+          },
+        },
+        phone_number_id: "phone-1",
+      }),
+    ).toMatchObject({
+      correlationKey: "whatsapp-smoke:run-1:template:attempt-1",
+      messageId: "wamid-template-1",
+      phoneNumberId: "phone-1",
+      status: "delivered",
+    });
+  });
+
   it("acepta el formato status plano y conserva el error de fallo", () => {
     expect(
       parseKapsoDeliveryStatusPayload("whatsapp.message.failed", {

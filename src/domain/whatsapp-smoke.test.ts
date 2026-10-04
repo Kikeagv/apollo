@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateWhatsAppSyntheticSmoke,
   expireWhatsAppSyntheticSmoke,
+  canRecoverWhatsAppSmokeTemplateCallback,
   hasWhatsAppSmokeChallengePrefix,
   isWhatsAppSmokeCallbackWithinDeadline,
   isWhatsAppSmokeRunAwaitingInbound,
@@ -527,6 +528,104 @@ describe("smoke sintético de WhatsApp", () => {
       status: "failed",
     });
     expect(timedOut.timedOutAt).toEqual(new Date("2026-09-25T12:05:00.000Z"));
+  });
+
+  it("conserva el roundtrip verificado si solo venció la espera de la plantilla", () => {
+    const startedAt = new Date("2026-09-25T12:00:00.000Z");
+    const timeoutAt = new Date("2026-09-25T12:05:00.000Z");
+    const steps = Object.fromEntries(
+      whatsappSyntheticSmokeStepCodes.map((code) => [
+        code,
+        { evidence: `synthetic:${code}`, passed: true },
+      ]),
+    ) as ReturnType<typeof passingSteps>;
+    for (const [code, source] of [
+      ["real-reception", "provider"],
+      ["real-processing", "application"],
+      ["real-response", "provider"],
+      ["real-delivery", "provider"],
+    ] as const) {
+      steps[code] = {
+        evidence: `${code} confirmado`,
+        eventId: `event-${code}`,
+        observedAt: startedAt,
+        passed: true,
+        source,
+      };
+    }
+    const completedRoundtrip = evaluateWhatsAppSyntheticSmoke({
+      realPatientsEnabled: false,
+      requireRealRoundtrip: true,
+      runId: "smoke-run-template-timeout",
+      steps,
+      syntheticContact: false,
+      testContactId: "controlled-contact-template-timeout",
+      timeoutAt,
+    });
+    const pendingTemplate = {
+      ...completedRoundtrip,
+      status: "pending" as const,
+      steps: completedRoundtrip.steps.map((step) =>
+        step.code === "real-template-delivery"
+          ? {
+              ...step,
+              message: "A la espera de la confirmación de entrega",
+              passed: false,
+              status: "pending" as const,
+            }
+          : step,
+      ),
+    };
+
+    const timedOut = expireWhatsAppSyntheticSmoke(pendingTemplate, timeoutAt);
+
+    expect(timedOut.status).toBe("failed");
+    expect(timedOut.providerTransportVerified).toBe(true);
+    expect(
+      timedOut.steps.find((step) => step.code === "real-template-delivery"),
+    ).toMatchObject({ status: "failed", passed: false });
+  });
+
+  it("permite rescatar solo el callback de la plantilla recibida antes del timeout", () => {
+    const timeoutAt = new Date("2026-10-03T23:36:19.409Z");
+    const timedOutAt = new Date("2026-10-03T23:36:21.466Z");
+    const attemptId = "attempt-1";
+    const timedOutStep = {
+      attemptId,
+      message: "El Contacto no completó este paso antes del timeout",
+      status: "failed" as const,
+    };
+
+    expect(
+      canRecoverWhatsAppSmokeTemplateCallback({
+        attemptId,
+        receivedAt: new Date("2026-10-03T23:33:11.874Z"),
+        runStatus: "failed",
+        step: timedOutStep,
+        timedOutAt,
+        timeoutAt,
+      }),
+    ).toBe(true);
+    expect(
+      canRecoverWhatsAppSmokeTemplateCallback({
+        attemptId,
+        receivedAt: new Date("2026-10-03T23:36:19.409Z"),
+        runStatus: "failed",
+        step: timedOutStep,
+        timedOutAt,
+        timeoutAt,
+      }),
+    ).toBe(false);
+    expect(
+      canRecoverWhatsAppSmokeTemplateCallback({
+        attemptId: "different-attempt",
+        receivedAt: new Date("2026-10-03T23:33:11.874Z"),
+        runStatus: "failed",
+        step: timedOutStep,
+        timedOutAt,
+        timeoutAt,
+      }),
+    ).toBe(false);
   });
 
   it("cuenta un callback recibido antes del límite aunque se procese después", () => {

@@ -4,6 +4,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import { evaluateWhatsAppRealTraffic } from "~/domain/whatsapp-traffic";
 import {
+  canRecoverWhatsAppSmokeTemplateCallback,
   isWhatsAppSmokeCallbackWithinDeadline,
   recordWhatsAppSyntheticSmokeStep,
 } from "~/domain/whatsapp-smoke";
@@ -413,29 +414,40 @@ export async function recordSmokeTemplateOutcome(
       .orderBy(desc(whatsappSmokeRuns.startedAt))
       .limit(1)
       .for("update");
-    const pendingStep = latest?.steps.find(
+    const callbackStep = latest?.steps.find(
       (candidate) =>
         candidate.code === TEMPLATE_DELIVERY_CODE &&
         candidate.providerMessageId === input.providerMessageId,
     );
-    if (
-      latest === undefined ||
-      pendingStep?.attemptId === undefined ||
-      pendingStep.status !== "pending"
-    ) {
+    if (latest === undefined || callbackStep?.attemptId === undefined) {
       return false;
     }
     runId = latest.id;
-    attemptId = pendingStep.attemptId;
+    attemptId = callbackStep.attemptId;
   }
-  const latest = await findCurrentTemplateSmokeRun(
+  const latest = await findTemplateSmokeRunForCallback(
     transaction,
     clinicId,
     runId,
     attemptId,
+    input.providerEventReceivedAt,
   );
+  if (latest === undefined) return match !== null;
+  const step = latest.steps.find(
+    (candidate) => candidate.code === TEMPLATE_DELIVERY_CODE,
+  );
+  if (step === undefined || step.status === "passed") return true;
+  const recoverTimedOutAttempt = canRecoverWhatsAppSmokeTemplateCallback({
+    attemptId,
+    receivedAt: input.providerEventReceivedAt,
+    runStatus: latest.status,
+    step,
+    timedOutAt: latest.timedOutAt,
+    timeoutAt: latest.timeoutAt,
+  });
+  if (step.status !== "pending" && !recoverTimedOutAttempt) return true;
   if (
-    latest?.testContactId == null ||
+    latest.testContactId == null ||
     !isWhatsAppSmokeCallbackWithinDeadline({
       receivedAt: input.providerEventReceivedAt,
       timeoutAt: latest.timeoutAt,
@@ -445,10 +457,6 @@ export async function recordSmokeTemplateOutcome(
   ) {
     return true;
   }
-  const step = latest.steps.find(
-    (candidate) => candidate.code === TEMPLATE_DELIVERY_CODE,
-  );
-  if (step?.status !== "pending") return true;
   const templateKind = smokeTemplateKind(latest);
   const templateName = smokeTemplateName(latest);
   if (
@@ -514,35 +522,44 @@ export async function recordSmokeTemplateOutcome(
             ? "El Contacto de prueba ya no cumple las condiciones de control"
             : null;
 
-  const result = recordWhatsAppSyntheticSmokeStep(smokeResultFromRow(latest), {
-    code: TEMPLATE_DELIVERY_CODE,
-    eventId: input.providerEventId ?? input.providerMessageId,
-    evidence:
-      input.status === "failed"
-        ? `Kapso confirmó fallo de entrega de la plantilla ${templateName}`
-        : `Kapso confirmó ${input.status === "read" ? "lectura" : "entrega"} de la plantilla ${templateName}`,
-    message: failureMessage,
-    observedAt: input.providerEventReceivedAt,
-    source: "provider",
-    status: callbackStatus,
-    attemptId,
-    consentAcceptedAt: step.consentAcceptedAt,
-    consentPrivacyVersion: step.consentPrivacyVersion,
-    consentReference: step.consentReference,
-    consentTermsVersion: step.consentTermsVersion,
-    consentTextReference: step.consentTextReference,
-    providerMessageId: input.providerMessageId,
-    providerTemplateId: step.providerTemplateId,
-    templateCatalogVersion: step.templateCatalogVersion,
-    templateKind,
-    templateLocale: step.templateLocale,
-    templateName,
-  });
+  const result = recordWhatsAppSyntheticSmokeStep(
+    {
+      ...smokeResultFromRow(latest),
+      ...(recoverTimedOutAttempt ? { timedOutAt: null } : {}),
+    },
+    {
+      code: TEMPLATE_DELIVERY_CODE,
+      eventId: input.providerEventId ?? input.providerMessageId,
+      evidence:
+        input.status === "failed"
+          ? `Kapso confirmó fallo de entrega de la plantilla ${templateName}`
+          : `Kapso confirmó ${input.status === "read" ? "lectura" : "entrega"} de la plantilla ${templateName}`,
+      message: failureMessage,
+      observedAt: input.providerEventReceivedAt,
+      source: "provider",
+      status: callbackStatus,
+      attemptId,
+      consentAcceptedAt: step.consentAcceptedAt,
+      consentPrivacyVersion: step.consentPrivacyVersion,
+      consentReference: step.consentReference,
+      consentTermsVersion: step.consentTermsVersion,
+      consentTextReference: step.consentTextReference,
+      providerMessageId: input.providerMessageId,
+      providerTemplateId: step.providerTemplateId,
+      templateCatalogVersion: step.templateCatalogVersion,
+      templateKind,
+      templateLocale: step.templateLocale,
+      templateName,
+    },
+  );
   await persistSmokeResult(transaction, {
     clinicId,
     finishedAt: input.now,
     result,
     runId: latest.id,
+    ...(recoverTimedOutAttempt && latest.timedOutAt !== null
+      ? { allowTimedOutFailureAt: latest.timedOutAt }
+      : {}),
   });
 
   if (
@@ -774,6 +791,50 @@ async function findCurrentTemplateSmokeRun(
   );
   return step?.status === "pending" &&
     (attemptId === undefined || step.attemptId === attemptId)
+    ? latest
+    : undefined;
+}
+
+async function findTemplateSmokeRunForCallback(
+  transaction: ClinicTransaction,
+  clinicId: string,
+  runId: string,
+  attemptId: string,
+  receivedAt: Date,
+) {
+  const [latest] = await transaction
+    .select()
+    .from(whatsappSmokeRuns)
+    .where(eq(whatsappSmokeRuns.clinicId, clinicId))
+    .orderBy(desc(whatsappSmokeRuns.startedAt))
+    .limit(1)
+    .for("update");
+  if (
+    latest?.id !== runId ||
+    !latest.requiresRealRoundtrip ||
+    latest.syntheticContact ||
+    latest.realPatientsEnabled ||
+    latest.testContactId === null
+  ) {
+    return undefined;
+  }
+  const step = latest.steps.find(
+    (candidate) => candidate.code === TEMPLATE_DELIVERY_CODE,
+  );
+  if (step?.attemptId !== attemptId) return undefined;
+  const awaitingCallback =
+    latest.status === "pending" && step.status === "pending";
+  const alreadyConfirmed =
+    latest.status === "passed" && step.status === "passed";
+  const recoverTimedOutAttempt = canRecoverWhatsAppSmokeTemplateCallback({
+    attemptId,
+    receivedAt,
+    runStatus: latest.status,
+    step,
+    timedOutAt: latest.timedOutAt,
+    timeoutAt: latest.timeoutAt,
+  });
+  return awaitingCallback || alreadyConfirmed || recoverTimedOutAttempt
     ? latest
     : undefined;
 }

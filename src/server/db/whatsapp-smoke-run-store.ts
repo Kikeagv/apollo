@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 
 import {
   sanitizeWhatsAppSyntheticSmokeResult,
@@ -43,9 +43,20 @@ export async function persistSmokeResult(
     finishedAt: Date;
     result: WhatsAppSyntheticSmokeResult;
     runId: string;
+    allowTimedOutFailureAt?: Date;
   },
 ) {
   const result = sanitizeWhatsAppSyntheticSmokeResult(input.result);
+  const runStatusCondition =
+    input.allowTimedOutFailureAt === undefined
+      ? eq(whatsappSmokeRuns.status, "pending")
+      : or(
+          eq(whatsappSmokeRuns.status, "pending"),
+          and(
+            eq(whatsappSmokeRuns.status, "failed"),
+            eq(whatsappSmokeRuns.timedOutAt, input.allowTimedOutFailureAt),
+          ),
+        );
   const [updated] = await transaction
     .update(whatsappSmokeRuns)
     .set({
@@ -65,7 +76,7 @@ export async function persistSmokeResult(
       and(
         eq(whatsappSmokeRuns.clinicId, input.clinicId),
         eq(whatsappSmokeRuns.id, input.runId),
-        eq(whatsappSmokeRuns.status, "pending"),
+        runStatusCondition,
       ),
     )
     .returning({ id: whatsappSmokeRuns.id });

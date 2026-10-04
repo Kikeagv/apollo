@@ -627,7 +627,9 @@ export function expireWhatsAppSyntheticSmoke(
   return sanitizeWhatsAppSyntheticSmokeResult({
     ...result,
     blockers,
-    providerTransportVerified: false,
+    providerTransportVerified:
+      result.requireRealRoundtrip === true &&
+      hasVerifiedProviderRoundtrip(steps),
     status: "failed",
     steps,
     timedOutAt: now,
@@ -641,6 +643,28 @@ export function isWhatsAppSmokeCallbackWithinDeadline(input: {
   return (
     input.timeoutAt !== null &&
     input.receivedAt.valueOf() < input.timeoutAt.valueOf()
+  );
+}
+
+export function canRecoverWhatsAppSmokeTemplateCallback(input: {
+  attemptId: string;
+  receivedAt: Date;
+  runStatus: "failed" | "passed" | "pending";
+  step: Pick<WhatsAppSyntheticSmokeStep, "attemptId" | "message" | "status">;
+  timedOutAt: Date | null;
+  timeoutAt: Date | null;
+}) {
+  return (
+    input.runStatus === "failed" &&
+    input.timedOutAt !== null &&
+    input.step.status === "failed" &&
+    input.step.message ===
+      "El Contacto no completó este paso antes del timeout" &&
+    input.step.attemptId === input.attemptId &&
+    isWhatsAppSmokeCallbackWithinDeadline({
+      receivedAt: input.receivedAt,
+      timeoutAt: input.timeoutAt,
+    })
   );
 }
 

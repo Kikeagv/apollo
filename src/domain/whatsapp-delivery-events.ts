@@ -57,6 +57,12 @@ export function parseKapsoDeliveryStatusPayload(
       "El estado Kapso requiere id y phone_number_id",
     );
   }
+  const nestedStatuses = [root.statuses, message.statuses, kapso.statuses]
+    .filter(Array.isArray)
+    .flatMap((value) => value.map(asRecord));
+  const matchingStatus = nestedStatuses.find(
+    (candidate) => firstString(candidate.id) === messageId,
+  );
 
   return {
     correlationKey: firstString(
@@ -65,6 +71,8 @@ export function parseKapsoDeliveryStatusPayload(
       message.biz_opaque_callback_data,
       message.idempotency_key,
       kapso.biz_opaque_callback_data,
+      matchingStatus?.biz_opaque_callback_data,
+      matchingStatus?.idempotency_key,
     ),
     error: readError(root, message, kapso),
     eventName,
