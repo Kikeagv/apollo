@@ -170,6 +170,7 @@ function buildContract(input: {
             providerTransportVerified: false,
             realPatientsEnabled: false,
             status: "pending",
+            controlledTestContact: false,
             syntheticContact: false,
           }
         : {
@@ -180,6 +181,8 @@ function buildContract(input: {
             realPatientsEnabled:
               input.operations.latestSmoke.realPatientsEnabled,
             status: input.operations.latestSmoke.status,
+            controlledTestContact:
+              input.operations.latestSmoke.controlledTestContact === true,
             syntheticContact: input.operations.latestSmoke.syntheticContact,
           },
     technicalReadiness: input.operations.technicalReadiness.status,

@@ -65,6 +65,8 @@ export const whatsappSyntheticSmokeProviderStepCodes = [
   "sandbox",
 ] as const;
 
+export const WHATSAPP_TEMPLATE_SMOKE_TIMEOUT_MS = 5 * 60_000;
+
 export type WhatsAppSyntheticSmokeStepCode =
   (typeof whatsappSyntheticSmokeStepCodes)[number];
 
@@ -122,6 +124,7 @@ export type WhatsAppSyntheticSmokeStep = {
   source: "application" | "provider" | null;
   status: "failed" | "passed" | "pending" | "skipped";
   attemptId?: string;
+  attemptStartedAt?: string;
   consentAcceptedAt?: string;
   consentPrivacyVersion?: string;
   consentReference?: string;

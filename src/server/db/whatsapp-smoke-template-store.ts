@@ -7,6 +7,7 @@ import {
   canRecoverWhatsAppSmokeTemplateCallback,
   isWhatsAppSmokeCallbackWithinDeadline,
   recordWhatsAppSyntheticSmokeStep,
+  WHATSAPP_TEMPLATE_SMOKE_TIMEOUT_MS,
 } from "~/domain/whatsapp-smoke";
 import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
 import { readWhatsAppConsentSnapshot } from "~/server/db/whatsapp-consent-query";
@@ -192,7 +193,10 @@ export const drizzleWhatsAppTemplateSmokeStore: WhatsAppTemplateSmokeStore = {
             contactId: latest.testContactId,
             consent: capturedConsent,
             runId: latest.id,
-            startedAt: latest.startedAt,
+            templateAttemptStartedAt: getTemplateAttemptStartedAt({
+              attemptStartedAt: pendingStep.attemptStartedAt,
+              timeoutAt: latest.timeoutAt,
+            }),
             template,
           });
         }
@@ -236,6 +240,7 @@ export const drizzleWhatsAppTemplateSmokeStore: WhatsAppTemplateSmokeStore = {
           source: "provider" as const,
           status: "pending" as const,
           attemptId,
+          attemptStartedAt: input.now.toISOString(),
           consentAcceptedAt: acceptedAt.toISOString(),
           consentPrivacyVersion: capturedConsent.privacyVersion,
           consentReference: capturedConsent.reference,
@@ -290,7 +295,7 @@ export const drizzleWhatsAppTemplateSmokeStore: WhatsAppTemplateSmokeStore = {
           contactId: latest.testContactId,
           consent: capturedConsent,
           runId: latest.id,
-          startedAt: latest.startedAt,
+          templateAttemptStartedAt: input.now,
           template,
         });
       },
@@ -922,7 +927,7 @@ function preparedTemplateSmoke(input: {
     textReference: string;
   };
   runId: string;
-  startedAt: Date;
+  templateAttemptStartedAt: Date;
   template: typeof whatsappCriticalTemplates.$inferSelect;
 }): PreparedWhatsAppTemplateSmoke {
   return {
@@ -931,7 +936,7 @@ function preparedTemplateSmoke(input: {
     phoneE164: input.contactPhoneE164,
     contactId: input.contactId,
     runId: input.runId,
-    startedAt: input.startedAt,
+    templateAttemptStartedAt: input.templateAttemptStartedAt,
     consent: input.consent,
     template: {
       catalogVersion: input.template.catalogVersion,
@@ -944,6 +949,19 @@ function preparedTemplateSmoke(input: {
       variables: input.template.variables,
     },
   };
+}
+
+function getTemplateAttemptStartedAt(input: {
+  attemptStartedAt: string | undefined;
+  timeoutAt: Date;
+}) {
+  if (input.attemptStartedAt !== undefined) {
+    const timestamp = Date.parse(input.attemptStartedAt);
+    if (Number.isFinite(timestamp)) return new Date(timestamp);
+  }
+  return new Date(
+    input.timeoutAt.valueOf() - WHATSAPP_TEMPLATE_SMOKE_TIMEOUT_MS,
+  );
 }
 
 function isCapturedConsentCurrent(

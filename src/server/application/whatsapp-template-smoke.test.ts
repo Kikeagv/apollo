@@ -20,7 +20,7 @@ const prepared: PreparedWhatsAppTemplateSmoke = {
   },
   phoneE164: "+50370000001",
   runId: "3a1917e2-bd36-4b45-9b61-e3810fd28051",
-  startedAt: new Date("2026-09-30T12:00:00.000Z"),
+  templateAttemptStartedAt: new Date("2026-10-05T15:14:00.000Z"),
   template: {
     catalogVersion: 3,
     category: "UTILITY",
@@ -29,7 +29,7 @@ const prepared: PreparedWhatsAppTemplateSmoke = {
     name: "appointment_confirmation",
     providerTemplateId: "template-1",
     status: "APPROVED",
-    variables: ["clinicName", "patientName", "startsAt"],
+    variables: ["clinic_name", "patient_name", "appointment_datetime"],
   },
 };
 
@@ -48,6 +48,41 @@ function storeFixture() {
 }
 
 describe("prueba de plantilla Utility aprobada", () => {
+  it("usa la fecha del intento de plantilla y no la del roundtrip anterior", async () => {
+    const store = storeFixture();
+    const templateAttemptStartedAt = new Date("2026-10-05T15:14:00.000Z");
+    const preparedForCurrentAttempt = {
+      ...prepared,
+      templateAttemptStartedAt,
+    };
+    store.start.mockResolvedValue(preparedForCurrentAttempt);
+    const sendSmokeTemplate = vi
+      .fn<WhatsAppTemplateSmokeSender["sendSmokeTemplate"]>()
+      .mockResolvedValue({
+        providerMessageId: "wamid-accepted",
+        status: "accepted",
+      });
+
+    await runWhatsAppApprovedTemplateSmoke(
+      {
+        actorIdentityId: "superadmin-1",
+        clinicId: "clinic-1",
+        now: new Date("2026-10-05T15:16:00.000Z"),
+        templateKind: "confirmation",
+      },
+      { sender: { sendSmokeTemplate }, store },
+    );
+
+    expect(sendSmokeTemplate.mock.calls[0]?.[0]?.route).toMatchObject({
+      kind: "template",
+      parameters: [
+        "Clínica Apolo",
+        "Contacto de prueba",
+        "6 de octubre de 2026 a las 9:14 a. m.",
+      ],
+    });
+  });
+
   it("deja el paso pendiente ante aceptación de API y usa idempotencia por intento", async () => {
     const store = storeFixture();
     const sendSmokeTemplate = vi
@@ -61,7 +96,7 @@ describe("prueba de plantilla Utility aprobada", () => {
       {
         actorIdentityId: "superadmin-1",
         clinicId: "clinic-1",
-        now: prepared.startedAt,
+        now: prepared.templateAttemptStartedAt,
         templateKind: "confirmation",
       },
       { sender: { sendSmokeTemplate }, store },
@@ -95,7 +130,7 @@ describe("prueba de plantilla Utility aprobada", () => {
       {
         actorIdentityId: "superadmin-1",
         clinicId: "clinic-1",
-        now: prepared.startedAt,
+        now: prepared.templateAttemptStartedAt,
         templateKind: "confirmation",
       },
       { sender: { sendSmokeTemplate }, store },
@@ -117,7 +152,7 @@ describe("prueba de plantilla Utility aprobada", () => {
       {
         actorIdentityId: "superadmin-1",
         clinicId: "clinic-1",
-        now: prepared.startedAt,
+        now: prepared.templateAttemptStartedAt,
         templateKind: "confirmation",
       },
       { sender: { sendSmokeTemplate }, store },

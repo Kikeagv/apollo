@@ -249,7 +249,7 @@ export function ClinicActivationJourneyPanel({
               <>
                 <p className="text-muted-foreground text-sm">
                   {onboarding?.setupLink?.status === "used"
-                    ? "El propietario completó el enlace de configuración. Las pruebas de transporte siguen pendientes."
+                    ? "El propietario completó el enlace de configuración. Consulta los pasos siguientes para ver el estado de las pruebas."
                     : latestDelivery?.action === "setup-link-email-sent"
                       ? `Enlace enviado a ${registration?.invitation.email ?? "el propietario"} · ${formatDateTime(latestDelivery.occurredAt)}`
                       : latestDelivery?.action === "setup-link-email-failed"
