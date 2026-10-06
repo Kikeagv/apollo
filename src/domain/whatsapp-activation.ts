@@ -474,6 +474,7 @@ export type WhatsAppActivationContractInput = {
   smoke: {
     provisioningEventId: string | null;
     providerTransportVerified: boolean;
+    controlledTestContact?: boolean;
     realPatientsEnabled: boolean;
     status: "failed" | "passed" | "pending";
     syntheticContact: boolean;
@@ -728,7 +729,8 @@ function isActivationOperationallyReady(
     input.technicalReadiness === "ready" &&
     !input.clinicIsSynthetic &&
     input.smoke.status === "passed" &&
-    input.smoke.syntheticContact &&
+    (input.smoke.syntheticContact ||
+      input.smoke.controlledTestContact === true) &&
     !input.smoke.realPatientsEnabled &&
     isSmokeCurrent(input) &&
     (input.connection.provider !== "kapso" ||

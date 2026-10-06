@@ -136,6 +136,9 @@ export function ApoloOperations() {
     },
   );
   const latestSmoke = whatsappOperations.data?.latestSmoke ?? null;
+  const latestTemplateDelivery =
+    latestSmoke?.steps.find((step) => step.code === "real-template-delivery") ??
+    null;
   const operationConnection = whatsappOperations.data?.connection ?? null;
   const approvedTemplateKind =
     operationConnection?.provider === "kapso"
@@ -958,64 +961,101 @@ export function ApoloOperations() {
                     }
                   />
                   <MetricValue
-                    label="Latencia media"
-                    value={
-                      operationalMetrics.data?.averageLatencyMs === null ||
-                      operationalMetrics.data?.averageLatencyMs === undefined
-                        ? "—"
-                        : `${operationalMetrics.data.averageLatencyMs} ms`
-                    }
-                  />
-                  <MetricValue
-                    label="Errores"
-                    value={String(operationalMetrics.data?.errors ?? 0)}
-                  />
-                  <MetricValue
-                    label="Entregas intentadas"
-                    value={String(
-                      operationalMetrics.data?.deliveries.attempted ?? 0,
-                    )}
-                  />
-                  <MetricValue
-                    label="Entregas aceptadas / entregadas"
-                    value={`${operationalMetrics.data?.deliveries.accepted ?? 0} / ${operationalMetrics.data?.deliveries.delivered ?? 0}`}
-                  />
-                  <MetricValue
-                    label="Entregas fallidas / desconocidas"
-                    value={`${operationalMetrics.data?.deliveries.failed ?? 0} / ${operationalMetrics.data?.deliveries.unknown ?? 0}`}
-                  />
-                  <MetricValue
                     label="Meta / plataforma (billing)"
                     value={`${readiness.data?.billing.metaChargesCents ?? operationalMetrics.data?.metaChargesCents ?? 0} / ${readiness.data?.billing.platformChargesCents ?? operationalMetrics.data?.platformChargesCents ?? 0} centavos`}
                   />
                 </div>
-                <div className="grid gap-3 text-sm sm:grid-cols-2">
-                  <MetricValue
-                    label="Inbound / outbound"
-                    value={`${operationalMetrics.data?.inboundMessages ?? 0} / ${operationalMetrics.data?.outboundMessages ?? 0}`}
-                  />
-                  <MetricValue
-                    label="Media / plantillas / interactivos / reacciones"
-                    value={`${operationalMetrics.data?.mediaMessages ?? 0} / ${operationalMetrics.data?.templateMessages ?? 0} / ${operationalMetrics.data?.interactiveMessages ?? 0} / ${operationalMetrics.data?.reactionMessages ?? 0}`}
-                  />
-                  <MetricValue
-                    label="Recibos de lectura"
-                    value={String(operationalMetrics.data?.readReceipts ?? 0)}
-                  />
-                </div>
-                {operationalMetrics.data?.templates.length ? (
+                <div className="space-y-3">
                   <div>
-                    <h3 className="font-medium">Plantillas</h3>
-                    <ul className="text-foreground mt-2 space-y-1 text-sm">
-                      {operationalMetrics.data.templates.map((template) => (
-                        <li key={template.name}>
-                          {template.name}: {template.attempted} intentos ·{" "}
-                          {template.failed} fallos
-                        </li>
-                      ))}
-                    </ul>
+                    <h3 className="font-medium">Actividad operativa</h3>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      Agregado de los últimos 365 días. Las entregas de Citas
+                      incluyen sus intentos y estados transaccionales; la prueba
+                      de plantilla de activación se muestra aparte.
+                    </p>
                   </div>
-                ) : null}
+                  <div className="grid gap-3 text-sm sm:grid-cols-3">
+                    <MetricValue
+                      label="Latencia media"
+                      value={
+                        operationalMetrics.data?.averageLatencyMs === null ||
+                        operationalMetrics.data?.averageLatencyMs === undefined
+                          ? "—"
+                          : `${operationalMetrics.data.averageLatencyMs} ms`
+                      }
+                    />
+                    <MetricValue
+                      label="Errores"
+                      value={String(operationalMetrics.data?.errors ?? 0)}
+                    />
+                    <MetricValue
+                      label="Entregas de Citas intentadas"
+                      value={String(
+                        operationalMetrics.data?.deliveries.attempted ?? 0,
+                      )}
+                    />
+                    <MetricValue
+                      label="Entregas de Citas aceptadas / entregadas"
+                      value={`${operationalMetrics.data?.deliveries.accepted ?? 0} / ${operationalMetrics.data?.deliveries.delivered ?? 0}`}
+                    />
+                    <MetricValue
+                      label="Entregas de Citas fallidas / desconocidas"
+                      value={`${operationalMetrics.data?.deliveries.failed ?? 0} / ${operationalMetrics.data?.deliveries.unknown ?? 0}`}
+                    />
+                    <MetricValue
+                      label="Inbound / outbound"
+                      value={`${operationalMetrics.data?.inboundMessages ?? 0} / ${operationalMetrics.data?.outboundMessages ?? 0}`}
+                    />
+                    <MetricValue
+                      label="Media / plantillas / interactivos / reacciones"
+                      value={`${operationalMetrics.data?.mediaMessages ?? 0} / ${operationalMetrics.data?.templateMessages ?? 0} / ${operationalMetrics.data?.interactiveMessages ?? 0} / ${operationalMetrics.data?.reactionMessages ?? 0}`}
+                    />
+                    <MetricValue
+                      label="Recibos de lectura"
+                      value={String(operationalMetrics.data?.readReceipts ?? 0)}
+                    />
+                  </div>
+                  {operationalMetrics.data?.templates.length ? (
+                    <div>
+                      <h3 className="font-medium">Plantillas</h3>
+                      <ul className="text-foreground mt-2 space-y-1 text-sm">
+                        {operationalMetrics.data.templates.map((template) => (
+                          <li key={template.name}>
+                            {template.name}: {template.attempted} intentos ·{" "}
+                            {template.failed} fallos
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  <div>
+                    <h3 className="font-medium">
+                      Prueba de plantilla de activación
+                    </h3>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      Este resultado pertenece al smoke de activación y no se
+                      suma a las entregas transaccionales de Citas.
+                    </p>
+                    <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+                      <MetricValue
+                        label="Último smoke"
+                        value={
+                          latestSmoke === null
+                            ? "Sin smoke registrado"
+                            : latestTemplateDelivery === null
+                              ? "No incluida en el smoke reciente"
+                              : latestTemplateDelivery.status === "skipped"
+                                ? "No ejecutada en el smoke reciente"
+                                : latestTemplateDelivery.status === "pending"
+                                  ? `Pendiente de confirmación${latestTemplateDelivery.observedAt ? ` · ${formatDateTime(latestTemplateDelivery.observedAt)}` : ""}`
+                                  : latestTemplateDelivery.status === "passed"
+                                    ? `Delivery confirmado${latestTemplateDelivery.observedAt ? ` · ${formatDateTime(latestTemplateDelivery.observedAt)}` : ""}`
+                                    : `Fallida${latestTemplateDelivery.observedAt ? ` · ${formatDateTime(latestTemplateDelivery.observedAt)}` : ""}`
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
                 {circuitBreaker.data.status === "open" ? (
                   <div className="border-warning-border bg-warning-muted space-y-2 rounded-lg border p-3 text-sm">
                     <p>

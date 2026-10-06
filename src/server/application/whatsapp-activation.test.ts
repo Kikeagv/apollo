@@ -159,6 +159,40 @@ describe("caso de uso del contrato de cierre de WhatsApp", () => {
     });
   });
 
+  it("reconoce mensajería lista cuando el smoke pasó con un Contacto controlado", async () => {
+    const dependencies = makeDependencies();
+    const operations = makeOperationsSnapshot();
+
+    dependencies.operationsRead.mockResolvedValue({
+      ...operations,
+      trafficStatus: "enabled",
+      latestSmoke: {
+        ...operations.latestSmoke!,
+        controlledTestContact: true,
+        syntheticContact: false,
+        steps: [
+          {
+            code: "real-template-delivery",
+            evidence: "Kapso confirmó la entrega",
+            eventId: "provider-event-94",
+            message: null,
+            observedAt: now,
+            passed: true,
+            source: "provider",
+            status: "passed",
+          },
+        ],
+      },
+    });
+
+    const result = await getWhatsAppActivationContract(
+      { actorIdentityId, clinicId, identityStatus: "authenticated" },
+      dependencies,
+    );
+
+    expect(result.states.messaging).toBe("enabled");
+  });
+
   it("propaga una Identidad bloqueada sin confundirla con el acceso del propietario", async () => {
     const dependencies = makeDependencies();
 

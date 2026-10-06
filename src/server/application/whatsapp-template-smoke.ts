@@ -2,12 +2,11 @@ import {
   buildTransactionalTemplateParameters,
   chooseTransactionalWhatsAppRoute,
 } from "~/domain/whatsapp-delivery";
+import { WHATSAPP_TEMPLATE_SMOKE_TIMEOUT_MS } from "~/domain/whatsapp-smoke";
 import { sanitizeWhatsAppOperationalText } from "~/domain/whatsapp-circuit-breaker";
 import type { WhatsAppCriticalTemplateKind } from "~/domain/whatsapp-readiness";
 import type { TransactionalWhatsAppRoute } from "~/domain/whatsapp-delivery";
 import type { WhatsAppSendResult } from "./whatsapp-provider";
-
-const TEMPLATE_SMOKE_TIMEOUT_MS = 5 * 60_000;
 
 export type PreparedWhatsAppTemplateSmoke = {
   clinicName: string;
@@ -15,7 +14,7 @@ export type PreparedWhatsAppTemplateSmoke = {
   contactId: string;
   phoneE164: string;
   runId: string;
-  startedAt: Date;
+  templateAttemptStartedAt: Date;
   consent: {
     acceptedAt: Date;
     privacyVersion: string;
@@ -87,7 +86,7 @@ export async function runWhatsAppApprovedTemplateSmoke(
     clinicId: input.clinicId,
     now,
     templateKind: input.templateKind,
-    timeoutAt: new Date(now.valueOf() + TEMPLATE_SMOKE_TIMEOUT_MS),
+    timeoutAt: new Date(now.valueOf() + WHATSAPP_TEMPLATE_SMOKE_TIMEOUT_MS),
   });
   const idempotencyKey = `whatsapp-smoke:${prepared.runId}:template:${prepared.attemptId}`;
 
@@ -104,7 +103,9 @@ export async function runWhatsAppApprovedTemplateSmoke(
             clinicName: prepared.clinicName,
             doctorName: "Equipo de la Clínica",
             patientName: "Contacto de prueba",
-            startsAt: new Date(prepared.startedAt.valueOf() + 24 * 60 * 60_000),
+            startsAt: new Date(
+              prepared.templateAttemptStartedAt.valueOf() + 24 * 60 * 60_000,
+            ),
           },
         ),
         providerTemplateId: prepared.template.providerTemplateId,
